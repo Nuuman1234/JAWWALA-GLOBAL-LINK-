@@ -1,0 +1,6 @@
+{
+  "name": "FDMIS — Funtua–Dandume Mandate Intelligence System",
+  "description": "Election Situation Room and Field Intelligence Management System for Funtua and Dandume Federal Constituency, Katsina State, Nigeria.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

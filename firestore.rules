@@ -1,0 +1,1093 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL PRIMITIVES ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+
+    function isVerifiedUser() {
+      return isSignedIn() &&
+        'email_verified' in request.auth.token &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedEmail() {
+      return isVerifiedUser() &&
+        'email' in request.auth.token &&
+        request.auth.token.email == 'abdulbasirnuuman01@gmail.com';
+    }
+
+    function isFullControlAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        isBootstrappedEmail()
+      );
+    }
+
+    function callerDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isCallerActive(u) {
+      return u != null && u.status == 'ACTIVE' && u.sessionRevoked != true;
+    }
+
+    function hasActiveUser() {
+      return isVerifiedUser() && isCallerActive(callerDoc());
+    }
+
+    function isVerificationOfficerFor(lgaId, wardId) {
+      let u = callerDoc();
+      return isCallerActive(u) && u.role == 'VERIFICATION_OFFICER' && (
+        u.assignedLgaId == '' ||
+        (u.assignedLgaId == lgaId && (u.assignedWardId == '' || u.assignedWardId == wardId))
+      );
+    }
+
+    function canReadInArea(lgaId, wardId, puId, ownerUid) {
+      let u = callerDoc();
+      return isCallerActive(u) && (
+        (u.role == 'FUNTUA_SUPER_ADMIN' && lgaId == 'funtua') ||
+        (u.role == 'DANDUME_SUPER_ADMIN' && lgaId == 'dandume') ||
+        (u.role == 'VERIFICATION_OFFICER' && (
+          u.assignedLgaId == '' ||
+          (u.assignedLgaId == lgaId && (u.assignedWardId == '' || u.assignedWardId == wardId))
+        )) ||
+        (u.role == 'WARD_COORDINATOR' && wardId.size() > 0 && u.assignedWardId == wardId) ||
+        (u.role == 'POLLING_UNIT_AGENT' && puId.size() > 0 && u.assignedPollingUnitId == puId) ||
+        ownerUid == request.auth.uid
+      );
+    }
+
+    function isLgaAdminFor(lgaId) {
+      let u = callerDoc();
+      return isCallerActive(u) && (
+        (u.role == 'FUNTUA_SUPER_ADMIN' && lgaId == 'funtua') ||
+        (u.role == 'DANDUME_SUPER_ADMIN' && lgaId == 'dandume')
+      );
+    }
+
+    function isWardCoordFor(wardId) {
+      let u = callerDoc();
+      return isCallerActive(u) && u.role == 'WARD_COORDINATOR' && wardId.size() > 0 && u.assignedWardId == wardId;
+    }
+
+    function isPuAgentFor(puId) {
+      let u = callerDoc();
+      return isCallerActive(u) && u.role == 'POLLING_UNIT_AGENT' && puId.size() > 0 && u.assignedPollingUnitId == puId;
+    }
+
+    function canVerifyScope(lgaId, wardId) {
+      return isFullControlAdmin() ||
+        isLgaAdminFor(lgaId) ||
+        isVerificationOfficerFor(lgaId, wardId);
+    }
+
+    function isValidLgaId(lgaId) {
+      return lgaId in ['funtua', 'dandume'];
+    }
+
+    function isValidRole(role) {
+      return role in [
+        'FULL_CONTROL_ADMIN',
+        'FUNTUA_SUPER_ADMIN',
+        'DANDUME_SUPER_ADMIN',
+        'VERIFICATION_OFFICER',
+        'WARD_COORDINATOR',
+        'POLLING_UNIT_AGENT',
+        'PENDING'
+      ];
+    }
+
+    function isValidAccountStatus(status) {
+      return status in ['ACTIVE', 'PENDING_APPROVAL', 'SUSPENDED'];
+    }
+
+    function isValidPuStatus(status) {
+      return status in [
+        'NOT_STARTED',
+        'AGENT_ASSIGNED',
+        'AGENT_CHECKED_IN',
+        'MATERIALS_ARRIVED',
+        'VOTING_STARTED',
+        'VOTING_IN_PROGRESS',
+        'VOTING_COMPLETED',
+        'COUNTING_STARTED',
+        'RESULT_SUBMITTED',
+        'RESULT_UNDER_REVIEW',
+        'RESULT_VERIFIED',
+        'INCIDENT_REPORTED',
+        'COMMUNICATION_LOST'
+      ];
+    }
+
+    function isValidUrgency(urgency) {
+      return urgency in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+    }
+
+    function isValidIncidentStatus(status) {
+      return status in ['NEW', 'UNDER_REVIEW', 'ESCALATED', 'RESOLVED', 'CLOSED'];
+    }
+
+    function isValidVerificationStatus(status) {
+      return status in ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'REQUIRES_CORRECTION'];
+    }
+
+    function isValidPartyVotesOptional(data) {
+      return (!('apcVotes' in data) || (data.apcVotes is int && data.apcVotes >= 0 && data.apcVotes <= 50000)) &&
+        (!('pdpVotes' in data) || (data.pdpVotes is int && data.pdpVotes >= 0 && data.pdpVotes <= 50000)) &&
+        (!('adcVotes' in data) || (data.adcVotes is int && data.adcVotes >= 0 && data.adcVotes <= 50000)) &&
+        (!('othersVotes' in data) || (data.othersVotes is int && data.othersVotes >= 0 && data.othersVotes <= 50000));
+    }
+
+    function hasConsistentVoteMath(data) {
+      return data.totalVotesCast == data.validVotes + data.rejectedVotes &&
+        (!('apcVotes' in data) || (
+          data.apcVotes is int &&
+          data.pdpVotes is int &&
+          data.adcVotes is int &&
+          data.othersVotes is int &&
+          data.validVotes == data.apcVotes + data.pdpVotes + data.adcVotes + data.othersVotes
+        ));
+    }
+
+    // --- VALIDATION HELPERS ---
+    function isValidBootstrap(data) {
+      return data.keys().hasAll(['initializedByUid', 'initializedByEmail', 'cycleYear', 'constituencyName', 'createdAt']) &&
+        data.keys().hasOnly(['initializedByUid', 'initializedByEmail', 'cycleYear', 'constituencyName', 'createdAt']) &&
+        data.initializedByUid is string && data.initializedByUid.size() <= 128 &&
+        data.initializedByEmail is string && data.initializedByEmail.size() <= 200 &&
+        data.cycleYear is int && data.cycleYear >= 2024 && data.cycleYear <= 2040 &&
+        data.constituencyName is string && data.constituencyName.size() >= 3 && data.constituencyName.size() <= 120 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidGlobalSettings(data) {
+      return data.keys().hasAll(['inactivityTimeoutMinutes', 'mfaPrepared', 'publicSummaryEnabled', 'smsFallbackConfigured', 'whatsappConfigured', 'emailConfigured', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['inactivityTimeoutMinutes', 'mfaPrepared', 'publicSummaryEnabled', 'smsFallbackConfigured', 'whatsappConfigured', 'emailConfigured', 'whatsappGroupName', 'whatsappGroupUrl', 'whatsappGroupEnabled', 'updatedByUid', 'updatedAt']) &&
+        data.inactivityTimeoutMinutes is int && data.inactivityTimeoutMinutes >= 5 && data.inactivityTimeoutMinutes <= 480 &&
+        data.mfaPrepared is bool &&
+        data.publicSummaryEnabled is bool &&
+        data.smsFallbackConfigured is bool &&
+        data.whatsappConfigured is bool &&
+        data.emailConfigured is bool &&
+        (!('whatsappGroupName' in data) || (data.whatsappGroupName is string && data.whatsappGroupName.size() >= 1 && data.whatsappGroupName.size() <= 120)) &&
+        (!('whatsappGroupUrl' in data) || (data.whatsappGroupUrl is string && data.whatsappGroupUrl.size() <= 400 && (data.whatsappGroupUrl == '' || data.whatsappGroupUrl.matches('^https://chat\\.whatsapp\\.com/[A-Za-z0-9_?=&%+\\-/]+$')))) &&
+        (!('whatsappGroupEnabled' in data) || data.whatsappGroupEnabled is bool) &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAdminDoc(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedByUid', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'grantedByUid', 'createdAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() <= 200 &&
+        data.grantedByUid is string && data.grantedByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidUserAccount(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'revokedReason', 'lastLoginAt', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() <= 200 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30)) &&
+        isValidRole(data.role) &&
+        isValidAccountStatus(data.status) &&
+        data.assignedLgaId is string && data.assignedLgaId.size() <= 32 &&
+        data.assignedWardId is string && data.assignedWardId.size() <= 128 &&
+        data.assignedPollingUnitId is string && data.assignedPollingUnitId.size() <= 128 &&
+        data.sessionRevoked is bool &&
+        (!('revokedReason' in data) || data.revokedReason == null || (data.revokedReason is string && data.revokedReason.size() <= 300)) &&
+        (!('lastLoginAt' in data) || data.lastLoginAt == null || (data.lastLoginAt is timestamp && data.lastLoginAt <= request.time)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidUserPreferences(data) {
+      return data.keys().hasAll(['uid', 'criticalAlertsEnabled', 'resultUpdatesEnabled', 'incidentDigestEnabled', 'soundAlertsEnabled', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'criticalAlertsEnabled', 'resultUpdatesEnabled', 'incidentDigestEnabled', 'soundAlertsEnabled', 'updatedAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.criticalAlertsEnabled is bool &&
+        data.resultUpdatesEnabled is bool &&
+        data.incidentDigestEnabled is bool &&
+        data.soundAlertsEnabled is bool &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPartyConfig(data, partyId) {
+      return partyId in ['APC', 'PDP', 'ADC', 'OTHERS'] &&
+        data.keys().hasAll(['partyCode', 'partyName', 'logoUrl', 'storageMode', 'updatedByUid', 'updatedByName', 'updatedAt']) &&
+        data.keys().hasOnly(['partyCode', 'partyName', 'logoUrl', 'storageMode', 'fileName', 'sha256Hash', 'updatedByUid', 'updatedByName', 'updatedAt']) &&
+        data.partyCode == partyId &&
+        ((partyId == 'APC' && data.partyName == 'All Progressives Congress') ||
+         (partyId == 'PDP' && data.partyName == 'Peoples Democratic Party') ||
+         (partyId == 'ADC' && data.partyName == 'African Democratic Congress') ||
+         (partyId == 'OTHERS' && data.partyName == 'Other Political Parties')) &&
+        data.logoUrl is string && data.logoUrl.size() <= 350000 &&
+        data.storageMode in ['firebase_storage', 'firestore_cloud', 'none'] &&
+        (!('fileName' in data) || data.fileName == null || (data.fileName is string && data.fileName.size() <= 120)) &&
+        (!('sha256Hash' in data) || data.sha256Hash == null || (data.sha256Hash is string && data.sha256Hash.size() <= 64)) &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedByName is string && data.updatedByName.size() <= 120 &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidWard(data) {
+      return data.keys().hasAll(['lgaId', 'wardCode', 'name', 'coordinatorUid', 'coordinatorName', 'expectedPollingUnits', 'isTestData', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['lgaId', 'wardCode', 'name', 'coordinatorUid', 'coordinatorName', 'expectedPollingUnits', 'isTestData', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        isValidLgaId(data.lgaId) &&
+        data.wardCode is string && data.wardCode.size() >= 1 && data.wardCode.size() <= 32 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.coordinatorUid is string && data.coordinatorUid.size() <= 128 &&
+        data.coordinatorName is string && data.coordinatorName.size() <= 120 &&
+        data.expectedPollingUnits is int && data.expectedPollingUnits >= 0 && data.expectedPollingUnits <= 500 &&
+        data.isTestData is bool &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPollingUnit(data) {
+      return data.keys().hasAll(['lgaId', 'wardId', 'wardName', 'puCode', 'name', 'locationDescription', 'coordinatesVerified', 'assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'registeredVoters', 'isTestData', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['lgaId', 'wardId', 'wardName', 'puCode', 'name', 'locationDescription', 'latitude', 'longitude', 'coordinatesVerified', 'assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'registeredVoters', 'puStatusLabel', 'isMasterRecord', 'isTestData', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() >= 1 && data.wardId.size() <= 128 &&
+        data.wardName is string && data.wardName.size() >= 1 && data.wardName.size() <= 120 &&
+        data.puCode is string && data.puCode.size() >= 2 && data.puCode.size() <= 40 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 160 &&
+        data.locationDescription is string && data.locationDescription.size() <= 300 &&
+        (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+        data.coordinatesVerified is bool &&
+        data.assignedAgentUid is string && data.assignedAgentUid.size() <= 128 &&
+        data.assignedAgentName is string && data.assignedAgentName.size() <= 120 &&
+        isValidPuStatus(data.operationalStatus) &&
+        data.registeredVoters is int && data.registeredVoters >= 0 && data.registeredVoters <= 50000 &&
+        (!('puStatusLabel' in data) || (data.puStatusLabel is string && data.puStatusLabel.size() <= 40)) &&
+        (!('isMasterRecord' in data) || data.isMasterRecord is bool) &&
+        data.isTestData is bool &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPuAssignment(data, puId) {
+      return data.keys().hasAll(['puId', 'puCode', 'lgaId', 'wardId', 'agentUid', 'agentName', 'assignedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'lgaId', 'wardId', 'agentUid', 'agentName', 'assignedByUid', 'createdAt', 'updatedAt']) &&
+        data.puId == puId &&
+        data.puCode is string && data.puCode.size() >= 2 && data.puCode.size() <= 40 &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() >= 1 && data.wardId.size() <= 128 &&
+        data.agentUid is string && data.agentUid.size() >= 1 && data.agentUid.size() <= 128 &&
+        data.agentName is string && data.agentName.size() >= 1 && data.agentName.size() <= 120 &&
+        data.assignedByUid is string && data.assignedByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidDirectoryBackup(data) {
+      return data.keys().hasAll(['entityType', 'targetDocId', 'lgaId', 'puCode', 'previousName', 'previousLocationDescription', 'previousRegisteredVoters', 'previousCoordinatesVerified', 'correctionReason', 'backedUpByUid', 'backedUpByEmail', 'createdAt']) &&
+        data.keys().hasOnly(['entityType', 'targetDocId', 'lgaId', 'puCode', 'previousName', 'previousLocationDescription', 'previousRegisteredVoters', 'previousCoordinatesVerified', 'previousLatitude', 'previousLongitude', 'correctionReason', 'backedUpByUid', 'backedUpByEmail', 'createdAt']) &&
+        data.entityType is string && data.entityType.size() <= 64 &&
+        data.targetDocId is string && data.targetDocId.size() >= 1 && data.targetDocId.size() <= 128 &&
+        isValidLgaId(data.lgaId) &&
+        data.puCode is string && data.puCode.size() >= 2 && data.puCode.size() <= 40 &&
+        data.previousName is string && data.previousName.size() >= 2 && data.previousName.size() <= 160 &&
+        data.previousLocationDescription is string && data.previousLocationDescription.size() <= 300 &&
+        data.previousRegisteredVoters is int && data.previousRegisteredVoters >= 0 &&
+        data.previousCoordinatesVerified is bool &&
+        (!('previousLatitude' in data) || data.previousLatitude == null || data.previousLatitude is number) &&
+        (!('previousLongitude' in data) || data.previousLongitude == null || data.previousLongitude is number) &&
+        data.correctionReason is string && data.correctionReason.size() >= 5 && data.correctionReason.size() <= 520 &&
+        data.backedUpByUid is string && data.backedUpByUid.size() <= 128 &&
+        data.backedUpByEmail is string && data.backedUpByEmail.size() <= 200 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidCheckIn(data) {
+      return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'clientSubmissionId', 'isTestData', 'createdAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'latitude', 'longitude', 'clientSubmissionId', 'isTestData', 'createdAt']) &&
+        data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.agentUid is string && data.agentUid.size() <= 128 &&
+        data.agentName is string && data.agentName.size() <= 120 &&
+        data.arrivalTimeText is string && data.arrivalTimeText.size() <= 64 &&
+        data.comments is string && data.comments.size() <= 500 &&
+        data.batteryPercent is int && data.batteryPercent >= -1 && data.batteryPercent <= 100 &&
+        data.networkStatus is string && data.networkStatus.size() <= 64 &&
+        (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        data.isTestData is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidIncident(data) {
+      return data.keys().hasAll(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'evidenceBase64', 'evidenceFileName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
+        data.category is string && data.category.size() <= 100 &&
+        data.description is string && data.description.size() >= 5 && data.description.size() <= 2000 &&
+        isValidUrgency(data.urgency) &&
+        isValidIncidentStatus(data.status) &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        data.reporterUid is string && data.reporterUid.size() <= 128 &&
+        data.reporterName is string && data.reporterName.size() <= 120 &&
+        (!('evidenceBase64' in data) || data.evidenceBase64 == null || (data.evidenceBase64 is string && data.evidenceBase64.size() <= 350000)) &&
+        (!('evidenceFileName' in data) || data.evidenceFileName == null || (data.evidenceFileName is string && data.evidenceFileName.size() <= 120)) &&
+        data.internalNotes is string && data.internalNotes.size() <= 1500 &&
+        data.escalatedTo is string && data.escalatedTo.size() <= 120 &&
+        data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        data.isTestData is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidResultSubmission(data) {
+      return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'version', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'version', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.wardName is string && data.wardName.size() <= 120 &&
+        data.submittedByUid is string && data.submittedByUid.size() <= 128 &&
+        data.submittedByName is string && data.submittedByName.size() <= 120 &&
+        isValidPartyVotesOptional(data) &&
+        data.registeredVoters is int && data.registeredVoters >= 0 && data.registeredVoters <= 50000 &&
+        data.accreditedVoters is int && data.accreditedVoters >= 0 && data.accreditedVoters <= 50000 &&
+        data.validVotes is int && data.validVotes >= 0 && data.validVotes <= 50000 &&
+        data.rejectedVotes is int && data.rejectedVotes >= 0 && data.rejectedVotes <= 50000 &&
+        data.totalVotesCast is int && data.totalVotesCast >= 0 && data.totalVotesCast <= 50000 &&
+        hasConsistentVoteMath(data) &&
+        data.bvasStatus is string && data.bvasStatus.size() <= 80 &&
+        data.bvasNotes is string && data.bvasNotes.size() <= 1000 &&
+        data.submissionNotes is string && data.submissionNotes.size() <= 1000 &&
+        (!('ec8aImageBase64' in data) || data.ec8aImageBase64 == null || (data.ec8aImageBase64 is string && data.ec8aImageBase64.size() <= 350000)) &&
+        (!('ec8aFileName' in data) || data.ec8aFileName == null || (data.ec8aFileName is string && data.ec8aFileName.size() <= 120)) &&
+        isValidVerificationStatus(data.verificationStatus) &&
+        data.publiclyApproved is bool &&
+        data.reviewNote is string && data.reviewNote.size() <= 1000 &&
+        data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
+        data.reviewedByName is string && data.reviewedByName.size() <= 120 &&
+        (!('reviewedAt' in data) || data.reviewedAt == null || (data.reviewedAt is timestamp && data.reviewedAt <= request.time)) &&
+        data.version is int && data.version >= 1 &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        data.isTestData is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidResultHistory(data) {
+      return data.keys().hasAll(['action', 'previousStatus', 'newStatus', 'note', 'actorUid', 'actorName', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'createdAt']) &&
+        data.keys().hasOnly(['action', 'previousStatus', 'newStatus', 'note', 'actorUid', 'actorName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'createdAt']) &&
+        data.action is string && data.action.size() <= 64 &&
+        data.previousStatus is string && data.previousStatus.size() <= 40 &&
+        data.newStatus is string && data.newStatus.size() <= 40 &&
+        data.note is string && data.note.size() <= 1000 &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 120 &&
+        isValidPartyVotesOptional(data) &&
+        data.registeredVoters is int && data.registeredVoters >= 0 &&
+        data.accreditedVoters is int && data.accreditedVoters >= 0 &&
+        data.validVotes is int && data.validVotes >= 0 &&
+        data.rejectedVotes is int && data.rejectedVotes >= 0 &&
+        data.totalVotesCast is int && data.totalVotesCast >= 0 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidApprovedPuResult(data, puId) {
+      return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'sourceSubmissionId', 'submittedByUid', 'submittedByName', 'approvedByUid', 'approvedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'approvedAt', 'updatedAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'sourceSubmissionId', 'submittedByUid', 'submittedByName', 'approvedByUid', 'approvedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'approvedAt', 'updatedAt']) &&
+        data.puId == puId &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.wardName is string && data.wardName.size() <= 120 &&
+        data.sourceSubmissionId is string && data.sourceSubmissionId.size() <= 128 &&
+        data.submittedByUid is string && data.submittedByUid.size() <= 128 &&
+        data.submittedByName is string && data.submittedByName.size() <= 120 &&
+        data.approvedByUid is string && data.approvedByUid.size() <= 128 &&
+        data.approvedByName is string && data.approvedByName.size() <= 120 &&
+        data.apcVotes is int && data.apcVotes >= 0 && data.apcVotes <= 50000 &&
+        data.pdpVotes is int && data.pdpVotes >= 0 && data.pdpVotes <= 50000 &&
+        data.adcVotes is int && data.adcVotes >= 0 && data.adcVotes <= 50000 &&
+        data.othersVotes is int && data.othersVotes >= 0 && data.othersVotes <= 50000 &&
+        data.registeredVoters is int && data.registeredVoters >= 0 && data.registeredVoters <= 50000 &&
+        data.accreditedVoters is int && data.accreditedVoters >= 0 && data.accreditedVoters <= 50000 &&
+        data.validVotes is int && data.validVotes == data.apcVotes + data.pdpVotes + data.adcVotes + data.othersVotes &&
+        data.rejectedVotes is int && data.rejectedVotes >= 0 && data.rejectedVotes <= 50000 &&
+        data.totalVotesCast is int && data.totalVotesCast == data.validVotes + data.rejectedVotes &&
+        data.approvedAt is timestamp && data.approvedAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAggregatedResult(data, aggId) {
+      return data.keys().hasAll(['scopeType', 'scopeId', 'lgaId', 'wardId', 'label', 'verifiedPuCount', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['scopeType', 'scopeId', 'lgaId', 'wardId', 'label', 'verifiedPuCount', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'updatedByUid', 'updatedAt']) &&
+        data.scopeType in ['WARD', 'LGA', 'CONSTITUENCY'] &&
+        data.scopeId is string && data.scopeId.size() <= 128 &&
+        data.lgaId is string && data.lgaId.size() <= 32 &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.label is string && data.label.size() <= 160 &&
+        aggId.size() >= 1 &&
+        data.verifiedPuCount is int && data.verifiedPuCount >= 0 &&
+        data.apcVotes is int && data.apcVotes >= 0 &&
+        data.pdpVotes is int && data.pdpVotes >= 0 &&
+        data.adcVotes is int && data.adcVotes >= 0 &&
+        data.othersVotes is int && data.othersVotes >= 0 &&
+        data.registeredVoters is int && data.registeredVoters >= 0 &&
+        data.accreditedVoters is int && data.accreditedVoters >= 0 &&
+        data.validVotes is int && data.validVotes == data.apcVotes + data.pdpVotes + data.adcVotes + data.othersVotes &&
+        data.rejectedVotes is int && data.rejectedVotes >= 0 &&
+        data.totalVotesCast is int && data.totalVotesCast == data.validVotes + data.rejectedVotes &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidReportAttachment(data) {
+      return data.keys().hasAll(['attachmentId', 'reportId', 'reportType', 'ownerUid', 'lgaId', 'wardId', 'puId', 'fileName', 'sha256Hash', 'sizeBytes', 'base64Data', 'createdAt']) &&
+        data.keys().hasOnly(['attachmentId', 'reportId', 'reportType', 'ownerUid', 'lgaId', 'wardId', 'puId', 'fileName', 'sha256Hash', 'sizeBytes', 'base64Data', 'createdAt']) &&
+        data.attachmentId is string && data.attachmentId.size() >= 1 && data.attachmentId.size() <= 128 &&
+        data.reportId is string && data.reportId.size() >= 1 && data.reportId.size() <= 128 &&
+        data.reportType is string && data.reportType in ['CHECK_IN', 'STATUS_UPDATE', 'INCIDENT_REPORT', 'RESULT_SUBMISSION'] &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 120 &&
+        data.sha256Hash is string && data.sha256Hash.size() == 64 &&
+        data.sizeBytes is int && data.sizeBytes > 0 && data.sizeBytes <= 350000 &&
+        data.base64Data is string && data.base64Data.size() >= 1 && data.base64Data.size() <= 350000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidPublicResult(data) {
+      return data.keys().hasAll(['puCode', 'puName', 'wardName', 'lgaId', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'approvedByUid', 'verifiedAt']) &&
+        data.keys().hasOnly(['puCode', 'puName', 'wardName', 'lgaId', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'approvedByUid', 'verifiedAt']) &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        data.wardName is string && data.wardName.size() <= 120 &&
+        isValidLgaId(data.lgaId) &&
+        isValidPartyVotesOptional(data) &&
+        data.registeredVoters is int && data.registeredVoters >= 0 &&
+        data.accreditedVoters is int && data.accreditedVoters >= 0 &&
+        data.validVotes is int && data.validVotes >= 0 &&
+        data.rejectedVotes is int && data.rejectedVotes >= 0 &&
+        data.totalVotesCast is int && data.totalVotesCast >= 0 &&
+        data.approvedByUid is string && data.approvedByUid.size() <= 128 &&
+        data.verifiedAt is timestamp && data.verifiedAt <= request.time;
+    }
+
+    function isValidTimelineEvent(data) {
+      return data.keys().hasAll(['eventType', 'title', 'description', 'lgaId', 'wardId', 'puId', 'puCode', 'actorUid', 'actorName', 'isTestData', 'createdAt']) &&
+        data.keys().hasOnly(['eventType', 'title', 'description', 'lgaId', 'wardId', 'puId', 'puCode', 'actorUid', 'actorName', 'isTestData', 'createdAt']) &&
+        data.eventType is string && data.eventType.size() <= 64 &&
+        data.title is string && data.title.size() <= 160 &&
+        data.description is string && data.description.size() <= 600 &&
+        data.lgaId is string && data.lgaId.size() <= 32 &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 120 &&
+        data.isTestData is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['title', 'body', 'type', 'targetLgaId', 'targetWardId', 'isCritical', 'createdByUid', 'createdAt']) &&
+        data.keys().hasOnly(['title', 'body', 'type', 'targetLgaId', 'targetWardId', 'isCritical', 'isTestData', 'createdByUid', 'createdAt']) &&
+        data.title is string && data.title.size() <= 160 &&
+        data.body is string && data.body.size() <= 1000 &&
+        data.type is string && data.type.size() <= 64 &&
+        data.targetLgaId is string && data.targetLgaId.size() <= 32 &&
+        data.targetWardId is string && data.targetWardId.size() <= 128 &&
+        data.isCritical is bool &&
+        (!('isTestData' in data) || data.isTestData is bool) &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidEmergencyContact(data) {
+      return data.keys().hasAll(['name', 'roleLabel', 'phoneNumber', 'scopeLgaId', 'isPriority', 'notes', 'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'roleLabel', 'phoneNumber', 'scopeLgaId', 'isPriority', 'notes', 'createdByUid', 'updatedByUid', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.roleLabel is string && data.roleLabel.size() <= 100 &&
+        data.phoneNumber is string && data.phoneNumber.size() >= 6 && data.phoneNumber.size() <= 24 &&
+        data.phoneNumber.matches('^[+0-9][0-9\\s\\-()]{4,22}[0-9]$') &&
+        data.scopeLgaId in ['all', 'funtua', 'dandume'] &&
+        data.isPriority is bool &&
+        data.notes is string && data.notes.size() <= 240 &&
+        data.createdByUid is string && data.createdByUid.size() <= 128 &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['actorUid', 'actorName', 'actorEmail', 'actorRole', 'action', 'affectedEntity', 'affectedId', 'details', 'createdAt']) &&
+        data.keys().hasOnly(['actorUid', 'actorName', 'actorEmail', 'actorRole', 'action', 'affectedEntity', 'affectedId', 'details', 'createdAt']) &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 120 &&
+        data.actorEmail is string && data.actorEmail.size() <= 200 &&
+        data.actorRole is string && data.actorRole.size() <= 40 &&
+        data.action is string && data.action.size() <= 100 &&
+        data.affectedEntity is string && data.affectedEntity.size() <= 64 &&
+        data.affectedId is string && data.affectedId.size() <= 128 &&
+        data.details is string && data.details.size() <= 1000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // --- 1. SYSTEM SETTINGS ---
+    match /system_settings/{settingId} {
+      allow get: if isVerifiedUser() && isValidId(settingId);
+      allow create: if isVerifiedUser() && isValidId(settingId) && (
+        (settingId == 'bootstrap' &&
+          !exists(/databases/$(database)/documents/system_settings/bootstrap) &&
+          incoming().initializedByUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          isValidBootstrap(incoming())) ||
+        (settingId == 'global' &&
+          (isFullControlAdmin() || !exists(/databases/$(database)/documents/system_settings/bootstrap)) &&
+          incoming().updatedByUid == request.auth.uid &&
+          incoming().updatedAt == request.time &&
+          isValidGlobalSettings(incoming()))
+      );
+      allow update: if isFullControlAdmin() &&
+        settingId == 'global' &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        isValidGlobalSettings(incoming());
+      allow delete: if false;
+    }
+
+    // --- 2. ADMINS REGISTRY ---
+    match /admins/{uid} {
+      allow get: if isVerifiedUser() && isValidId(uid) && (request.auth.uid == uid || isFullControlAdmin());
+      allow list: if isFullControlAdmin();
+      allow create: if isVerifiedUser() && isValidId(uid) &&
+        isValidAdminDoc(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time && (
+          isFullControlAdmin() ||
+          (request.auth.uid == uid && !exists(/databases/$(database)/documents/system_settings/bootstrap))
+        );
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
+    }
+
+    // --- 3. USERS & RBAC PROFILES ---
+    match /users/{uid} {
+      allow get: if isVerifiedUser() && isValidId(uid) && (
+        request.auth.uid == uid ||
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().assignedLgaId) ||
+        isWardCoordFor(existing().assignedWardId)
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().assignedLgaId) ||
+        isWardCoordFor(existing().assignedWardId)
+      );
+      allow create: if isVerifiedUser() && isValidId(uid) &&
+        isValidUserAccount(incoming()) &&
+        incoming().uid == uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          (request.auth.uid == uid &&
+            incoming().role == 'PENDING' &&
+            incoming().status == 'PENDING_APPROVAL' &&
+            incoming().sessionRevoked == false &&
+            incoming().assignedLgaId == '' &&
+            incoming().assignedWardId == '' &&
+            incoming().assignedPollingUnitId == '') ||
+          (request.auth.uid == uid &&
+            incoming().role == 'FULL_CONTROL_ADMIN' &&
+            incoming().status == 'ACTIVE' &&
+            incoming().sessionRevoked == false &&
+            (isBootstrappedEmail() || !exists(/databases/$(database)/documents/system_settings/bootstrap))) ||
+          isFullControlAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(uid) &&
+        isValidUserAccount(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (uid != request.auth.uid || incoming().role == existing().role) && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().assignedLgaId) &&
+            isLgaAdminFor(incoming().assignedLgaId) &&
+            existing().role != 'FULL_CONTROL_ADMIN' &&
+            incoming().role in ['VERIFICATION_OFFICER', 'WARD_COORDINATOR', 'POLLING_UNIT_AGENT', 'PENDING'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'revokedReason', 'updatedAt'])) ||
+          (isWardCoordFor(existing().assignedWardId) &&
+            existing().role == 'POLLING_UNIT_AGENT' &&
+            incoming().role == 'POLLING_UNIT_AGENT' &&
+            incoming().assignedLgaId == existing().assignedLgaId &&
+            incoming().assignedWardId == existing().assignedWardId &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['assignedPollingUnitId', 'updatedAt'])) ||
+          (request.auth.uid == uid &&
+            existing().status == 'ACTIVE' &&
+            existing().sessionRevoked != true &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'lastLoginAt', 'updatedAt']))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
+    }
+
+    // --- 3B. USER NOTIFICATION & ACCOUNT PREFERENCES ---
+    match /user_preferences/{uid} {
+      allow get: if isVerifiedUser() && isValidId(uid) && request.auth.uid == uid;
+      allow create, update: if isVerifiedUser() && isValidId(uid) &&
+        request.auth.uid == uid &&
+        isValidUserPreferences(incoming()) &&
+        incoming().uid == uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // --- 3C. FIXED 4 POLITICAL PARTIES (APC, PDP, ADC, OTHERS) ---
+    match /party_configs/{partyId} {
+      allow get, list: if hasActiveUser();
+      allow create, update: if isFullControlAdmin() &&
+        isValidPartyConfig(incoming(), partyId) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // --- 4. WARDS (Controlled Master Dataset) ---
+    match /wards/{wardId} {
+      allow get: if isVerifiedUser() && isValidId(wardId) && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          callerDoc().assignedLgaId == existing().lgaId ||
+          callerDoc().assignedWardId == wardId ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          callerDoc().assignedLgaId == existing().lgaId ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+        ))
+      );
+      allow create: if isFullControlAdmin() && isValidId(wardId) &&
+        isValidWard(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isFullControlAdmin() && isValidId(wardId) &&
+        isValidWard(incoming()) &&
+        incoming().lgaId == existing().lgaId &&
+        incoming().wardCode == existing().wardCode &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // --- 5. POLLING UNITS (Controlled Master Dataset) ---
+    match /polling_units/{puId} {
+      allow get: if isVerifiedUser() && isValidId(puId) && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, puId, existing().assignedAgentUid)
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().assignedAgentUid, existing().assignedAgentUid)
+      );
+      allow create: if isFullControlAdmin() && isValidId(puId) &&
+        isValidPollingUnit(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/wards/$(incoming().wardId));
+      allow update: if isVerifiedUser() && isValidId(puId) &&
+        isValidPollingUnit(incoming()) &&
+        incoming().lgaId == existing().lgaId &&
+        incoming().wardId == existing().wardId &&
+        incoming().puCode == existing().puCode &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().lgaId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'registeredVoters', 'updatedAt'])) ||
+          (isVerificationOfficerFor(existing().lgaId, existing().wardId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['operationalStatus', 'updatedAt'])) ||
+          (isWardCoordFor(existing().wardId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'updatedAt'])) ||
+          ((isPuAgentFor(puId) || (hasActiveUser() && existing().assignedAgentUid == request.auth.uid)) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['operationalStatus', 'registeredVoters', 'updatedAt']))
+        );
+      allow delete: if false;
+    }
+
+    // --- 5A. ATOMIC UNIQUE POLLING UNIT ASSIGNMENTS ---
+    match /pu_assignments/{puId} {
+      allow get, list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, puId, existing().agentUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(puId) &&
+        !exists(/databases/$(database)/documents/pu_assignments/$(puId)) &&
+        isValidPuAssignment(incoming(), puId) &&
+        incoming().assignedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(incoming().lgaId) ||
+          isWardCoordFor(incoming().wardId)
+        );
+      allow update: if isFullControlAdmin() && isValidId(puId) &&
+        isValidPuAssignment(incoming(), puId) &&
+        incoming().lgaId == existing().lgaId &&
+        incoming().wardId == existing().wardId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().assignedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if isVerifiedUser() && isValidId(puId) && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().lgaId) ||
+        isWardCoordFor(existing().wardId)
+      );
+    }
+
+    // --- 5B. MASTER DIRECTORY BACKUPS ---
+    match /directory_backups/{backupId} {
+      allow get, list: if isFullControlAdmin();
+      allow create: if isFullControlAdmin() && isValidId(backupId) &&
+        isValidDirectoryBackup(incoming()) &&
+        incoming().backedUpByUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // --- 6. AGENT CHECK-INS ---
+    match /check_ins/{checkInId} {
+      allow get: if isVerifiedUser() && isValidId(checkInId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().agentUid))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().agentUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(checkInId) &&
+        isValidCheckIn(incoming()) &&
+        incoming().agentUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        exists(/databases/$(database)/documents/polling_units/$(incoming().puId)) && (
+          isFullControlAdmin() ||
+          canReadInArea(incoming().lgaId, incoming().wardId, incoming().puId, incoming().agentUid)
+        );
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(checkInId);
+    }
+
+    // --- 7. INCIDENTS & ALERTS ---
+    match /incidents/{incidentId} {
+      allow get: if isVerifiedUser() && isValidId(incidentId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().reporterUid))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().reporterUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(incidentId) &&
+        isValidIncident(incoming()) &&
+        incoming().reporterUid == request.auth.uid &&
+        incoming().status == 'NEW' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          canReadInArea(incoming().lgaId, incoming().wardId, incoming().puId, incoming().reporterUid)
+        );
+      allow update: if isVerifiedUser() && isValidId(incidentId) &&
+        isValidIncident(incoming()) &&
+        incoming().reporterUid == existing().reporterUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().lgaId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt'])) ||
+          (isWardCoordFor(existing().wardId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt']))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(incidentId);
+    }
+
+    // --- 8. RESULT SUBMISSIONS & IMMUTABLE HISTORY ---
+    match /result_submissions/{resultId} {
+      allow get: if isVerifiedUser() && isValidId(resultId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().submittedByUid))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().submittedByUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(resultId) &&
+        isValidResultSubmission(incoming()) &&
+        incoming().submittedByUid == request.auth.uid &&
+        incoming().publiclyApproved == false &&
+        incoming().verificationStatus in ['DRAFT', 'SUBMITTED'] &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/polling_units/$(incoming().puId)) && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(incoming().lgaId) ||
+          isWardCoordFor(incoming().wardId) ||
+          isPuAgentFor(incoming().puId) ||
+          (hasActiveUser() && get(/databases/$(database)/documents/polling_units/$(incoming().puId)).data.assignedAgentUid == request.auth.uid)
+        );
+      allow update: if isVerifiedUser() && isValidId(resultId) &&
+        isValidResultSubmission(incoming()) &&
+        incoming().submittedByUid == existing().submittedByUid &&
+        incoming().puId == existing().puId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (incoming().verificationStatus != 'VERIFIED' || existing().submittedByUid != request.auth.uid) && (
+          isFullControlAdmin() ||
+          ((isLgaAdminFor(existing().lgaId) || isVerificationOfficerFor(existing().lgaId, existing().wardId)) &&
+            existing().verificationStatus in ['SUBMITTED', 'UNDER_REVIEW', 'REQUIRES_CORRECTION'] &&
+            incoming().verificationStatus in ['UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'REQUIRES_CORRECTION'] &&
+            (!(incoming().verificationStatus in ['REJECTED', 'REQUIRES_CORRECTION']) || incoming().reviewNote.size() >= 3) &&
+            incoming().publiclyApproved == existing().publiclyApproved &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['verificationStatus', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'updatedAt'])) ||
+          (hasActiveUser() &&
+            existing().submittedByUid == request.auth.uid &&
+            existing().verificationStatus in ['DRAFT', 'REQUIRES_CORRECTION'] &&
+            incoming().verificationStatus in ['DRAFT', 'SUBMITTED'] &&
+            incoming().publiclyApproved == false &&
+            incoming().version >= existing().version &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'version', 'updatedAt']))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(resultId);
+
+      match /history/{historyId} {
+        allow get, list: if isVerifiedUser() && isValidId(resultId) && (
+          isFullControlAdmin() ||
+          canReadInArea(
+            get(/databases/$(database)/documents/result_submissions/$(resultId)).data.lgaId,
+            get(/databases/$(database)/documents/result_submissions/$(resultId)).data.wardId,
+            get(/databases/$(database)/documents/result_submissions/$(resultId)).data.puId,
+            get(/databases/$(database)/documents/result_submissions/$(resultId)).data.submittedByUid
+          )
+        );
+        allow create: if isVerifiedUser() && isValidId(resultId) && isValidId(historyId) &&
+          isValidResultHistory(incoming()) &&
+          incoming().actorUid == request.auth.uid &&
+          incoming().createdAt == request.time && (
+            isFullControlAdmin() || hasActiveUser()
+          );
+        allow update: if false;
+        allow delete: if isFullControlAdmin() && isValidId(resultId) && isValidId(historyId);
+      }
+    }
+
+    // --- 8B. CANONICAL APPROVED PU RESULTS (1 DOC PER PU) ---
+    match /approved_pu_results/{puId} {
+      allow get: if isVerifiedUser() && isValidId(puId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && canReadInArea(existing().lgaId, existing().wardId, puId, existing().submittedByUid))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().submittedByUid)
+      );
+      allow create, update: if isVerifiedUser() && isValidId(puId) &&
+        isValidApprovedPuResult(incoming(), puId) &&
+        incoming().approvedByUid == request.auth.uid &&
+        incoming().submittedByUid != request.auth.uid &&
+        incoming().approvedAt <= request.time &&
+        incoming().updatedAt == request.time &&
+        canVerifyScope(incoming().lgaId, incoming().wardId);
+      allow delete: if isVerifiedUser() && isValidId(puId) &&
+        isFullControlAdmin();
+    }
+
+    // --- 8C. TRANSACTIONALLY AGGREGATED WARD / LGA / CONSTITUENCY TOTALS ---
+    match /aggregated_results/{aggId} {
+      allow get: if isVerifiedUser() && isValidId(aggId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && (
+          (existing().scopeType == 'WARD' && canReadInArea(existing().lgaId, existing().wardId, '', '')) ||
+          (existing().scopeType == 'LGA' && (isLgaAdminFor(existing().lgaId) || (hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && (callerDoc().assignedLgaId == '' || callerDoc().assignedLgaId == existing().lgaId)))) ||
+          (existing().scopeType == 'CONSTITUENCY' && hasActiveUser() && callerDoc().role in ['FUNTUA_SUPER_ADMIN', 'DANDUME_SUPER_ADMIN', 'VERIFICATION_OFFICER'])
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (existing().scopeType == 'WARD' && canReadInArea(existing().lgaId, existing().wardId, '', '')) ||
+        (existing().scopeType == 'LGA' && (isLgaAdminFor(existing().lgaId) || isVerificationOfficerFor(existing().lgaId, ''))) ||
+        (existing().scopeType == 'CONSTITUENCY' && hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+      );
+      allow create, update: if isVerifiedUser() && isValidId(aggId) &&
+        isValidAggregatedResult(incoming(), aggId) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (incoming().scopeType == 'WARD' && canVerifyScope(incoming().lgaId, incoming().wardId)) ||
+          (incoming().scopeType == 'LGA' && (isLgaAdminFor(incoming().lgaId) || (hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && (callerDoc().assignedLgaId == '' || callerDoc().assignedLgaId == incoming().lgaId)))) ||
+          (incoming().scopeType == 'CONSTITUENCY' && hasActiveUser() && callerDoc().role in ['FUNTUA_SUPER_ADMIN', 'DANDUME_SUPER_ADMIN', 'VERIFICATION_OFFICER'])
+        );
+      allow delete: if isFullControlAdmin() && isValidId(aggId);
+    }
+
+    // --- 8D. PROTECTED REPORT ATTACHMENTS ---
+    match /report_attachments/{attachmentId} {
+      allow get: if isVerifiedUser() && isValidId(attachmentId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().ownerUid))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().ownerUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(attachmentId) &&
+        isValidReportAttachment(incoming()) &&
+        incoming().attachmentId == attachmentId &&
+        incoming().ownerUid == request.auth.uid &&
+        incoming().createdAt == request.time && (
+          isFullControlAdmin() ||
+          canReadInArea(incoming().lgaId, incoming().wardId, incoming().puId, incoming().ownerUid)
+        );
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(attachmentId);
+    }
+
+    // --- 9. PUBLIC VERIFIED RESULTS (NO PII) ---
+    match /public_results/{puId} {
+      allow get, list: if isVerifiedUser();
+      allow create, update: if isFullControlAdmin() && isValidId(puId) &&
+        isValidPublicResult(incoming()) &&
+        incoming().approvedByUid == request.auth.uid &&
+        incoming().verifiedAt == request.time;
+      allow delete: if isFullControlAdmin() && isValidId(puId);
+    }
+
+    // --- 10. ELECTION DAY TIMELINE ---
+    match /timeline_events/{eventId} {
+      allow get, list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        canReadInArea(existing().lgaId, existing().wardId, existing().puId, existing().actorUid)
+      );
+      allow create: if isVerifiedUser() && isValidId(eventId) &&
+        isValidTimelineEvent(incoming()) &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time && (
+          isFullControlAdmin() || hasActiveUser()
+        );
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(eventId);
+    }
+
+    // --- 11. NOTIFICATIONS ---
+    match /notifications/{notificationId} {
+      allow get, list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          existing().targetLgaId == 'all' ||
+          existing().targetLgaId == callerDoc().assignedLgaId ||
+          existing().targetWardId == callerDoc().assignedWardId ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+        ))
+      );
+      allow create: if isVerifiedUser() && isValidId(notificationId) &&
+        isValidNotification(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time && (
+          isFullControlAdmin() || hasActiveUser()
+        );
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(notificationId);
+    }
+
+    // --- 11B. EMERGENCY ASSISTANCE NUMBERS (AUTHENTICATED USERS ONLY) ---
+    match /emergency_contacts/{contactId} {
+      allow get: if isVerifiedUser() && isValidId(contactId) && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          existing().scopeLgaId == 'all' ||
+          existing().scopeLgaId == callerDoc().assignedLgaId ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          existing().scopeLgaId == 'all' ||
+          existing().scopeLgaId == callerDoc().assignedLgaId ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && callerDoc().assignedLgaId == '')
+        ))
+      );
+      allow create: if isVerifiedUser() && isValidId(contactId) &&
+        isValidEmergencyContact(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(incoming().scopeLgaId)
+        );
+      allow update: if isVerifiedUser() && isValidId(contactId) &&
+        isValidEmergencyContact(incoming()) &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().scopeLgaId) && isLgaAdminFor(incoming().scopeLgaId))
+        );
+      allow delete: if isVerifiedUser() && isValidId(contactId) && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().scopeLgaId)
+      );
+    }
+
+    // --- 12. IMMUTABLE AUDIT LOGS (ADMIN ONLY READ) ---
+    match /audit_logs/{logId} {
+      allow get, list: if isFullControlAdmin();
+      allow create: if isVerifiedUser() && isValidId(logId) &&
+        isValidAuditLog(incoming()) &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

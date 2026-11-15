@@ -1,0 +1,567 @@
+{
+  "entities": {
+    "BootstrapLock": {
+      "title": "BootstrapLock",
+      "description": "Immutable lock document recording initial Full Control Admin initialization.",
+      "type": "object",
+      "properties": {
+        "initializedByUid": { "type": "string", "description": "UID of the initial Full Control Admin." },
+        "initializedByEmail": { "type": "string", "description": "Verified email of the initial admin." },
+        "cycleYear": { "type": "integer", "description": "Election cycle year (e.g. 2027)." },
+        "constituencyName": { "type": "string", "description": "Constituency name." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": ["initializedByUid", "initializedByEmail", "cycleYear", "constituencyName", "createdAt"]
+    },
+    "GlobalSettings": {
+      "title": "GlobalSettings",
+      "description": "System-wide security and operational settings.",
+      "type": "object",
+      "properties": {
+        "inactivityTimeoutMinutes": { "type": "integer", "description": "Auto-logout timeout in minutes." },
+        "mfaPrepared": { "type": "boolean", "description": "MFA readiness flag." },
+        "publicSummaryEnabled": { "type": "boolean", "description": "Whether approved public summaries are visible." },
+        "smsFallbackConfigured": { "type": "boolean", "description": "Whether external SMS/USSD provider credentials are configured." },
+        "whatsappConfigured": { "type": "boolean", "description": "Whether WhatsApp gateway credentials are configured." },
+        "emailConfigured": { "type": "boolean", "description": "Whether Email gateway credentials are configured." },
+        "whatsappGroupName": { "type": "string", "description": "Official WhatsApp situation room group display name." },
+        "whatsappGroupUrl": { "type": "string", "description": "Official WhatsApp group invitation URL." },
+        "whatsappGroupEnabled": { "type": "boolean", "description": "Whether the WhatsApp group invite link is active for authenticated users." },
+        "updatedByUid": { "type": "string", "description": "Admin UID who last updated settings." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["inactivityTimeoutMinutes", "mfaPrepared", "publicSummaryEnabled", "smsFallbackConfigured", "whatsappConfigured", "emailConfigured", "updatedByUid", "updatedAt"]
+    },
+    "AdminRegistry": {
+      "title": "AdminRegistry",
+      "description": "Authoritative registry of Full Control Admin UIDs.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID of the Full Control Admin." },
+        "email": { "type": "string", "description": "Admin email address." },
+        "grantedByUid": { "type": "string", "description": "UID of granting admin or self on bootstrap." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["uid", "email", "grantedByUid", "createdAt"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "FDMIS user profile, RBAC role, geographical assignment, and session status.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID." },
+        "email": { "type": "string", "description": "User email." },
+        "displayName": { "type": "string", "description": "Full operational name." },
+        "phone": { "type": "string", "description": "Optional operational contact phone." },
+        "role": {
+          "type": "string",
+          "enum": ["FULL_CONTROL_ADMIN", "FUNTUA_SUPER_ADMIN", "DANDUME_SUPER_ADMIN", "VERIFICATION_OFFICER", "WARD_COORDINATOR", "POLLING_UNIT_AGENT", "PENDING"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ACTIVE", "PENDING_APPROVAL", "SUSPENDED"]
+        },
+        "assignedLgaId": { "type": "string", "description": "funtua, dandume, or empty." },
+        "assignedWardId": { "type": "string", "description": "Assigned ward ID or empty." },
+        "assignedPollingUnitId": { "type": "string", "description": "Assigned polling unit ID or empty." },
+        "sessionRevoked": { "type": "boolean", "description": "Emergency session revocation flag." },
+        "revokedReason": { "type": "string", "description": "Reason for emergency revocation or suspension." },
+        "lastLoginAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last login." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["uid", "email", "displayName", "role", "status", "assignedLgaId", "assignedWardId", "assignedPollingUnitId", "sessionRevoked", "createdAt", "updatedAt"]
+    },
+    "UserPreferences": {
+      "title": "UserPreferences",
+      "description": "Per-user notification and security UI preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "criticalAlertsEnabled": { "type": "boolean" },
+        "resultUpdatesEnabled": { "type": "boolean" },
+        "incidentDigestEnabled": { "type": "boolean" },
+        "soundAlertsEnabled": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "criticalAlertsEnabled", "resultUpdatesEnabled", "incidentDigestEnabled", "soundAlertsEnabled", "updatedAt"]
+    },
+    "PartyConfig": {
+      "title": "PartyConfig",
+      "description": "Fixed political party record storing uploaded cloud logo for APC, PDP, ADC, or OTHERS.",
+      "type": "object",
+      "properties": {
+        "partyCode": { "type": "string", "enum": ["APC", "PDP", "ADC", "OTHERS"] },
+        "partyName": { "type": "string" },
+        "logoUrl": { "type": "string", "description": "Cloud Storage download URL or compressed base64 data URL." },
+        "storageMode": { "type": "string", "enum": ["firebase_storage", "firestore_cloud", "none"] },
+        "fileName": { "type": "string" },
+        "sha256Hash": { "type": "string" },
+        "updatedByUid": { "type": "string" },
+        "updatedByName": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["partyCode", "partyName", "logoUrl", "storageMode", "updatedByUid", "updatedByName", "updatedAt"]
+    },
+    "Ward": {
+      "title": "Ward",
+      "description": "Official electoral ward under Funtua or Dandume LGA.",
+      "type": "object",
+      "properties": {
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardCode": { "type": "string", "description": "Official INEC ward code." },
+        "name": { "type": "string", "description": "Official ward name." },
+        "coordinatorUid": { "type": "string", "description": "Assigned Ward Coordinator UID or empty." },
+        "coordinatorName": { "type": "string", "description": "Assigned Ward Coordinator name or empty." },
+        "expectedPollingUnits": { "type": "integer", "description": "Expected official PU count in ward." },
+        "isTestData": { "type": "boolean", "description": "True only for explicitly labeled training/test records." },
+        "createdByUid": { "type": "string", "description": "Creator UID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["lgaId", "wardCode", "name", "coordinatorUid", "coordinatorName", "expectedPollingUnits", "isTestData", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "PollingUnit": {
+      "title": "PollingUnit",
+      "description": "Official Polling Unit record within a ward.",
+      "type": "object",
+      "properties": {
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string", "description": "Parent ward document ID." },
+        "wardName": { "type": "string", "description": "Parent ward name." },
+        "puCode": { "type": "string", "description": "Unique official INEC Polling Unit code." },
+        "name": { "type": "string", "description": "Official Polling Unit name." },
+        "locationDescription": { "type": "string", "description": "Physical landmark/location description." },
+        "latitude": { "type": "number", "description": "Verified latitude if available." },
+        "longitude": { "type": "number", "description": "Verified longitude if available." },
+        "coordinatesVerified": { "type": "boolean", "description": "True only when coordinates are officially verified." },
+        "assignedAgentUid": { "type": "string", "description": "Assigned field agent UID or empty." },
+        "assignedAgentName": { "type": "string", "description": "Assigned field agent name or empty." },
+        "operationalStatus": {
+          "type": "string",
+          "enum": ["NOT_STARTED", "AGENT_ASSIGNED", "AGENT_CHECKED_IN", "MATERIALS_ARRIVED", "VOTING_STARTED", "VOTING_IN_PROGRESS", "VOTING_COMPLETED", "COUNTING_STARTED", "RESULT_SUBMITTED", "RESULT_UNDER_REVIEW", "RESULT_VERIFIED", "INCIDENT_REPORTED", "COMMUNICATION_LOST"]
+        },
+        "registeredVoters": { "type": "integer", "description": "Official registered voters count if known." },
+        "puStatusLabel": { "type": "string", "description": "Official source PDF directory status (EXISTING PU / NEW PU)." },
+        "isMasterRecord": { "type": "boolean", "description": "True when preloaded from the official master PDF directory." },
+        "isTestData": { "type": "boolean", "description": "Test/training label flag." },
+        "createdByUid": { "type": "string", "description": "Creator UID." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["lgaId", "wardId", "wardName", "puCode", "name", "locationDescription", "coordinatesVerified", "assignedAgentUid", "assignedAgentName", "operationalStatus", "registeredVoters", "isTestData", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "PuAssignment": {
+      "title": "PuAssignment",
+      "description": "Atomic unique polling unit to agent assignment lock document.",
+      "type": "object",
+      "properties": {
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "agentUid": { "type": "string" },
+        "agentName": { "type": "string" },
+        "assignedByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["puId", "puCode", "lgaId", "wardId", "agentUid", "agentName", "assignedByUid", "createdAt", "updatedAt"]
+    },
+    "DirectoryBackup": {
+      "title": "DirectoryBackup",
+      "description": "Immutable backup snapshot captured before any Full Control Admin controlled master-directory correction.",
+      "type": "object",
+      "properties": {
+        "entityType": { "type": "string" },
+        "targetDocId": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "puCode": { "type": "string" },
+        "previousName": { "type": "string" },
+        "previousLocationDescription": { "type": "string" },
+        "previousRegisteredVoters": { "type": "integer" },
+        "previousCoordinatesVerified": { "type": "boolean" },
+        "previousLatitude": { "type": "number" },
+        "previousLongitude": { "type": "number" },
+        "correctionReason": { "type": "string" },
+        "backedUpByUid": { "type": "string" },
+        "backedUpByEmail": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["entityType", "targetDocId", "lgaId", "puCode", "previousName", "previousLocationDescription", "previousRegisteredVoters", "previousCoordinatesVerified", "correctionReason", "backedUpByUid", "backedUpByEmail", "createdAt"]
+    },
+    "AgentCheckIn": {
+      "title": "AgentCheckIn",
+      "description": "Election-day agent check-in record for a polling unit.",
+      "type": "object",
+      "properties": {
+        "puId": { "type": "string", "description": "Polling Unit document ID." },
+        "puCode": { "type": "string", "description": "Polling Unit code." },
+        "puName": { "type": "string", "description": "Polling Unit name." },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string", "description": "Ward ID." },
+        "agentUid": { "type": "string", "description": "Checking-in agent UID." },
+        "agentName": { "type": "string", "description": "Agent display name." },
+        "arrivalTimeText": { "type": "string", "description": "Confirmed arrival time string." },
+        "comments": { "type": "string", "description": "Operational arrival notes." },
+        "batteryPercent": { "type": "integer", "description": "Optional device battery percentage (-1 if unavailable)." },
+        "networkStatus": { "type": "string", "description": "Optional connectivity status." },
+        "latitude": { "type": "number", "description": "Optional coarse latitude if permitted." },
+        "longitude": { "type": "number", "description": "Optional coarse longitude if permitted." },
+        "clientSubmissionId": { "type": "string", "description": "Idempotency key for offline sync deduplication." },
+        "isTestData": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["puId", "puCode", "puName", "lgaId", "wardId", "agentUid", "agentName", "arrivalTimeText", "comments", "batteryPercent", "networkStatus", "clientSubmissionId", "isTestData", "createdAt"]
+    },
+    "IncidentReport": {
+      "title": "IncidentReport",
+      "description": "Structured election-day incident and alert report.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "status": { "type": "string", "enum": ["NEW", "UNDER_REVIEW", "ESCALATED", "RESOLVED", "CLOSED"] },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "puName": { "type": "string" },
+        "reporterUid": { "type": "string" },
+        "reporterName": { "type": "string" },
+        "evidenceBase64": { "type": "string", "description": "Optional compressed JPEG evidence preview." },
+        "evidenceFileName": { "type": "string" },
+        "internalNotes": { "type": "string" },
+        "escalatedTo": { "type": "string" },
+        "reviewedByUid": { "type": "string" },
+        "clientSubmissionId": { "type": "string" },
+        "isTestData": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "description", "urgency", "status", "lgaId", "wardId", "puId", "puCode", "puName", "reporterUid", "reporterName", "internalNotes", "escalatedTo", "reviewedByUid", "clientSubmissionId", "isTestData", "createdAt", "updatedAt"]
+    },
+    "ResultSubmission": {
+      "title": "ResultSubmission",
+      "description": "Polling unit election result with 4 fixed parties (APC, PDP, ADC, OTHERS), BVAS data, and Form EC8A evidence.",
+      "type": "object",
+      "properties": {
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "puName": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "wardName": { "type": "string" },
+        "submittedByUid": { "type": "string" },
+        "submittedByName": { "type": "string" },
+        "apcVotes": { "type": "integer" },
+        "pdpVotes": { "type": "integer" },
+        "adcVotes": { "type": "integer" },
+        "othersVotes": { "type": "integer" },
+        "registeredVoters": { "type": "integer" },
+        "accreditedVoters": { "type": "integer" },
+        "validVotes": { "type": "integer" },
+        "rejectedVotes": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "bvasStatus": { "type": "string" },
+        "bvasNotes": { "type": "string" },
+        "submissionNotes": { "type": "string" },
+        "ec8aImageBase64": { "type": "string" },
+        "ec8aFileName": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "VERIFIED", "REJECTED", "REQUIRES_CORRECTION"] },
+        "publiclyApproved": { "type": "boolean" },
+        "reviewNote": { "type": "string" },
+        "reviewedByUid": { "type": "string" },
+        "reviewedByName": { "type": "string" },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "version": { "type": "integer" },
+        "clientSubmissionId": { "type": "string" },
+        "isTestData": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["puId", "puCode", "puName", "lgaId", "wardId", "wardName", "submittedByUid", "submittedByName", "registeredVoters", "accreditedVoters", "validVotes", "rejectedVotes", "totalVotesCast", "bvasStatus", "bvasNotes", "submissionNotes", "verificationStatus", "publiclyApproved", "reviewNote", "reviewedByUid", "reviewedByName", "version", "clientSubmissionId", "isTestData", "createdAt", "updatedAt"]
+    },
+    "ResultHistoryEntry": {
+      "title": "ResultHistoryEntry",
+      "description": "Immutable audit/revision snapshot for a polling unit result submission.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "previousStatus": { "type": "string" },
+        "newStatus": { "type": "string" },
+        "note": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "apcVotes": { "type": "integer" },
+        "pdpVotes": { "type": "integer" },
+        "adcVotes": { "type": "integer" },
+        "othersVotes": { "type": "integer" },
+        "registeredVoters": { "type": "integer" },
+        "accreditedVoters": { "type": "integer" },
+        "validVotes": { "type": "integer" },
+        "rejectedVotes": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "previousStatus", "newStatus", "note", "actorUid", "actorName", "registeredVoters", "accreditedVoters", "validVotes", "rejectedVotes", "totalVotesCast", "createdAt"]
+    },
+    "ApprovedPuResult": {
+      "title": "ApprovedPuResult",
+      "description": "Canonical FDMIS Internally Verified polling unit result (1 document per PU, source of truth preventing double-counting).",
+      "type": "object",
+      "properties": {
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "puName": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "wardName": { "type": "string" },
+        "sourceSubmissionId": { "type": "string" },
+        "submittedByUid": { "type": "string" },
+        "submittedByName": { "type": "string" },
+        "approvedByUid": { "type": "string" },
+        "approvedByName": { "type": "string" },
+        "apcVotes": { "type": "integer" },
+        "pdpVotes": { "type": "integer" },
+        "adcVotes": { "type": "integer" },
+        "othersVotes": { "type": "integer" },
+        "registeredVoters": { "type": "integer" },
+        "accreditedVoters": { "type": "integer" },
+        "validVotes": { "type": "integer" },
+        "rejectedVotes": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "approvedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["puId", "puCode", "puName", "lgaId", "wardId", "wardName", "sourceSubmissionId", "submittedByUid", "submittedByName", "approvedByUid", "approvedByName", "apcVotes", "pdpVotes", "adcVotes", "othersVotes", "registeredVoters", "accreditedVoters", "validVotes", "rejectedVotes", "totalVotesCast", "approvedAt", "updatedAt"]
+    },
+    "AggregatedResult": {
+      "title": "AggregatedResult",
+      "description": "Automatically maintained Ward, LGA, and Constituency result aggregation updated transactionally on approval/correction.",
+      "type": "object",
+      "properties": {
+        "scopeType": { "type": "string", "enum": ["WARD", "LGA", "CONSTITUENCY"] },
+        "scopeId": { "type": "string" },
+        "lgaId": { "type": "string" },
+        "wardId": { "type": "string" },
+        "label": { "type": "string" },
+        "verifiedPuCount": { "type": "integer" },
+        "apcVotes": { "type": "integer" },
+        "pdpVotes": { "type": "integer" },
+        "adcVotes": { "type": "integer" },
+        "othersVotes": { "type": "integer" },
+        "registeredVoters": { "type": "integer" },
+        "accreditedVoters": { "type": "integer" },
+        "validVotes": { "type": "integer" },
+        "rejectedVotes": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "updatedByUid": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["scopeType", "scopeId", "lgaId", "wardId", "label", "verifiedPuCount", "apcVotes", "pdpVotes", "adcVotes", "othersVotes", "registeredVoters", "accreditedVoters", "validVotes", "rejectedVotes", "totalVotesCast", "updatedByUid", "updatedAt"]
+    },
+    "ReportAttachment": {
+      "title": "ReportAttachment",
+      "description": "Idempotent immutable attachment record linked to a field report.",
+      "type": "object",
+      "properties": {
+        "attachmentId": { "type": "string" },
+        "reportId": { "type": "string" },
+        "reportType": { "type": "string", "enum": ["CHECK_IN", "STATUS_UPDATE", "INCIDENT_REPORT", "RESULT_SUBMISSION"] },
+        "ownerUid": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "puId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "sha256Hash": { "type": "string" },
+        "sizeBytes": { "type": "integer" },
+        "base64Data": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["attachmentId", "reportId", "reportType", "ownerUid", "lgaId", "wardId", "puId", "fileName", "sha256Hash", "sizeBytes", "base64Data", "createdAt"]
+    },
+    "PublicVerifiedResult": {
+      "title": "PublicVerifiedResult",
+      "description": "Sanitized publicly approved polling unit summary containing zero PII or internal notes.",
+      "type": "object",
+      "properties": {
+        "puCode": { "type": "string" },
+        "puName": { "type": "string" },
+        "wardName": { "type": "string" },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "apcVotes": { "type": "integer" },
+        "pdpVotes": { "type": "integer" },
+        "adcVotes": { "type": "integer" },
+        "othersVotes": { "type": "integer" },
+        "registeredVoters": { "type": "integer" },
+        "accreditedVoters": { "type": "integer" },
+        "validVotes": { "type": "integer" },
+        "rejectedVotes": { "type": "integer" },
+        "totalVotesCast": { "type": "integer" },
+        "approvedByUid": { "type": "string" },
+        "verifiedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["puCode", "puName", "wardName", "lgaId", "registeredVoters", "accreditedVoters", "validVotes", "rejectedVotes", "totalVotesCast", "approvedByUid", "verifiedAt"]
+    },
+    "TimelineEvent": {
+      "title": "TimelineEvent",
+      "description": "Chronological election-day operational event.",
+      "type": "object",
+      "properties": {
+        "eventType": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "lgaId": { "type": "string" },
+        "wardId": { "type": "string" },
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "isTestData": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["eventType", "title", "description", "lgaId", "wardId", "puId", "puCode", "actorUid", "actorName", "isTestData", "createdAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Internal role and area scoped situation room notification.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "type": { "type": "string" },
+        "targetLgaId": { "type": "string" },
+        "targetWardId": { "type": "string" },
+        "isCritical": { "type": "boolean" },
+        "isTestData": { "type": "boolean" },
+        "createdByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "body", "type", "targetLgaId", "targetWardId", "isCritical", "createdByUid", "createdAt"]
+    },
+    "EmergencyContact": {
+      "title": "EmergencyContact",
+      "description": "Protected emergency assistance contact number managed by authorized Super Admins.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "roleLabel": { "type": "string", "maxLength": 100 },
+        "phoneNumber": { "type": "string", "minLength": 6, "maxLength": 24, "pattern": "^[+0-9][0-9\\s\\-()]{4,22}[0-9]$" },
+        "scopeLgaId": { "type": "string", "enum": ["all", "funtua", "dandume"] },
+        "isPriority": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 240 },
+        "createdByUid": { "type": "string" },
+        "updatedByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "roleLabel", "phoneNumber", "scopeLgaId", "isPriority", "notes", "createdByUid", "updatedByUid", "createdAt", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable administrative and operational audit trail record.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actorEmail": { "type": "string" },
+        "actorRole": { "type": "string" },
+        "action": { "type": "string" },
+        "affectedEntity": { "type": "string" },
+        "affectedId": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorName", "actorEmail", "actorRole", "action", "affectedEntity", "affectedId", "details", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/system_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/GlobalSettings" },
+      "description": "System configuration and bootstrap lock documents."
+    },
+    "/admins/{uid}": {
+      "schema": { "$ref": "#/entities/AdminRegistry" },
+      "description": "Authoritative Full Control Admin registry."
+    },
+    "/users/{uid}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Registered FDMIS users, roles, scopes, and revocation state."
+    },
+    "/user_preferences/{uid}": {
+      "schema": { "$ref": "#/entities/UserPreferences" },
+      "description": "Per-user notification and security settings."
+    },
+    "/party_configs/{partyId}": {
+      "schema": { "$ref": "#/entities/PartyConfig" },
+      "description": "Fixed 4 political party configurations and uploaded cloud logos (APC, PDP, ADC, OTHERS)."
+    },
+    "/wards/{wardId}": {
+      "schema": { "$ref": "#/entities/Ward" },
+      "description": "Official electoral wards in Funtua and Dandume LGAs."
+    },
+    "/polling_units/{puId}": {
+      "schema": { "$ref": "#/entities/PollingUnit" },
+      "description": "Official polling unit directory and operational status."
+    },
+    "/pu_assignments/{puId}": {
+      "schema": { "$ref": "#/entities/PuAssignment" },
+      "description": "Atomic 1-to-1 unique polling unit to agent assignments."
+    },
+    "/directory_backups/{backupId}": {
+      "schema": { "$ref": "#/entities/DirectoryBackup" },
+      "description": "Immutable backup snapshots before controlled master-directory corrections."
+    },
+    "/check_ins/{checkInId}": {
+      "schema": { "$ref": "#/entities/AgentCheckIn" },
+      "description": "Agent election-day check-ins."
+    },
+    "/incidents/{incidentId}": {
+      "schema": { "$ref": "#/entities/IncidentReport" },
+      "description": "Field incident reports and alert workflow."
+    },
+    "/result_submissions/{resultId}": {
+      "schema": { "$ref": "#/entities/ResultSubmission" },
+      "description": "Polling unit result, 4-party votes, BVAS accreditation, and EC8A submissions."
+    },
+    "/result_submissions/{resultId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/ResultHistoryEntry" },
+      "description": "Immutable submission and verification history."
+    },
+    "/approved_pu_results/{puId}": {
+      "schema": { "$ref": "#/entities/ApprovedPuResult" },
+      "description": "Canonical FDMIS Internally Verified polling unit results (1 per PU)."
+    },
+    "/aggregated_results/{aggId}": {
+      "schema": { "$ref": "#/entities/AggregatedResult" },
+      "description": "Auto-calculated Ward, LGA, and Constituency totals from approved results."
+    },
+    "/report_attachments/{attachmentId}": {
+      "schema": { "$ref": "#/entities/ReportAttachment" },
+      "description": "Protected report photo and evidence attachments."
+    },
+    "/public_results/{puId}": {
+      "schema": { "$ref": "#/entities/PublicVerifiedResult" },
+      "description": "Publicly approved verified polling unit results without PII."
+    },
+    "/timeline_events/{eventId}": {
+      "schema": { "$ref": "#/entities/TimelineEvent" },
+      "description": "Chronological election-day timeline events."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Internal role and geographically scoped alerts."
+    },
+    "/emergency_contacts/{contactId}": {
+      "schema": { "$ref": "#/entities/EmergencyContact" },
+      "description": "Emergency assistance contact numbers for authenticated field and situation room staff."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable protected security audit logs."
+    }
+  }
+}

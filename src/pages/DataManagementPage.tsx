@@ -1,10 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   Database,
+  Download,
+  Eye,
+  EyeOff,
+  FileSpreadsheet,
   RotateCcw,
+  Search,
   ShieldCheck,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -14,14 +21,26 @@ import {
   type TestDeletionResult,
 } from '../services/dataManagementService';
 import {
+  buildDataManagementApprovedResultsCsv,
+  buildDataManagementIncidentsCsv,
+  buildDataManagementResultSubmissionsCsv,
+  downloadStructuredCsv,
+  filterCsvExportColumns,
+  sliceCsvPreviewRows,
+  type CsvPreviewDatasetKey,
+} from '../utils/reportsExport';
+import {
+  IncidentUrgency,
   LGA_DEFINITIONS,
   canManageTestData,
   formatFirestoreTime,
+  isIncidentActive,
   type AgentCheckIn,
   type ApprovedPuResult,
   type IncidentReport,
   type LgaId,
   type NotificationItem,
+  type OperationalNote,
   type PollingUnit,
   type ReportAttachment,
   type ResultSubmission,
@@ -39,6 +58,7 @@ interface DataManagementPageProps {
   notifications: NotificationItem[];
   timelineEvents: TimelineEvent[];
   reportAttachments: ReportAttachment[];
+  notes?: OperationalNote[];
 }
 
 type CategoryKey =
@@ -47,6 +67,7 @@ type CategoryKey =
   | 'incidents'
   | 'checkIns'
   | 'notifications'
+  | 'notes'
   | 'timelineEvents'
   | 'attachments';
 
@@ -56,6 +77,7 @@ const CATEGORY_LABELS: Record<CategoryKey, string> = {
   incidents: 'Incidents & Alerts',
   checkIns: 'Agent Check-Ins & Attendance',
   notifications: 'Notifications',
+  notes: 'Operational Notes & Messages',
   timelineEvents: 'Timeline & Report Activity Logs',
   attachments: 'Uploaded Evidence Attachments',
 };
@@ -70,18 +92,54 @@ export function DataManagementPage({
   notifications,
   timelineEvents,
   reportAttachments,
+  notes = [],
 }: DataManagementPageProps) {
   const authorized = canManageTestData(user.role);
 
   const [viewMode, setViewMode] = useState<'MARKED_TEST' | 'MANUAL_SELECTION'>('MARKED_TEST');
   const [activeCategory, setActiveCategory] = useState<CategoryKey>('results');
   const [lgaFilter, setLgaFilter] = useState<'all' | LgaId>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showCsvPreview, setShowCsvPreview] = useState(true);
+  const [previewDataset, setPreviewDataset] =
+    useState<CsvPreviewDatasetKey>('resultSubmissions');
+  const [previewLimit, setPreviewLimit] = useState<5 | 10>(5);
+  const [hiddenColumnsByDataset, setHiddenColumnsByDataset] = useState<
+    Record<CsvPreviewDatasetKey, string[]>
+  >({
+    resultSubmissions: [],
+    verifiedResults: [],
+    incidentReports: [],
+  });
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+  const columnMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!columnMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (columnMenuRef.current && !columnMenuRef.current.contains(event.target as Node)) {
+        setColumnMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setColumnMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [columnMenuOpen]);
 
   const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
   const [selectedApproved, setSelectedApproved] = useState<Set<string>>(new Set());
   const [selectedIncidents, setSelectedIncidents] = useState<Set<string>>(new Set());
   const [selectedCheckIns, setSelectedCheckIns] = useState<Set<string>>(new Set());
   const [selectedNotifications, setSelectedNotifications] = useState<Set<string>>(new Set());
+  const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
   const [selectedTimeline, setSelectedTimeline] = useState<Set<string>>(new Set());
   const [selectedAttachments, setSelectedAttachments] = useState<Set<string>>(new Set());
 
@@ -93,7 +151,7 @@ export function DataManagementPage({
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [lastSummary, setLastSummary] = useState<TestDeletionResult | null>(null);
 
-  // Identify records explicitly marked as isTestData === true (never heuristic auto-classification)
+  // Identify records explicitly flagged as test data
   const markedTestResultIds = useMemo(
     () => new Set(results.filter((r) => r.isTestData === true).map((r) => r.id)),
     [results]
@@ -121,6 +179,10 @@ export function DataManagementPage({
     () => notifications.filter((n) => n.isTestData === true),
     [notifications]
   );
+  const markedNotes = useMemo(
+    () => notes.filter((n) => n.isTestData === true),
+    [notes]
+  );
   const markedTimeline = useMemo(
     () => timelineEvents.filter((t) => t.isTestData === true),
     [timelineEvents]
@@ -144,6 +206,7 @@ export function DataManagementPage({
     markedIncidents.length +
     markedCheckIns.length +
     markedNotifications.length +
+    markedNotes.length +
     markedTimeline.length +
     markedAttachments.length;
 
@@ -153,17 +216,9 @@ export function DataManagementPage({
     selectedIncidents.size +
     selectedCheckIns.size +
     selectedNotifications.size +
+    selectedNotes.size +
     selectedTimeline.size +
     selectedAttachments.size;
-
-  if (!authorized) {
-    return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-900">
-        Access Restricted: Only authorized Full Control Administrators can access Data Management and
-        test record deletion.
-      </div>
-    );
-  }
 
   const toggleId = (
     setter: React.Dispatch<React.SetStateAction<Set<string>>>,
@@ -183,6 +238,7 @@ export function DataManagementPage({
     setSelectedIncidents(new Set());
     setSelectedCheckIns(new Set());
     setSelectedNotifications(new Set());
+    setSelectedNotes(new Set());
     setSelectedTimeline(new Set());
     setSelectedAttachments(new Set());
   };
@@ -196,6 +252,9 @@ export function DataManagementPage({
     const nIds = useMarked
       ? new Set(markedNotifications.map((n) => n.id))
       : selectedNotifications;
+    const noteIdsSet = useMarked
+      ? new Set(markedNotes.map((n) => n.clientNoteId || n.id))
+      : selectedNotes;
     const tIds = useMarked ? new Set(markedTimeline.map((t) => t.id)) : selectedTimeline;
     const attIds = useMarked
       ? new Set(markedAttachments.map((att) => att.id))
@@ -260,6 +319,15 @@ export function DataManagementPage({
           detail: `Scope: ${n.targetLgaId}`,
         })
       );
+    notes
+      .filter((n) => noteIdsSet.has(n.clientNoteId || n.id))
+      .forEach((n) =>
+        lines.push({
+          category: 'Operational Note',
+          label: n.title || n.content.slice(0, 60),
+          detail: `${n.authorName}${n.puCode ? ` · ${n.puCode}` : ''}`,
+        })
+      );
     timelineEvents
       .filter((t) => tIds.has(t.id))
       .forEach((t) =>
@@ -285,6 +353,7 @@ export function DataManagementPage({
       iIds: Array.from(iIds),
       cIds: Array.from(cIds),
       nIds: Array.from(nIds),
+      noteIds: Array.from(noteIdsSet),
       tIds: Array.from(tIds),
       attIds: Array.from(effectiveAttachmentIds),
       lines,
@@ -296,6 +365,7 @@ export function DataManagementPage({
     markedIncidents,
     markedCheckIns,
     markedNotifications,
+    markedNotes,
     markedTimeline,
     markedAttachments,
     selectedResults,
@@ -303,6 +373,7 @@ export function DataManagementPage({
     selectedIncidents,
     selectedCheckIns,
     selectedNotifications,
+    selectedNotes,
     selectedTimeline,
     selectedAttachments,
     approvedPuResults,
@@ -311,6 +382,7 @@ export function DataManagementPage({
     incidents,
     checkIns,
     notifications,
+    notes,
     timelineEvents,
   ]);
 
@@ -331,6 +403,7 @@ export function DataManagementPage({
           incidentIds: previewItems.iIds,
           checkInIds: previewItems.cIds,
           notificationIds: previewItems.nIds,
+          noteIds: previewItems.noteIds,
           timelineEventIds: previewItems.tIds,
           reportAttachmentIds: previewItems.attIds,
         },
@@ -343,6 +416,7 @@ export function DataManagementPage({
           notifications,
           timelineEvents,
           attachments: reportAttachments,
+          notes,
           pollingUnits,
         }
       );
@@ -353,7 +427,7 @@ export function DataManagementPage({
       setLastSummary(outcome);
       setFeedback({
         type: 'ok',
-        text: `Deleted ${outcome.totalDeleted} selected/test record(s) safely and logged the activity in the audit trail.`,
+        text: `Permanently deleted ${outcome.totalDeleted} record(s), associated timestamps, attachments, and cached device copies.`,
       });
     } catch (err) {
       setFeedback({
@@ -365,30 +439,56 @@ export function DataManagementPage({
     }
   };
 
-  // Filtered datasets for display depending on viewMode & lgaFilter
+  // Filtered datasets for display and CSV export depending on viewMode, lgaFilter & searchQuery
   const matchLga = (lgaId?: string) => lgaFilter === 'all' || lgaId === lgaFilter;
+  const q = searchQuery.trim().toLowerCase();
+  const matchText = (...fields: Array<string | undefined | null>) =>
+    !q || fields.some((f) => (f || '').toLowerCase().includes(q));
 
-  const shownResults = (viewMode === 'MARKED_TEST' ? markedResults : results).filter((r) =>
-    matchLga(r.lgaId)
+  const shownResults = (viewMode === 'MARKED_TEST' ? markedResults : results).filter(
+    (r) =>
+      matchLga(r.lgaId) &&
+      matchText(r.puCode, r.puName, r.wardName, r.submittedByName, r.verificationStatus)
   );
   const shownApproved = (
     viewMode === 'MARKED_TEST' ? markedApprovedResults : approvedPuResults
-  ).filter((a) => matchLga(a.lgaId));
-  const shownIncidents = (viewMode === 'MARKED_TEST' ? markedIncidents : incidents).filter((i) =>
-    matchLga(i.lgaId)
+  ).filter(
+    (a) =>
+      matchLga(a.lgaId) &&
+      matchText(a.puCode, a.puName, a.wardName, a.submittedByName, a.approvedByName)
   );
-  const shownCheckIns = (viewMode === 'MARKED_TEST' ? markedCheckIns : checkIns).filter((c) =>
-    matchLga(c.lgaId)
+  const shownIncidents = (viewMode === 'MARKED_TEST' ? markedIncidents : incidents).filter(
+    (i) =>
+      matchLga(i.lgaId) &&
+      matchText(i.puCode, i.puName, i.title, i.category, i.urgency, i.status, i.reporterName)
+  );
+  const shownCheckIns = (viewMode === 'MARKED_TEST' ? markedCheckIns : checkIns).filter(
+    (c) => matchLga(c.lgaId) && matchText(c.puCode, c.puName, c.agentName)
   );
   const shownNotifications = (
     viewMode === 'MARKED_TEST' ? markedNotifications : notifications
-  ).filter((n) => lgaFilter === 'all' || n.targetLgaId === lgaFilter || n.targetLgaId === 'all');
+  ).filter(
+    (n) =>
+      (lgaFilter === 'all' || n.targetLgaId === lgaFilter || n.targetLgaId === 'all') &&
+      matchText(n.title, n.body, n.targetLgaId)
+  );
+  const shownNotes = (viewMode === 'MARKED_TEST' ? markedNotes : notes).filter(
+    (n) =>
+      (lgaFilter === 'all' || n.lgaId === lgaFilter || n.lgaId === 'all') &&
+      matchText(n.title, n.content, n.puCode, n.puName, n.authorName)
+  );
   const shownTimeline = (
     viewMode === 'MARKED_TEST' ? markedTimeline : timelineEvents
-  ).filter((t) => lgaFilter === 'all' || t.lgaId === lgaFilter);
+  ).filter(
+    (t) =>
+      (lgaFilter === 'all' || t.lgaId === lgaFilter) &&
+      matchText(t.title, t.description, t.puCode, t.actorName)
+  );
   const shownAttachments = (
     viewMode === 'MARKED_TEST' ? markedAttachments : reportAttachments
-  ).filter((att) => matchLga(att.lgaId));
+  ).filter(
+    (att) => matchLga(att.lgaId) && matchText(att.fileName, att.reportId, att.reportType)
+  );
 
   const categoryCounts: Record<CategoryKey, number> = {
     results: shownResults.length,
@@ -396,6 +496,7 @@ export function DataManagementPage({
     incidents: shownIncidents.length,
     checkIns: shownCheckIns.length,
     notifications: shownNotifications.length,
+    notes: shownNotes.length,
     timelineEvents: shownTimeline.length,
     attachments: shownAttachments.length,
   };
@@ -411,12 +512,252 @@ export function DataManagementPage({
       setSelectedCheckIns(new Set(shownCheckIns.map((c) => c.id)));
     } else if (activeCategory === 'notifications') {
       setSelectedNotifications(new Set(shownNotifications.map((n) => n.id)));
+    } else if (activeCategory === 'notes') {
+      setSelectedNotes(new Set(shownNotes.map((n) => n.clientNoteId || n.id)));
     } else if (activeCategory === 'timelineEvents') {
       setSelectedTimeline(new Set(shownTimeline.map((t) => t.id)));
     } else if (activeCategory === 'attachments') {
       setSelectedAttachments(new Set(shownAttachments.map((att) => att.id)));
     }
   };
+
+  const csvMeta = useMemo(
+    () => ({
+      viewMode,
+      lgaFilter,
+      searchQuery,
+    }),
+    [viewMode, lgaFilter, searchQuery]
+  );
+
+  const rawResultSubmissionsCsvOpts = useMemo(
+    () => buildDataManagementResultSubmissionsCsv(shownResults, csvMeta),
+    [shownResults, csvMeta]
+  );
+
+  const rawApprovedResultsCsvOpts = useMemo(
+    () =>
+      buildDataManagementApprovedResultsCsv(
+        shownApproved,
+        markedTestResultIds,
+        csvMeta
+      ),
+    [shownApproved, markedTestResultIds, csvMeta]
+  );
+
+  const rawIncidentsCsvOpts = useMemo(
+    () => buildDataManagementIncidentsCsv(shownIncidents, csvMeta),
+    [shownIncidents, csvMeta]
+  );
+
+  const resultSubmissionsCsvOpts = useMemo(
+    () =>
+      filterCsvExportColumns(
+        rawResultSubmissionsCsvOpts,
+        hiddenColumnsByDataset.resultSubmissions
+      ),
+    [rawResultSubmissionsCsvOpts, hiddenColumnsByDataset.resultSubmissions]
+  );
+
+  const approvedResultsCsvOpts = useMemo(
+    () =>
+      filterCsvExportColumns(
+        rawApprovedResultsCsvOpts,
+        hiddenColumnsByDataset.verifiedResults
+      ),
+    [rawApprovedResultsCsvOpts, hiddenColumnsByDataset.verifiedResults]
+  );
+
+  const incidentsCsvOpts = useMemo(
+    () =>
+      filterCsvExportColumns(
+        rawIncidentsCsvOpts,
+        hiddenColumnsByDataset.incidentReports
+      ),
+    [rawIncidentsCsvOpts, hiddenColumnsByDataset.incidentReports]
+  );
+
+  const rawActiveCsvOpts =
+    previewDataset === 'resultSubmissions'
+      ? rawResultSubmissionsCsvOpts
+      : previewDataset === 'verifiedResults'
+        ? rawApprovedResultsCsvOpts
+        : rawIncidentsCsvOpts;
+
+  const activeCsvOpts =
+    previewDataset === 'resultSubmissions'
+      ? resultSubmissionsCsvOpts
+      : previewDataset === 'verifiedResults'
+        ? approvedResultsCsvOpts
+        : incidentsCsvOpts;
+
+  const activeHiddenSet = useMemo(
+    () => new Set(hiddenColumnsByDataset[previewDataset]),
+    [hiddenColumnsByDataset, previewDataset]
+  );
+
+  const activeCsvPreviewSlice = useMemo(
+    () => sliceCsvPreviewRows(activeCsvOpts, previewLimit),
+    [activeCsvOpts, previewLimit]
+  );
+
+  const toggleActiveColumn = (header: string) => {
+    setHiddenColumnsByDataset((prev) => {
+      const current = prev[previewDataset];
+      const next = current.includes(header)
+        ? current.filter((col) => col !== header)
+        : [...current, header];
+      return { ...prev, [previewDataset]: next };
+    });
+  };
+
+  const selectAllActiveColumns = () => {
+    setHiddenColumnsByDataset((prev) => ({
+      ...prev,
+      [previewDataset]: [],
+    }));
+  };
+
+  const clearAllActiveColumns = () => {
+    setHiddenColumnsByDataset((prev) => ({
+      ...prev,
+      [previewDataset]: [...rawActiveCsvOpts.headers],
+    }));
+  };
+
+  const selectKeyColumnsForActiveDataset = () => {
+    const keyColumnsByDataset: Record<CsvPreviewDatasetKey, string[]> = {
+      resultSubmissions: [
+        'PU Code',
+        'Polling Unit',
+        'Ward',
+        'LGA',
+        'APC',
+        'PDP',
+        'ADC',
+        'OTHERS',
+        'Valid Votes',
+        'Total Cast',
+        'Verification Status',
+        'Submitted By',
+      ],
+      verifiedResults: [
+        'PU Code',
+        'Polling Unit',
+        'Ward',
+        'LGA',
+        'APC',
+        'PDP',
+        'ADC',
+        'OTHERS',
+        'Valid Votes',
+        'Total Cast',
+        'Submitted By',
+        'Approved By',
+      ],
+      incidentReports: [
+        'PU Code',
+        'Polling Unit',
+        'LGA',
+        'Category',
+        'Title',
+        'Urgency',
+        'Workflow Status',
+        'Reported By',
+        'Created At',
+      ],
+    };
+    const keepSet = new Set(keyColumnsByDataset[previewDataset]);
+    setHiddenColumnsByDataset((prev) => ({
+      ...prev,
+      [previewDataset]: rawActiveCsvOpts.headers.filter((header) => !keepSet.has(header)),
+    }));
+  };
+
+  const resultSubmissionsTotals = useMemo(
+    () =>
+      shownResults.reduce(
+        (acc, r) => {
+          acc.apc += r.apcVotes ?? 0;
+          acc.pdp += r.pdpVotes ?? 0;
+          acc.adc += r.adcVotes ?? 0;
+          acc.others += r.othersVotes ?? 0;
+          acc.valid += r.validVotes;
+          acc.cast += r.totalVotesCast;
+          return acc;
+        },
+        { apc: 0, pdp: 0, adc: 0, others: 0, valid: 0, cast: 0 }
+      ),
+    [shownResults]
+  );
+
+  const approvedResultsTotals = useMemo(
+    () =>
+      shownApproved.reduce(
+        (acc, a) => {
+          acc.apc += a.apcVotes;
+          acc.pdp += a.pdpVotes;
+          acc.adc += a.adcVotes;
+          acc.others += a.othersVotes;
+          acc.valid += a.validVotes;
+          acc.cast += a.totalVotesCast;
+          return acc;
+        },
+        { apc: 0, pdp: 0, adc: 0, others: 0, valid: 0, cast: 0 }
+      ),
+    [shownApproved]
+  );
+
+  const incidentSummaryTotals = useMemo(
+    () => ({
+      total: shownIncidents.length,
+      active: shownIncidents.filter((i) => isIncidentActive(i.status)).length,
+      critical: shownIncidents.filter((i) => i.urgency === IncidentUrgency.CRITICAL).length,
+    }),
+    [shownIncidents]
+  );
+
+  const handleExportResultSubmissionsCsv = () => {
+    if (shownResults.length === 0 || resultSubmissionsCsvOpts.headers.length === 0) return;
+    downloadStructuredCsv(resultSubmissionsCsvOpts);
+    setFeedback({
+      type: 'ok',
+      text: `Exported ${shownResults.length} filtered result submission(s) (${resultSubmissionsCsvOpts.headers.length} column(s)) to ${resultSubmissionsCsvOpts.fileName}.`,
+    });
+  };
+
+  const handleExportApprovedResultsCsv = () => {
+    if (shownApproved.length === 0 || approvedResultsCsvOpts.headers.length === 0) return;
+    downloadStructuredCsv(approvedResultsCsvOpts);
+    setFeedback({
+      type: 'ok',
+      text: `Exported ${shownApproved.length} filtered verified polling unit result(s) (${approvedResultsCsvOpts.headers.length} column(s)) to ${approvedResultsCsvOpts.fileName}.`,
+    });
+  };
+
+  const handleExportIncidentsCsv = () => {
+    if (shownIncidents.length === 0 || incidentsCsvOpts.headers.length === 0) return;
+    downloadStructuredCsv(incidentsCsvOpts);
+    setFeedback({
+      type: 'ok',
+      text: `Exported ${shownIncidents.length} filtered incident report(s) (${incidentsCsvOpts.headers.length} column(s)) to ${incidentsCsvOpts.fileName}.`,
+    });
+  };
+
+  const handleDownloadActivePreviewCsv = () => {
+    if (previewDataset === 'resultSubmissions') handleExportResultSubmissionsCsv();
+    else if (previewDataset === 'verifiedResults') handleExportApprovedResultsCsv();
+    else handleExportIncidentsCsv();
+  };
+
+  if (!authorized) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-900">
+        Access Restricted: Only authorized Full Control Administrators can access Data Management and
+        test record deletion.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -432,9 +773,9 @@ export function DataManagementPage({
                 Data Management &amp; Test Data Deletion
               </h2>
               <p className="mt-0.5 text-xs text-slate-700">
-                Safely inspect and delete explicitly marked test records or individually selected
-                pre-launch drill entries. Polling unit directories, wards, user accounts, roles,
-                system settings, and audit logs are strictly preserved.
+                Safely inspect and permanently delete explicitly marked test records or individually selected
+                entries along with their timestamps, attachments, and cached device copies. Polling unit
+                directories, wards, user accounts, roles, system settings, and audit logs remain preserved.
               </p>
             </div>
           </div>
@@ -457,11 +798,8 @@ export function DataManagementPage({
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
           <span>
             <strong>Zero Auto-Classification Guarantee:</strong> Existing records are never
-            automatically classified as test data. Deletion applies strictly to records flagged{' '}
-            <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[11px]">
-              isTestData = true
-            </code>{' '}
-            or rows you explicitly check below.
+            automatically classified as test data. Permanent deletion applies strictly to flagged
+            test records or rows you explicitly select below.
           </span>
         </div>
       </div>
@@ -490,8 +828,9 @@ export function DataManagementPage({
             Total deleted: {lastSummary.totalDeleted} · Results: {lastSummary.deletedResults} ·
             Approved Results: {lastSummary.deletedApprovedResults} · Incidents:{' '}
             {lastSummary.deletedIncidents} · Check-Ins: {lastSummary.deletedCheckIns} ·
-            Notifications: {lastSummary.deletedNotifications} · Timeline:{' '}
-            {lastSummary.deletedTimelineEvents} · Evidence: {lastSummary.deletedEvidenceAttachments}
+            Notifications: {lastSummary.deletedNotifications} · Notes:{' '}
+            {lastSummary.deletedNotes} · Timeline: {lastSummary.deletedTimelineEvents} · Evidence:{' '}
+            {lastSummary.deletedEvidenceAttachments}
           </p>
         </div>
       ) : null}
@@ -525,6 +864,21 @@ export function DataManagementPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1 sm:flex-initial">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                aria-label="Search filtered records"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter by PU, ward, title..."
+                className="min-h-[40px] w-full rounded-lg border border-slate-300 bg-white pl-8 pr-3 text-xs"
+              />
+            </div>
+
             <select
               aria-label="Filter records by LGA"
               value={lgaFilter}
@@ -566,6 +920,60 @@ export function DataManagementPage({
           </div>
         </div>
 
+        {/* Offline CSV Reporting Bar */}
+        <div className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-xs font-semibold text-slate-800">
+              Offline CSV Reporting (Uses Active Scope &amp; Search Filters)
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Download filtered election results and incident reports locally without network
+              dependencies.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowCsvPreview((prev) => !prev)}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            >
+              {showCsvPreview ? (
+                <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span>{showCsvPreview ? 'Hide CSV Preview' : 'Preview CSV Export'}</span>
+            </button>
+            <button
+              type="button"
+              disabled={shownResults.length === 0 || resultSubmissionsCsvOpts.headers.length === 0}
+              onClick={handleExportResultSubmissionsCsv}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#0b3b24]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-50 disabled:opacity-45"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Result Submissions CSV ({shownResults.length})</span>
+            </button>
+            <button
+              type="button"
+              disabled={shownApproved.length === 0 || approvedResultsCsvOpts.headers.length === 0}
+              onClick={handleExportApprovedResultsCsv}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-45"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Verified Results CSV ({shownApproved.length})</span>
+            </button>
+            <button
+              type="button"
+              disabled={shownIncidents.length === 0 || incidentsCsvOpts.headers.length === 0}
+              onClick={handleExportIncidentsCsv}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-45"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Incident Reports CSV ({shownIncidents.length})</span>
+            </button>
+          </div>
+        </div>
+
         {/* Category Tabs */}
         <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
           {(Object.keys(CATEGORY_LABELS) as CategoryKey[]).map((key) => {
@@ -588,6 +996,334 @@ export function DataManagementPage({
         </div>
       </div>
 
+      {/* CSV Export Preview & Pre-Download Summary */}
+      {showCsvPreview ? (
+        <section
+          aria-label="CSV Export Preview and Summary"
+          className="rounded-xl border border-slate-200 bg-white p-5 space-y-4"
+        >
+          <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[#0b3b24]">
+                <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+              </div>
+              <div>
+                <h3 className="font-display text-sm font-semibold text-slate-900">
+                  CSV Export Preview &amp; Pre-Download Summary
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Inspect exact CSV columns, metadata, aggregate totals, and a subset of matching
+                  election result and incident rows before downloading.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative" ref={columnMenuRef}>
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={columnMenuOpen}
+                  onClick={() => setColumnMenuOpen((prev) => !prev)}
+                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
+                  <span>
+                    Columns ({activeCsvOpts.headers.length}/{rawActiveCsvOpts.headers.length})
+                  </span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-slate-400 transition-transform ${
+                      columnMenuOpen ? 'rotate-180' : ''
+                    }`}
+                    aria-hidden="true"
+                  />
+                </button>
+
+                {columnMenuOpen ? (
+                  <div
+                    role="menu"
+                    aria-label="Toggle CSV export columns"
+                    className="absolute right-0 z-30 mt-1.5 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-lg"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                      <span className="text-xs font-semibold text-slate-900">
+                        Included CSV Columns
+                      </span>
+                      <span className="font-mono text-[11px] text-slate-500 tabular-nums">
+                        {activeCsvOpts.headers.length} / {rawActiveCsvOpts.headers.length}
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 border-b border-slate-100 pb-2">
+                      <button
+                        type="button"
+                        onClick={selectAllActiveColumns}
+                        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        type="button"
+                        onClick={selectKeyColumnsForActiveDataset}
+                        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                      >
+                        Key Fields
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearAllActiveColumns}
+                        className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+
+                    <div className="mt-2 max-h-60 space-y-1 overflow-y-auto pr-1">
+                      {rawActiveCsvOpts.headers.map((header) => {
+                        const checked = !activeHiddenSet.has(header);
+                        return (
+                          <label
+                            key={header}
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleActiveColumn(header)}
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-[#0b3b24] focus:ring-[#0b3b24]"
+                            />
+                            <span className="truncate">{header}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <select
+                aria-label="Preview row limit"
+                value={previewLimit}
+                onChange={(e) => setPreviewLimit(Number(e.target.value) === 10 ? 10 : 5)}
+                className="min-h-[38px] rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-700"
+              >
+                <option value={5}>Preview first 5 rows</option>
+                <option value={10}>Preview first 10 rows</option>
+              </select>
+
+              <button
+                type="button"
+                disabled={
+                  activeCsvPreviewSlice.totalRows === 0 ||
+                  activeCsvPreviewSlice.headers.length === 0
+                }
+                onClick={handleDownloadActivePreviewCsv}
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-45"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Download Previewed CSV ({activeCsvPreviewSlice.totalRows})</span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3-Dataset Summary Switcher (Results Submissions, Verified Results, Incidents) */}
+          <div className="grid gap-3 md:grid-cols-3">
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewDataset('resultSubmissions');
+                setColumnMenuOpen(false);
+              }}
+              className={`rounded-lg border p-3.5 text-left transition-colors ${
+                previewDataset === 'resultSubmissions'
+                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-900">
+                  Result Submissions CSV
+                </span>
+                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                  {shownResults.length} row{shownResults.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <p className="mt-1 font-mono text-[11px] text-slate-600 tabular-nums">
+                APC {resultSubmissionsTotals.apc.toLocaleString()} · PDP{' '}
+                {resultSubmissionsTotals.pdp.toLocaleString()} · ADC{' '}
+                {resultSubmissionsTotals.adc.toLocaleString()} · OTH{' '}
+                {resultSubmissionsTotals.others.toLocaleString()}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
+                Total Cast in Export: {resultSubmissionsTotals.cast.toLocaleString()}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewDataset('verifiedResults');
+                setColumnMenuOpen(false);
+              }}
+              className={`rounded-lg border p-3.5 text-left transition-colors ${
+                previewDataset === 'verifiedResults'
+                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-900">
+                  Verified Election Results CSV
+                </span>
+                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                  {shownApproved.length} row{shownApproved.length === 1 ? '' : 's'}
+                </span>
+              </div>
+              <p className="mt-1 font-mono text-[11px] text-slate-600 tabular-nums">
+                APC {approvedResultsTotals.apc.toLocaleString()} · PDP{' '}
+                {approvedResultsTotals.pdp.toLocaleString()} · ADC{' '}
+                {approvedResultsTotals.adc.toLocaleString()} · OTH{' '}
+                {approvedResultsTotals.others.toLocaleString()}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
+                Verified Total Cast: {approvedResultsTotals.cast.toLocaleString()}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewDataset('incidentReports');
+                setColumnMenuOpen(false);
+              }}
+              className={`rounded-lg border p-3.5 text-left transition-colors ${
+                previewDataset === 'incidentReports'
+                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-900">
+                  Incident Reports CSV
+                </span>
+                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                  {incidentSummaryTotals.total} row
+                  {incidentSummaryTotals.total === 1 ? '' : 's'}
+                </span>
+              </div>
+              <p className="mt-1 font-mono text-[11px] text-slate-600 tabular-nums">
+                Active: {incidentSummaryTotals.active} · Critical:{' '}
+                {incidentSummaryTotals.critical}
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                Includes category, urgency, workflow status &amp; notes
+              </p>
+            </button>
+          </div>
+
+          {/* Exact CSV File Header Metadata */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-[11px] text-slate-700 space-y-1">
+            <div className="flex flex-wrap gap-x-5 gap-y-1">
+              <span>
+                <strong>File:</strong>{' '}
+                <code className="rounded bg-white px-1.5 py-0.5 font-mono text-slate-900">
+                  {activeCsvOpts.fileName}
+                </code>
+              </span>
+              <span>
+                <strong>Scope:</strong> {activeCsvOpts.scopeLabel}
+              </span>
+              <span className="font-mono tabular-nums">
+                <strong>Columns:</strong> {activeCsvPreviewSlice.headers.length} of{' '}
+                {rawActiveCsvOpts.headers.length} · <strong>Export Rows:</strong>{' '}
+                {activeCsvPreviewSlice.totalRows}
+              </span>
+            </div>
+            {activeCsvOpts.disclaimer ? (
+              <p className="text-amber-900">{activeCsvOpts.disclaimer}</p>
+            ) : null}
+          </div>
+
+          {/* Subset Preview Table Using Exact CSV Headers & Rows */}
+          {activeCsvPreviewSlice.headers.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-4 text-xs text-amber-950">
+              <p className="font-semibold">
+                No columns are currently selected for this CSV dataset.
+              </p>
+              <p className="mt-1">
+                Open the <strong>Columns (0/{rawActiveCsvOpts.headers.length})</strong> menu above
+                and select at least 1 column to preview or download the CSV file.
+              </p>
+            </div>
+          ) : activeCsvPreviewSlice.totalRows === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50/50 p-4 text-xs text-slate-600">
+              <p className="font-semibold text-slate-800">
+                No matching rows in this dataset under the current filter ({activeCsvOpts.scopeLabel}).
+              </p>
+              <p className="mt-1">
+                Switch between <strong>Marked Test Records Only</strong> and{' '}
+                <strong>Manual Selection Across Records</strong> or adjust your LGA/search filter
+                to populate exportable rows. Exact CSV columns when populated:{' '}
+                <span className="font-mono text-[11px] text-slate-700">
+                  {activeCsvPreviewSlice.headers.join(', ')}
+                </span>
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
+                <table className="w-full border-collapse text-left text-[11px]">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-100 font-semibold text-slate-700">
+                      <th className="px-2.5 py-2 font-mono text-slate-500">#</th>
+                      {activeCsvPreviewSlice.headers.map((header) => (
+                        <th key={header} className="px-2.5 py-2 whitespace-nowrap">
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {activeCsvPreviewSlice.previewRows.map((row, rIdx) => (
+                      <tr key={rIdx} className="hover:bg-slate-50/80">
+                        <td className="px-2.5 py-2 font-mono text-slate-400 tabular-nums">
+                          {rIdx + 1}
+                        </td>
+                        {row.map((cell, cIdx) => {
+                          const isNumeric = typeof cell === 'number';
+                          return (
+                            <td
+                              key={cIdx}
+                              className={`max-w-[220px] truncate px-2.5 py-2 whitespace-nowrap ${
+                                isNumeric
+                                  ? 'font-mono font-medium text-slate-900 tabular-nums'
+                                  : 'text-slate-700'
+                              }`}
+                              title={cell === null || cell === undefined ? '' : String(cell)}
+                            >
+                              {cell === null || cell === undefined ? '' : String(cell)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-[11px] text-slate-500 tabular-nums">
+                Showing {activeCsvPreviewSlice.previewRows.length} of{' '}
+                {activeCsvPreviewSlice.totalRows} total row(s) that will be written to{' '}
+                <span className="font-mono text-slate-700">{activeCsvOpts.fileName}</span>
+                {activeCsvPreviewSlice.truncatedCount > 0
+                  ? ` (${activeCsvPreviewSlice.truncatedCount} additional matching row(s) will also be included in the downloaded CSV).`
+                  : '.'}
+              </p>
+            </div>
+          )}
+        </section>
+      ) : null}
+
       {/* Category Table */}
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         {categoryCounts[activeCategory] === 0 ? (
@@ -600,7 +1336,7 @@ export function DataManagementPage({
               }
               description={
                 viewMode === 'MARKED_TEST'
-                  ? 'Records without isTestData=true remain protected unless you switch to Manual Selection.'
+                  ? 'Production operational records remain protected unless you switch to Manual Selection.'
                   : 'No records exist for this category and LGA filter.'
               }
             />
@@ -785,6 +1521,44 @@ export function DataManagementPage({
                     ))
                   : null}
 
+                {activeCategory === 'notes'
+                  ? shownNotes.map((note) => {
+                      const noteKey = note.clientNoteId || note.id;
+                      return (
+                        <tr key={noteKey} className="hover:bg-slate-50/70">
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              aria-label={`Select note ${note.title || noteKey}`}
+                              checked={selectedNotes.has(noteKey)}
+                              onChange={() => toggleId(setSelectedNotes, noteKey)}
+                              className="h-4 w-4 accent-red-700"
+                            />
+                          </td>
+                          <td className="px-4 py-3 font-medium text-slate-900">
+                            {note.title || note.content.slice(0, 60)}
+                          </td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {note.authorName}
+                            {note.puCode ? ` · ${note.puCode}` : ''} · {note.content.slice(0, 70)}
+                          </td>
+                          <td className="px-4 py-3">
+                            {note.isTestData ? (
+                              <span className="rounded bg-amber-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-amber-900">
+                                TEST RECORD
+                              </span>
+                            ) : (
+                              <span className="text-slate-500">Operational</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-slate-500 whitespace-nowrap">
+                            {formatFirestoreTime(note.updatedAt || note.createdAt)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  : null}
+
                 {activeCategory === 'timelineEvents'
                   ? shownTimeline.map((t) => (
                       <tr key={t.id} className="hover:bg-slate-50/70">
@@ -893,9 +1667,9 @@ export function DataManagementPage({
                 <p className="mt-1 font-mono text-[11px]">
                   Result Submissions: {previewItems.rIds.length} · Approved Results:{' '}
                   {previewItems.aIds.length} · Incidents: {previewItems.iIds.length} · Check-Ins:{' '}
-                  {previewItems.cIds.length} · Notifications: {previewItems.nIds.length} ·
-                  Timeline/Reports: {previewItems.tIds.length} · Evidence Attachments:{' '}
-                  {previewItems.attIds.length}
+                  {previewItems.cIds.length} · Notifications: {previewItems.nIds.length} · Notes:{' '}
+                  {previewItems.noteIds.length} · Timeline/Reports: {previewItems.tIds.length} ·
+                  Evidence Attachments: {previewItems.attIds.length}
                 </p>
               </div>
 

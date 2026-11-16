@@ -233,6 +233,14 @@ export function OfflineSyncBadge({ status }: { status: OfflineQueueStatus }) {
       </span>
     );
   }
+  if (status === 'SYNCING') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-900 whitespace-nowrap shrink-0">
+        <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
+        <span>Syncing</span>
+      </span>
+    );
+  }
   if (status === 'SYNC_FAILED') {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 whitespace-nowrap shrink-0">
@@ -244,7 +252,7 @@ export function OfflineSyncBadge({ status }: { status: OfflineQueueStatus }) {
   if (status === 'PENDING_SYNC') {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 whitespace-nowrap shrink-0">
-        <RefreshCw className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
+        <Clock className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
         <span>Pending Sync</span>
       </span>
     );
@@ -252,7 +260,7 @@ export function OfflineSyncBadge({ status }: { status: OfflineQueueStatus }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 whitespace-nowrap shrink-0">
       <CloudOff className="h-3.5 w-3.5 text-slate-600" aria-hidden="true" />
-      <span>Saved Locally</span>
+      <span>Saved Offline</span>
     </span>
   );
 }

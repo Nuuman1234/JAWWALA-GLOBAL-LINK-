@@ -90,7 +90,7 @@ export async function processEvidenceFile(file: File): Promise<CompressedEvidenc
   }
 
   if (finalDataUrl.length > MAX_BASE64_LENGTH) {
-    throw new Error('Compressed evidence still exceeds the 330KB Firestore document budget.');
+    throw new Error('Compressed file exceeds the maximum upload size limit (330 KB).');
   }
 
   const sha256Hash = await computeSha256Hex(finalDataUrl);

@@ -458,7 +458,7 @@ export function ReportsCenterPage({
                 Reports &amp; Exports Center
               </h2>
               <p className="text-xs text-slate-500">
-                Structured CSV downloads and printable PDF situation reports from live Firestore records
+                Structured CSV downloads and printable PDF situation reports from verified operational records
               </p>
             </div>
           </div>

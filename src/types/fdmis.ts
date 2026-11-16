@@ -275,14 +275,91 @@ export const BVAS_STATUS_OPTIONS = [
   'Not Deployed',
 ] as const;
 
-export type OfflineQueueStatus = 'SAVED_LOCALLY' | 'PENDING_SYNC' | 'SYNC_FAILED' | 'SYNCED';
+export type OfflineQueueStatus =
+  | 'SAVED_LOCALLY'
+  | 'PENDING_SYNC'
+  | 'SYNCING'
+  | 'SYNC_FAILED'
+  | 'SYNCED';
 export type OfflineReportType =
   | 'CHECK_IN'
   | 'STATUS_UPDATE'
   | 'INCIDENT_REPORT'
-  | 'RESULT_SUBMISSION';
+  | 'RESULT_SUBMISSION'
+  | 'NOTE_UPSERT'
+  | 'NOTE_DELETE';
 
-export type FirestoreTime = Timestamp | Date | null | undefined;
+export interface OfflinePruneReport {
+  prunedQueueItems: number;
+  resetStuckSyncingItems: number;
+  prunedDrafts: number;
+  prunedNotes: number;
+  prunedSnapshots: number;
+  prunedSnapshotEntries: number;
+  prunedTombstones: number;
+  prunedPendingRegistrations: number;
+  ranAtIso: string;
+}
+
+export interface PendingOfflineRegistration {
+  id: string;
+  phoneE164: string;
+  phoneDigits: string;
+  phoneHash: string;
+  displayName: string;
+  passwordSalt: string;
+  passwordHash: string;
+  requestedLgaId: LgaId;
+  requestedLgaName: string;
+  requestedWardId: string;
+  requestedWardName: string;
+  requestedPollingUnitId: string;
+  requestedPollingUnitCode: string;
+  requestedPollingUnitName: string;
+  recoveryKeySalt: string;
+  recoveryKeyHash: string;
+  status: 'QUEUED_OFFLINE' | 'SYNC_FAILED' | 'SYNCED';
+  errorMessage?: string;
+  createdAtIso: string;
+  updatedAtIso: string;
+}
+
+export type OperationalNoteCategory =
+  | 'GENERAL'
+  | 'FIELD_UPDATE'
+  | 'LOGISTICS'
+  | 'HANDOVER'
+  | 'URGENT';
+
+export interface OperationalNote {
+  id: string;
+  clientNoteId: string;
+  title: string;
+  content: string;
+  category: OperationalNoteCategory;
+  lgaId: 'all' | LgaId;
+  wardId: string;
+  puId: string;
+  puCode: string;
+  puName: string;
+  authorUid: string;
+  authorName: string;
+  isPinned: boolean;
+  isTestData: boolean;
+  revision: number;
+  createdAt?: FirestoreTime;
+  updatedAt?: FirestoreTime;
+  syncState?: OfflineQueueStatus;
+  syncError?: string;
+}
+
+export type FirestoreTime =
+  | Timestamp
+  | Date
+  | string
+  | { seconds: number; nanoseconds?: number }
+  | null
+  | undefined;
 
 export interface BootstrapLock {
   initializedByUid: string;
@@ -332,14 +409,63 @@ export interface UserAccount {
   email: string;
   displayName: string;
   phone?: string | null;
+  authMethod?: 'GOOGLE' | 'PHONE_PASSWORD';
   role: UserRole;
   status: AccountStatus;
   assignedLgaId: string;
   assignedWardId: string;
   assignedPollingUnitId: string;
+  requestedLgaId?: string | null;
+  requestedWardId?: string | null;
+  requestedWardName?: string | null;
+  requestedPollingUnitId?: string | null;
+  requestedPollingUnitCode?: string | null;
+  requestedPollingUnitName?: string | null;
   sessionRevoked: boolean;
   revokedReason?: string | null;
   lastLoginAt?: FirestoreTime;
+  createdAt?: FirestoreTime;
+  updatedAt?: FirestoreTime;
+}
+
+export interface LocationCatalogWardItem {
+  id: string;
+  wardCode: string;
+  name: string;
+}
+
+export interface LocationCatalogPuItem {
+  id: string;
+  wardId: string;
+  wardName: string;
+  puCode: string;
+  name: string;
+}
+
+export interface LocationCatalogLga {
+  lgaId: LgaId;
+  lgaName: string;
+  lgaCode: string;
+  wards: LocationCatalogWardItem[];
+  pollingUnits: LocationCatalogPuItem[];
+  wardCount: number;
+  puCount: number;
+  updatedByUid: string;
+  updatedAt?: FirestoreTime;
+}
+
+export interface PasswordResetRequest {
+  id: string;
+  phoneHash: string;
+  maskedPhone: string;
+  applicantName: string;
+  lgaId: string;
+  wardName: string;
+  puCode: string;
+  recoveryKeyMatched: boolean;
+  status: 'PENDING' | 'APPROVED' | 'COMPLETED' | 'REJECTED';
+  reviewerNote: string;
+  reviewedByUid: string;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
 }
@@ -657,11 +783,12 @@ export interface OfflineQueuedItem {
   puId: string;
   puCode: string;
   puName: string;
-  lgaId: LgaId;
+  lgaId: LgaId | 'all';
   wardId: string;
   summary: string;
   payload: Record<string, unknown>;
   status: OfflineQueueStatus;
+  retryCount?: number;
   errorMessage?: string;
   createdAtIso: string;
   updatedAtIso: string;
@@ -851,12 +978,17 @@ export function getAuthorizedLgas(user: UserAccount): LgaId[] {
 
 export function formatFirestoreTime(ts: FirestoreTime): string {
   if (!ts) return 'Pending timestamp';
-  const date =
-    ts instanceof Date
-      ? ts
-      : typeof (ts as Timestamp).toDate === 'function'
-        ? (ts as Timestamp).toDate()
-        : null;
+  let date: Date | null = null;
+  if (ts instanceof Date) {
+    date = ts;
+  } else if (typeof ts === 'string') {
+    const parsed = new Date(ts);
+    if (!Number.isNaN(parsed.getTime())) date = parsed;
+  } else if (typeof (ts as Timestamp).toDate === 'function') {
+    date = (ts as Timestamp).toDate();
+  } else if (typeof (ts as { seconds?: number }).seconds === 'number') {
+    date = new Date((ts as { seconds: number }).seconds * 1000);
+  }
   if (!date || Number.isNaN(date.getTime())) return 'Pending timestamp';
   return date.toLocaleString('en-NG', {
     year: 'numeric',

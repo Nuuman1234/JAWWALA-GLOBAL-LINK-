@@ -7,6 +7,7 @@ import {
   History,
   Lock,
   Plus,
+  RefreshCw,
   Save,
   Send,
   ShieldAlert,
@@ -15,7 +16,7 @@ import {
 import { EmptyState } from '../components/EmptyState';
 import { PartyLogo } from '../components/PartyLogo';
 import { ResultBarChart } from '../components/ResultBarChart';
-import { VerificationStatusBadge } from '../components/StatusBadge';
+import { OfflineSyncBadge, VerificationStatusBadge } from '../components/StatusBadge';
 import {
   BVAS_STATUS_OPTIONS,
   FIXED_PARTIES,
@@ -24,6 +25,7 @@ import {
   VerificationStatus,
   formatFirestoreTime,
   type ApprovedPuResult,
+  type OfflineQueuedItem,
   type PartyCode,
   type PartyConfig,
   type PollingUnit,
@@ -54,7 +56,10 @@ interface ResultsPageProps {
   results: ResultSubmission[];
   approvedPuResults: ApprovedPuResult[];
   partyConfigs: Record<PartyCode, PartyConfig | null>;
+  queuedItems?: OfflineQueuedItem[];
   isOnline: boolean;
+  onRetrySync?: () => void;
+  syncingNow?: boolean;
 }
 
 export function ResultsPage({
@@ -63,7 +68,10 @@ export function ResultsPage({
   results,
   approvedPuResults,
   partyConfigs,
+  queuedItems = [],
   isOnline,
+  onRetrySync,
+  syncingNow = false,
 }: ResultsPageProps) {
   const isPuAgent = user.role === UserRole.POLLING_UNIT_AGENT;
 
@@ -291,7 +299,7 @@ export function ResultsPage({
     setTotalVotesCastInput(String(res.totalVotesCast));
     setBvasStatus(res.bvasStatus || BVAS_STATUS_OPTIONS[0]);
     setBvasNotes(res.bvasNotes || '');
-    setSubmissionNotes('');
+    setSubmissionNotes(res.submissionNotes || '');
     setEc8aBase64(res.ec8aImageBase64 || null);
     setEc8aFileName(res.ec8aFileName || null);
     setReviewConfirmOpen(false);
@@ -344,11 +352,15 @@ export function ResultsPage({
       submissionNotes,
       ec8aImageBase64: ec8aBase64,
       ec8aFileName,
+      targetResultId: editingResult?.id || undefined,
       asDraft,
     };
 
-    if (!isOnline && !editingResult) {
+    const deterministicRevId = editingResult ? `res_rev_${editingResult.id}` : undefined;
+
+    if (!isOnline) {
       await enqueueOfflineSubmission({
+        clientSubmissionId: deterministicRevId,
         ownerUid: user.uid,
         reportType: 'RESULT_SUBMISSION',
         puId: selectedPu.id,
@@ -356,17 +368,20 @@ export function ResultsPage({
         puName: selectedPu.name,
         lgaId: selectedPu.lgaId,
         wardId: selectedPu.wardId,
-        summary: `Result (APC ${numericSnapshot.apc}, PDP ${numericSnapshot.pdp}, ADC ${numericSnapshot.adc}, OTH ${numericSnapshot.others} · Total ${numericSnapshot.cast}) for ${selectedPu.puCode}`,
+        summary: `${asDraft ? 'Draft' : 'Result'} (APC ${numericSnapshot.apc}, PDP ${numericSnapshot.pdp}, ADC ${numericSnapshot.adc}, OTH ${numericSnapshot.others} · Total ${numericSnapshot.cast}) for ${selectedPu.puCode}`,
         payload,
         status: 'PENDING_SYNC',
       });
-      await clearDraft(draftKey);
+      if (!editingResult) {
+        await clearDraft(draftKey);
+      }
       setFeedback({
         type: 'ok',
-        text: 'Saved Locally & queued for sync. Submission is NOT marked Submitted until Cloud Firestore confirms receipt.',
+        text: `Saved offline on this device. This ${asDraft ? 'draft' : 'result'} will synchronize automatically once internet connectivity returns.`,
       });
       setReviewConfirmOpen(false);
       setShowForm(false);
+      setEditingResult(null);
       setSubmitting(false);
       return;
     }
@@ -379,15 +394,16 @@ export function ResultsPage({
       setFeedback({
         type: 'ok',
         text: asDraft
-          ? `Result draft saved in Cloud Firestore for ${selectedPu.puCode}.`
-          : `Official result confirmed and recorded in Cloud Firestore for ${selectedPu.puCode}.`,
+          ? `Result draft saved for ${selectedPu.puCode}.`
+          : `Official result confirmed and recorded for ${selectedPu.puCode}.`,
       });
       setReviewConfirmOpen(false);
       setShowForm(false);
       setEditingResult(null);
     } catch (err) {
-      if (!editingResult && !navigator.onLine) {
+      if (!navigator.onLine) {
         await enqueueOfflineSubmission({
+          clientSubmissionId: deterministicRevId,
           ownerUid: user.uid,
           reportType: 'RESULT_SUBMISSION',
           puId: selectedPu.id,
@@ -395,16 +411,17 @@ export function ResultsPage({
           puName: selectedPu.name,
           lgaId: selectedPu.lgaId,
           wardId: selectedPu.wardId,
-          summary: `Result (Total ${numericSnapshot.cast}) for ${selectedPu.puCode}`,
+          summary: `${asDraft ? 'Draft' : 'Result'} (Total ${numericSnapshot.cast}) for ${selectedPu.puCode}`,
           payload,
           status: 'PENDING_SYNC',
         });
         setFeedback({
           type: 'ok',
-          text: 'Network lost during transmission. Saved locally in sync queue (not yet submitted).',
+          text: 'Connection lost during transmission. Saved safely offline on this device and queued for automatic synchronization.',
         });
         setReviewConfirmOpen(false);
         setShowForm(false);
+        setEditingResult(null);
       } else {
         setFeedback({
           type: 'err',
@@ -447,6 +464,14 @@ export function ResultsPage({
       setLoadingHistory(false);
     }
   };
+
+  const queuedResults = useMemo(
+    () =>
+      queuedItems.filter(
+        (item) => item.reportType === 'RESULT_SUBMISSION' && item.status !== 'SYNCED'
+      ),
+    [queuedItems]
+  );
 
   const filteredResults = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -851,7 +876,7 @@ export function ResultsPage({
           </div>
 
           <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3">
-            {!editingResult && isOnline ? (
+            {!editingResult || editingResult.verificationStatus === VerificationStatus.DRAFT ? (
               <button
                 type="button"
                 disabled={submitting || !validation.isValid}
@@ -859,7 +884,7 @@ export function ResultsPage({
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 <Save className="h-4 w-4" aria-hidden="true" />
-                <span>Save Draft</span>
+                <span>{isOnline ? 'Save Draft' : 'Save Draft Offline'}</span>
               </button>
             ) : null}
             <button
@@ -869,8 +894,8 @@ export function ResultsPage({
             >
               <Send className="h-4 w-4" aria-hidden="true" />
               <span>
-                {!isOnline && !editingResult
-                  ? 'Review & Queue Locally'
+                {!isOnline
+                  ? 'Review & Queue Offline'
                   : editingResult
                     ? 'Review & Resubmit Result'
                     : 'Review & Confirm Submission'}
@@ -909,13 +934,65 @@ export function ResultsPage({
         </span>
       </div>
 
+      {/* Pending Offline Results Queue */}
+      {queuedResults.length > 0 ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-950">
+                Pending Offline Result Submissions ({queuedResults.length})
+              </h3>
+              <p className="text-xs text-amber-900">
+                Saved safely on this device. These polling unit results synchronize automatically once internet returns.
+              </p>
+            </div>
+            {onRetrySync ? (
+              <button
+                type="button"
+                disabled={!isOnline || syncingNow}
+                onClick={onRetrySync}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${syncingNow ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>{syncingNow ? 'Syncing...' : 'Retry Sync'}</span>
+              </button>
+            ) : null}
+          </div>
+          <div className="divide-y divide-amber-200/70 rounded-lg border border-amber-200 bg-white">
+            {queuedResults.map((item) => (
+              <div
+                key={item.clientSubmissionId}
+                className="flex flex-col justify-between gap-2 p-3 sm:flex-row sm:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900">
+                    {item.puCode} · {item.puName}
+                  </p>
+                  <p className="text-[11px] text-slate-600">{item.summary}</p>
+                  <p className="text-[11px] text-slate-500">
+                    Queued {formatFirestoreTime(item.createdAtIso)}
+                  </p>
+                  {item.errorMessage ? (
+                    <p className="mt-0.5 text-[11px] text-red-700">{item.errorMessage}</p>
+                  ) : null}
+                </div>
+                <OfflineSyncBadge status={item.status} />
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* Results List */}
-      {filteredResults.length === 0 ? (
+      {filteredResults.length === 0 && queuedResults.length === 0 ? (
         <EmptyState
           title="No operational data has been submitted yet."
           description="No polling unit results or Form EC8A sheets have been submitted in your authorized scope yet."
         />
-      ) : (
+      ) : filteredResults.length === 0 ? null : (
         <div className="space-y-3">
           {filteredResults.map((res) => {
             const partyScores: Record<PartyCode, number> = {
@@ -1182,8 +1259,8 @@ export function ResultsPage({
                 <span>
                   {submitting
                     ? 'Transmitting...'
-                    : !isOnline && !editingResult
-                      ? 'Confirm & Queue Locally'
+                    : !isOnline
+                      ? 'Confirm & Queue Offline'
                       : 'Confirm & Submit Result'}
                 </span>
               </button>

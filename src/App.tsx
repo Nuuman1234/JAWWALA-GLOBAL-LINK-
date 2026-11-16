@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
 import { AppShell, NAV_ITEMS, type NavSectionId } from './components/AppShell';
 import { AuthGate } from './components/AuthGate';
+import { OperationalNotesPanel } from './components/OperationalNotesPanel';
 import { AuditLogsPage } from './pages/AuditLogsPage';
 import { DataManagementPage } from './pages/DataManagementPage';
 import { EmergencyAssistancePage } from './pages/EmergencyAssistancePage';
@@ -22,23 +23,49 @@ import { WardsDirectoryPage } from './pages/WardsDirectoryPage';
 import { auth, testFirestoreConnection, type ConnectionCheckStatus } from './lib/firebase';
 import {
   checkUserAndBootstrapState,
+  completeApprovedPasswordReset,
+  getEphemeralOfflinePassword,
   initializeFullControlAdmin,
   registerPendingAccount,
+  registerWithPhoneAndPassword,
   signInWithGoogle,
+  signInWithPhoneAndPassword,
   signOutSession,
+  submitPasswordResetRequest,
   subscribeToGlobalSettings,
   subscribeToUserAccount,
+  syncPendingOfflineRegistration,
+  type RegistrationLocationSelection,
 } from './services/authService';
 import { observeReportAttachments } from './services/dataManagementService';
 import {
+  canManageDirectory,
+  fetchPublicLocationCatalog,
   observeAuditLogs,
+  observePasswordResetRequests,
   observePollingUnits,
   observePuAssignments,
   observeUsers,
   observeWards,
+  subscribeToPublicLocationCatalog,
+  syncLocationCatalogFromLiveDirectory,
 } from './services/directoryService';
 import { observeEmergencyContacts } from './services/emergencyService';
-import { getQueuedItems, subscribeOfflineQueue } from './services/offlineQueue';
+import {
+  buildMergedOperationalNotes,
+  observeOperationalNotes,
+} from './services/notesService';
+import {
+  deletePendingOfflineRegistration,
+  getDeletedTombstones,
+  getPendingOfflineRegistrations,
+  getQueuedItems,
+  loadCollectionSnapshot,
+  pruneOfflineStorageOnStartup,
+  saveCollectionSnapshot,
+  subscribeLocalNotes,
+  subscribeOfflineQueue,
+} from './services/offlineQueue';
 import {
   flushOfflineQueue,
   observeAggregatedResults,
@@ -49,10 +76,12 @@ import {
   observePublicResults,
   observeResultSubmissions,
   observeTimelineEvents,
+  syncSingleQueuedItem,
 } from './services/operationsService';
 import { observePartyConfigs } from './services/partyService';
 import {
   IncidentUrgency,
+  UserRole,
   isAuthorizedActive,
   isIncidentActive,
   type AgentCheckIn,
@@ -62,10 +91,14 @@ import {
   type EmergencyContact,
   type GlobalSettings,
   type IncidentReport,
+  type LocationCatalogLga,
   type NotificationItem,
   type OfflineQueuedItem,
+  type OperationalNote,
   type PartyCode,
   type PartyConfig,
+  type PasswordResetRequest,
+  type PendingOfflineRegistration,
   type PollingUnit,
   type PuAssignment,
   type PublicVerifiedResult,
@@ -75,6 +108,19 @@ import {
   type UserAccount,
   type Ward,
 } from './types/fdmis';
+
+function filterOutTombstones<
+  T extends { id?: string; clientNoteId?: string; puId?: string; sourceSubmissionId?: string },
+>(items: T[], tombstones: Set<string>, checkPuId = false): T[] {
+  if (tombstones.size === 0) return items;
+  return items.filter((item) => {
+    if (item.id && tombstones.has(item.id)) return false;
+    if (item.clientNoteId && tombstones.has(item.clientNoteId)) return false;
+    if (item.sourceSubmissionId && tombstones.has(item.sourceSubmissionId)) return false;
+    if (checkPuId && item.puId && tombstones.has(item.puId)) return false;
+    return true;
+  });
+}
 
 const EMPTY_PARTY_CONFIGS: Record<PartyCode, PartyConfig | null> = {
   APC: null,
@@ -111,7 +157,16 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
   const [reportAttachments, setReportAttachments] = useState<ReportAttachment[]>([]);
+  const [serverNotes, setServerNotes] = useState<OperationalNote[]>([]);
+  const [mergedNotes, setMergedNotes] = useState<OperationalNote[]>([]);
   const [queuedItems, setQueuedItems] = useState<OfflineQueuedItem[]>([]);
+
+  const [locationCatalog, setLocationCatalog] = useState<LocationCatalogLga[]>([]);
+  const [refreshingLocations, setRefreshingLocations] = useState(false);
+  const [pendingOfflineRegistrations, setPendingOfflineRegistrations] = useState<
+    PendingOfflineRegistration[]
+  >([]);
+  const [passwordResetRequests, setPasswordResetRequests] = useState<PasswordResetRequest[]>([]);
 
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -123,15 +178,30 @@ export default function App() {
   const [syncingNow, setSyncingNow] = useState(false);
   const [syncNonce, setSyncNonce] = useState(0);
 
-  // 1. Boot-time Firestore connectivity check + online/offline network listeners
+  const isFlushingRef = useRef(false);
+  const wasOfflineRef = useRef(!isOnline);
+  const startupPrunedRef = useRef(false);
+  const lastCatalogSignatureRef = useRef('');
+
+  // 1. Boot-time Firestore connectivity, offline storage pruning, location catalog sync & online/offline listeners
   useEffect(() => {
     void testFirestoreConnection().then(setConnectionStatus);
+
+    if (!startupPrunedRef.current) {
+      startupPrunedRef.current = true;
+      void pruneOfflineStorageOnStartup().then(() => {
+        void getPendingOfflineRegistrations().then(setPendingOfflineRegistrations);
+      });
+    }
+
+    const unsubCatalog = subscribeToPublicLocationCatalog(setLocationCatalog);
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
+      unsubCatalog();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -179,9 +249,13 @@ export default function App() {
         setNotifications([]);
         setEmergencyContacts([]);
         setReportAttachments([]);
+        setServerNotes([]);
+        setMergedNotes([]);
         setQueuedItems([]);
+        setPasswordResetRequests([]);
         setLastUpdatedAt(null);
         setActiveSection('overview');
+        void getPendingOfflineRegistrations().then(setPendingOfflineRegistrations);
         window.history.replaceState({ fdmisLocked: true }, '', '/');
       }
     });
@@ -231,7 +305,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [firebaseUser, activeAuthorized]);
 
-  // 4. Scoped real-time Firestore listeners (only attached when authenticated & authorized active)
+  // 4. Scoped real-time listeners + offline snapshot hydration & tombstone filtering
   useEffect(() => {
     if (!authReady || !firebaseUser || !account || !activeAuthorized) {
       setPartyConfigs(EMPTY_PARTY_CONFIGS);
@@ -250,22 +324,125 @@ export default function App() {
       setNotifications([]);
       setEmergencyContacts([]);
       setReportAttachments([]);
+      setServerNotes([]);
+      setPasswordResetRequests([]);
       return;
     }
 
+    let cancelled = false;
+    const liveLoaded = new Set<string>();
     setLoadingData(true);
     setDataError(null);
 
     const markSynced = () => setLastUpdatedAt(new Date());
 
     const handleSubError = (err: Error) => {
+      if (!navigator.onLine) {
+        setLoadingData(false);
+        return;
+      }
       setDataError(err.message);
       setLoadingData(false);
     };
 
+    // Hydrate downloaded records immediately for seamless offline access
+    void (async () => {
+      const uid = account.uid;
+      const [
+        tombstones,
+        cParty,
+        cWards,
+        cPus,
+        cAssign,
+        cUsers,
+        cAudit,
+        cCheckIns,
+        cIncidents,
+        cResults,
+        cApproved,
+        cAggregated,
+        cPublic,
+        cTimeline,
+        cNotifs,
+        cContacts,
+        cAttach,
+        cNotes,
+        cResetReqs,
+      ] = await Promise.all([
+        getDeletedTombstones(),
+        loadCollectionSnapshot<Record<PartyCode, PartyConfig | null>>(uid, 'partyConfigs'),
+        loadCollectionSnapshot<Ward[]>(uid, 'wards'),
+        loadCollectionSnapshot<PollingUnit[]>(uid, 'pollingUnits'),
+        loadCollectionSnapshot<PuAssignment[]>(uid, 'puAssignments'),
+        loadCollectionSnapshot<UserAccount[]>(uid, 'users'),
+        loadCollectionSnapshot<AuditLog[]>(uid, 'auditLogs'),
+        loadCollectionSnapshot<AgentCheckIn[]>(uid, 'checkIns'),
+        loadCollectionSnapshot<IncidentReport[]>(uid, 'incidents'),
+        loadCollectionSnapshot<ResultSubmission[]>(uid, 'results'),
+        loadCollectionSnapshot<ApprovedPuResult[]>(uid, 'approvedPuResults'),
+        loadCollectionSnapshot<AggregatedResult[]>(uid, 'aggregatedResults'),
+        loadCollectionSnapshot<PublicVerifiedResult[]>(uid, 'publicResults'),
+        loadCollectionSnapshot<TimelineEvent[]>(uid, 'timelineEvents'),
+        loadCollectionSnapshot<NotificationItem[]>(uid, 'notifications'),
+        loadCollectionSnapshot<EmergencyContact[]>(uid, 'emergencyContacts'),
+        loadCollectionSnapshot<ReportAttachment[]>(uid, 'reportAttachments'),
+        loadCollectionSnapshot<OperationalNote[]>(uid, 'operationalNotes'),
+        loadCollectionSnapshot<PasswordResetRequest[]>(uid, 'passwordResetRequests'),
+      ]);
+
+      if (cancelled) return;
+      if (!liveLoaded.has('partyConfigs') && cParty) setPartyConfigs(cParty);
+      if (!liveLoaded.has('wards') && cWards) setWards(cWards);
+      if (!liveLoaded.has('pollingUnits') && cPus) setPollingUnits(cPus);
+      if (!liveLoaded.has('puAssignments') && cAssign) setPuAssignments(cAssign);
+      if (!liveLoaded.has('users') && cUsers) setUsers(cUsers);
+      if (!liveLoaded.has('auditLogs') && cAudit) setAuditLogs(cAudit);
+      if (!liveLoaded.has('checkIns') && cCheckIns) {
+        setCheckIns(filterOutTombstones(cCheckIns, tombstones));
+      }
+      if (!liveLoaded.has('incidents') && cIncidents) {
+        setIncidents(filterOutTombstones(cIncidents, tombstones));
+      }
+      if (!liveLoaded.has('results') && cResults) {
+        setResults(filterOutTombstones(cResults, tombstones));
+      }
+      if (!liveLoaded.has('approvedPuResults') && cApproved) {
+        setApprovedPuResults(filterOutTombstones(cApproved, tombstones, true));
+      }
+      if (!liveLoaded.has('aggregatedResults') && cAggregated) {
+        setAggregatedResults(filterOutTombstones(cAggregated, tombstones));
+      }
+      if (!liveLoaded.has('publicResults') && cPublic) {
+        setPublicResults(filterOutTombstones(cPublic, tombstones, true));
+      }
+      if (!liveLoaded.has('timelineEvents') && cTimeline) {
+        setTimelineEvents(filterOutTombstones(cTimeline, tombstones));
+      }
+      if (!liveLoaded.has('notifications') && cNotifs) {
+        setNotifications(filterOutTombstones(cNotifs, tombstones));
+      }
+      if (!liveLoaded.has('emergencyContacts') && cContacts) {
+        setEmergencyContacts(cContacts);
+      }
+      if (!liveLoaded.has('reportAttachments') && cAttach) {
+        setReportAttachments(filterOutTombstones(cAttach, tombstones));
+      }
+      if (!liveLoaded.has('operationalNotes') && cNotes) {
+        setServerNotes(filterOutTombstones(cNotes, tombstones));
+      }
+      if (!liveLoaded.has('passwordResetRequests') && cResetReqs) {
+        setPasswordResetRequests(cResetReqs);
+      }
+      if (!navigator.onLine) {
+        setLoadingData(false);
+      }
+    })();
+
     const unsubPartyConfigs = observePartyConfigs(
       (configs) => {
+        liveLoaded.add('partyConfigs');
         setPartyConfigs(configs);
+        void saveCollectionSnapshot(account.uid, 'partyConfigs', configs);
         markSynced();
       },
       handleSubError
@@ -274,7 +451,9 @@ export default function App() {
     const unsubWards = observeWards(
       account,
       (items) => {
+        liveLoaded.add('wards');
         setWards(items);
+        void saveCollectionSnapshot(account.uid, 'wards', items);
         setLoadingData(false);
         markSynced();
       },
@@ -284,7 +463,9 @@ export default function App() {
     const unsubPus = observePollingUnits(
       account,
       (items) => {
+        liveLoaded.add('pollingUnits');
         setPollingUnits(items);
+        void saveCollectionSnapshot(account.uid, 'pollingUnits', items);
         setLoadingData(false);
         markSynced();
       },
@@ -294,7 +475,9 @@ export default function App() {
     const unsubPuAssignments = observePuAssignments(
       account,
       (items) => {
+        liveLoaded.add('puAssignments');
         setPuAssignments(items);
+        void saveCollectionSnapshot(account.uid, 'puAssignments', items);
         markSynced();
       },
       handleSubError
@@ -303,7 +486,9 @@ export default function App() {
     const unsubUsers = observeUsers(
       account,
       (items) => {
+        liveLoaded.add('users');
         setUsers(items);
+        void saveCollectionSnapshot(account.uid, 'users', items);
         markSynced();
       },
       handleSubError
@@ -311,7 +496,9 @@ export default function App() {
     const unsubAudit = observeAuditLogs(
       account,
       (items) => {
+        liveLoaded.add('auditLogs');
         setAuditLogs(items);
+        void saveCollectionSnapshot(account.uid, 'auditLogs', items);
         markSynced();
       },
       handleSubError
@@ -319,70 +506,120 @@ export default function App() {
     const unsubCheckIns = observeCheckIns(
       account,
       (items) => {
-        setCheckIns(items);
-        markSynced();
+        liveLoaded.add('checkIns');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setCheckIns(clean);
+          void saveCollectionSnapshot(account.uid, 'checkIns', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubIncidents = observeIncidents(
       account,
       (items) => {
-        setIncidents(items);
-        markSynced();
+        liveLoaded.add('incidents');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setIncidents(clean);
+          void saveCollectionSnapshot(account.uid, 'incidents', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubResults = observeResultSubmissions(
       account,
       (items) => {
-        setResults(items);
-        markSynced();
+        liveLoaded.add('results');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setResults(clean);
+          void saveCollectionSnapshot(account.uid, 'results', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubApproved = observeApprovedPuResults(
       account,
       (items) => {
-        setApprovedPuResults(items);
-        markSynced();
+        liveLoaded.add('approvedPuResults');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones, true);
+          setApprovedPuResults(clean);
+          void saveCollectionSnapshot(account.uid, 'approvedPuResults', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubAggregated = observeAggregatedResults(
       account,
       (items) => {
-        setAggregatedResults(items);
-        markSynced();
+        liveLoaded.add('aggregatedResults');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setAggregatedResults(clean);
+          void saveCollectionSnapshot(account.uid, 'aggregatedResults', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubPublic = observePublicResults(
       (items) => {
-        setPublicResults(items);
-        markSynced();
+        liveLoaded.add('publicResults');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones, true);
+          setPublicResults(clean);
+          void saveCollectionSnapshot(account.uid, 'publicResults', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubTimeline = observeTimelineEvents(
       account,
       (items) => {
-        setTimelineEvents(items);
-        markSynced();
+        liveLoaded.add('timelineEvents');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setTimelineEvents(clean);
+          void saveCollectionSnapshot(account.uid, 'timelineEvents', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubNotifs = observeNotifications(
       account,
       (items) => {
-        setNotifications(items);
-        markSynced();
+        liveLoaded.add('notifications');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setNotifications(clean);
+          void saveCollectionSnapshot(account.uid, 'notifications', clean);
+          markSynced();
+        });
       },
       handleSubError
     );
     const unsubEmergency = observeEmergencyContacts(
       account,
       (items) => {
+        liveLoaded.add('emergencyContacts');
         setEmergencyContacts(items);
+        void saveCollectionSnapshot(account.uid, 'emergencyContacts', items);
         markSynced();
       },
       handleSubError
@@ -390,13 +627,44 @@ export default function App() {
     const unsubAttachments = observeReportAttachments(
       account,
       (items) => {
-        setReportAttachments(items);
+        liveLoaded.add('reportAttachments');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setReportAttachments(clean);
+          void saveCollectionSnapshot(account.uid, 'reportAttachments', clean);
+          markSynced();
+        });
+      },
+      handleSubError
+    );
+    const unsubNotes = observeOperationalNotes(
+      account,
+      (items) => {
+        liveLoaded.add('operationalNotes');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setServerNotes(clean);
+          void saveCollectionSnapshot(account.uid, 'operationalNotes', clean);
+          markSynced();
+        });
+      },
+      handleSubError
+    );
+    const unsubResetReqs = observePasswordResetRequests(
+      account,
+      (items) => {
+        liveLoaded.add('passwordResetRequests');
+        setPasswordResetRequests(items);
+        void saveCollectionSnapshot(account.uid, 'passwordResetRequests', items);
         markSynced();
       },
       handleSubError
     );
 
     return () => {
+      cancelled = true;
       unsubPartyConfigs();
       unsubWards();
       unsubPus();
@@ -413,8 +681,100 @@ export default function App() {
       unsubNotifs();
       unsubEmergency();
       unsubAttachments();
+      unsubNotes();
+      unsubResetReqs();
     };
   }, [authReady, firebaseUser, account, activeAuthorized, syncNonce]);
+
+  // 4a. Keep public location_catalog synchronized whenever an authorized directory admin opens FDMIS
+  useEffect(() => {
+    if (
+      !account ||
+      !activeAuthorized ||
+      !isOnline ||
+      !canManageDirectory(account.role) ||
+      (wards.length === 0 && pollingUnits.length === 0)
+    ) {
+      return;
+    }
+
+    const isFull = account.role === UserRole.FULL_CONTROL_ADMIN;
+    const scopedWardsCount = isFull
+      ? wards.length
+      : wards.filter((w) => w.lgaId === account.assignedLgaId).length;
+    const scopedPusCount = isFull
+      ? pollingUnits.length
+      : pollingUnits.filter((p) => p.lgaId === account.assignedLgaId).length;
+
+    const catWardsCount = locationCatalog.reduce((sum, l) => sum + l.wardCount, 0);
+    const catPusCount = locationCatalog.reduce((sum, l) => sum + l.puCount, 0);
+    const myEntry = isFull
+      ? null
+      : locationCatalog.find((l) => l.lgaId === account.assignedLgaId);
+
+    const catalogDiffers = isFull
+      ? locationCatalog.length === 0 ||
+        catWardsCount !== scopedWardsCount ||
+        catPusCount !== scopedPusCount
+      : !myEntry || myEntry.wardCount !== scopedWardsCount || myEntry.puCount !== scopedPusCount;
+
+    const liveSignature = `${account.role}:${scopedWardsCount}:${scopedPusCount}`;
+    if (!catalogDiffers || lastCatalogSignatureRef.current === liveSignature) return;
+
+    lastCatalogSignatureRef.current = liveSignature;
+    void syncLocationCatalogFromLiveDirectory(account, wards, pollingUnits);
+  }, [account, activeAuthorized, isOnline, wards, pollingUnits, locationCatalog]);
+
+  // 4c. Attempt automatic sync of queued offline registrations when internet returns while signed out
+  useEffect(() => {
+    if (!isOnline || firebaseUser || pendingOfflineRegistrations.length === 0) return;
+    const queued = pendingOfflineRegistrations.filter((r) => r.status === 'QUEUED_OFFLINE');
+    if (queued.length === 0) return;
+
+    let active = true;
+    void (async () => {
+      for (const reg of queued) {
+        if (!active) break;
+        const cachedPw = getEphemeralOfflinePassword(reg.id);
+        if (!cachedPw) continue;
+        try {
+          await syncPendingOfflineRegistration(reg, cachedPw);
+        } catch {
+          // Recorded on the offline registration item cleanly
+        }
+      }
+      if (active) {
+        const refreshed = await getPendingOfflineRegistrations();
+        setPendingOfflineRegistrations(refreshed);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [isOnline, firebaseUser, pendingOfflineRegistrations]);
+
+  // 4b. Merge local offline notes with synced server notes cleanly
+  useEffect(() => {
+    if (!account || !activeAuthorized) {
+      setMergedNotes([]);
+      return;
+    }
+
+    let cancelled = false;
+    const refreshMergedNotes = () => {
+      void buildMergedOperationalNotes(account.uid, serverNotes).then((combined) => {
+        if (!cancelled) setMergedNotes(combined);
+      });
+    };
+
+    refreshMergedNotes();
+    const unsubLocal = subscribeLocalNotes(refreshMergedNotes);
+    return () => {
+      cancelled = true;
+      unsubLocal();
+    };
+  }, [account, activeAuthorized, serverNotes, queuedItems]);
 
   // 5. Offline queue subscription & automatic background sync on reconnect
   useEffect(() => {
@@ -431,14 +791,58 @@ export default function App() {
     return () => unsubQueue();
   }, [account, activeAuthorized]);
 
+  const executeQueueSync = useCallback(
+    async (includeFailed: boolean) => {
+      if (!isOnline || !account || !activeAuthorized || isFlushingRef.current) return;
+
+      const eligible = queuedItems.filter((item) => {
+        const isPendingStatus =
+          item.status === 'PENDING_SYNC' ||
+          item.status === 'SAVED_LOCALLY' ||
+          (includeFailed && item.status === 'SYNC_FAILED');
+        if (!isPendingStatus) return false;
+        const isNote = item.reportType === 'NOTE_UPSERT' || item.reportType === 'NOTE_DELETE';
+        return isNote || pollingUnits.length > 0;
+      });
+
+      if (eligible.length === 0) return;
+
+      isFlushingRef.current = true;
+      try {
+        if (pollingUnits.length > 0) {
+          await flushOfflineQueue(account, pollingUnits, results);
+        } else {
+          for (const item of eligible) {
+            await syncSingleQueuedItem(account, item, pollingUnits, results);
+          }
+        }
+      } finally {
+        isFlushingRef.current = false;
+      }
+    },
+    [isOnline, account, activeAuthorized, queuedItems, pollingUnits, results]
+  );
+
+  // Trigger full retry once when connectivity returns from offline -> online
   useEffect(() => {
-    if (!isOnline || !account || !activeAuthorized || pollingUnits.length === 0) return;
-    const hasPending = queuedItems.some(
-      (i) => i.status === 'PENDING_SYNC' || i.status === 'SYNC_FAILED'
+    if (!isOnline) {
+      wasOfflineRef.current = true;
+      return;
+    }
+    if (wasOfflineRef.current) {
+      wasOfflineRef.current = false;
+      void executeQueueSync(true);
+    }
+  }, [isOnline, executeQueueSync]);
+
+  // Auto-flush newly queued PENDING_SYNC / SAVED_LOCALLY items whenever online
+  useEffect(() => {
+    const hasFreshPending = queuedItems.some(
+      (i) => i.status === 'PENDING_SYNC' || i.status === 'SAVED_LOCALLY'
     );
-    if (!hasPending) return;
-    void flushOfflineQueue(account, pollingUnits, results);
-  }, [isOnline, account, activeAuthorized, pollingUnits, results, queuedItems]);
+    if (!hasFreshPending) return;
+    void executeQueueSync(false);
+  }, [queuedItems, executeQueueSync]);
 
   // 6. Ensure activeSection remains valid for current user's role
   useEffect(() => {
@@ -477,8 +881,22 @@ export default function App() {
 
   const pendingSyncCount = useMemo(
     () =>
-      queuedItems.filter((i) => i.status === 'PENDING_SYNC' || i.status === 'SYNC_FAILED')
-        .length,
+      queuedItems.filter(
+        (i) =>
+          i.status === 'PENDING_SYNC' ||
+          i.status === 'SAVED_LOCALLY' ||
+          i.status === 'SYNC_FAILED'
+      ).length,
+    [queuedItems]
+  );
+
+  const syncingCount = useMemo(
+    () => queuedItems.filter((i) => i.status === 'SYNCING').length,
+    [queuedItems]
+  );
+
+  const failedSyncCount = useMemo(
+    () => queuedItems.filter((i) => i.status === 'SYNC_FAILED').length,
     [queuedItems]
   );
 
@@ -496,15 +914,39 @@ export default function App() {
     try {
       const status = await testFirestoreConnection();
       setConnectionStatus(status);
-      if (account && isOnline && pollingUnits.length > 0 && pendingSyncCount > 0) {
-        await flushOfflineQueue(account, pollingUnits, results);
+      if (account && isOnline && pendingSyncCount > 0) {
+        await executeQueueSync(true);
       }
       setSyncNonce((prev) => prev + 1);
       setLastUpdatedAt(new Date());
     } finally {
       setSyncingNow(false);
     }
-  }, [syncingNow, account, isOnline, pollingUnits, pendingSyncCount, results]);
+  }, [syncingNow, account, isOnline, pendingSyncCount, executeQueueSync]);
+
+  const handleRetryQueueItem = useCallback(
+    async (item: OfflineQueuedItem) => {
+      if (!account || !isOnline || syncingNow) return;
+      setSyncingNow(true);
+      try {
+        await syncSingleQueuedItem(account, item, pollingUnits, results);
+        setLastUpdatedAt(new Date());
+      } finally {
+        setSyncingNow(false);
+      }
+    },
+    [account, isOnline, syncingNow, pollingUnits, results]
+  );
+
+  const handleRefreshLocations = useCallback(async () => {
+    setRefreshingLocations(true);
+    try {
+      const items = await fetchPublicLocationCatalog();
+      setLocationCatalog(items);
+    } finally {
+      setRefreshingLocations(false);
+    }
+  }, []);
 
   const handleGoogleSignIn = async () => {
     setAuthError(null);
@@ -515,6 +957,49 @@ export default function App() {
     }
   };
 
+  const handlePhoneSignIn = async (phoneNumber: string, password: string) => {
+    setAuthError(null);
+    await signInWithPhoneAndPassword(phoneNumber, password);
+  };
+
+  const handlePhoneRegister = async (input: {
+    fullName: string;
+    phone: string;
+    password: string;
+    confirmPassword: string;
+    location: RegistrationLocationSelection;
+  }) => {
+    setAuthError(null);
+    const res = await registerWithPhoneAndPassword(input);
+    if (res.queuedOffline) {
+      const regs = await getPendingOfflineRegistrations();
+      setPendingOfflineRegistrations(regs);
+    }
+    return res;
+  };
+
+  const handleSyncPendingOfflineRegistration = async (
+    reg: PendingOfflineRegistration,
+    password?: string
+  ) => {
+    const rawPassword = password || getEphemeralOfflinePassword(reg.id) || '';
+    if (!rawPassword) {
+      throw new Error('Enter your chosen password to finalize offline registration sync.');
+    }
+    try {
+      await syncPendingOfflineRegistration(reg, rawPassword);
+    } finally {
+      const refreshed = await getPendingOfflineRegistrations();
+      setPendingOfflineRegistrations(refreshed);
+    }
+  };
+
+  const handleDiscardPendingOfflineRegistration = async (regId: string) => {
+    await deletePendingOfflineRegistration(regId);
+    const refreshed = await getPendingOfflineRegistrations();
+    setPendingOfflineRegistrations(refreshed);
+  };
+
   const handleBootstrap = async (displayName: string, phone: string) => {
     const created = await initializeFullControlAdmin(displayName, phone);
     setAccount(created);
@@ -522,8 +1007,12 @@ export default function App() {
     setNeedsRegistration(false);
   };
 
-  const handleRegisterPending = async (displayName: string, phone: string) => {
-    const created = await registerPendingAccount(displayName, phone);
+  const handleRegisterPending = async (
+    displayName: string,
+    phone: string,
+    location?: RegistrationLocationSelection | null
+  ) => {
+    const created = await registerPendingAccount(displayName, phone, location);
     setAccount(created);
     setNeedsRegistration(false);
   };
@@ -549,7 +1038,19 @@ export default function App() {
         loading={!authReady || checkingProfile}
         authError={authError}
         connectionStatus={connectionStatus}
+        isOnline={isOnline}
+        locationCatalog={locationCatalog}
+        refreshingLocations={refreshingLocations}
+        onRefreshLocations={handleRefreshLocations}
+        pendingOfflineRegistrations={pendingOfflineRegistrations}
+        hasEphemeralOfflinePassword={(regId) => Boolean(getEphemeralOfflinePassword(regId))}
+        onPhoneSignIn={handlePhoneSignIn}
+        onPhoneRegister={handlePhoneRegister}
         onGoogleSignIn={handleGoogleSignIn}
+        onSubmitPasswordResetRequest={submitPasswordResetRequest}
+        onCompleteApprovedPasswordReset={completeApprovedPasswordReset}
+        onSyncPendingOfflineRegistration={handleSyncPendingOfflineRegistration}
+        onDiscardPendingOfflineRegistration={handleDiscardPendingOfflineRegistration}
         onBootstrapSubmit={handleBootstrap}
         onRegisterPending={handleRegisterPending}
         onSignOut={handleSignOut}
@@ -567,6 +1068,8 @@ export default function App() {
       inactivityMinutes={inactivityMinutes}
       isOnline={isOnline}
       pendingSyncCount={pendingSyncCount}
+      syncingCount={syncingCount}
+      failedSyncCount={failedSyncCount}
       criticalAlertCount={criticalAlertCount}
       lastUpdatedAt={lastUpdatedAt}
       onManualSync={handleManualSync}
@@ -604,6 +1107,19 @@ export default function App() {
           results={results}
           queuedItems={queuedItems}
           isOnline={isOnline}
+          onRetryQueueItem={handleRetryQueueItem}
+        />
+      ) : null}
+
+      {activeSection === 'notes' ? (
+        <OperationalNotesPanel
+          user={account}
+          notes={mergedNotes}
+          wards={wards}
+          pollingUnits={pollingUnits}
+          isOnline={isOnline}
+          onRetrySync={() => void handleManualSync()}
+          syncingNow={syncingNow}
         />
       ) : null}
 
@@ -612,7 +1128,10 @@ export default function App() {
           user={account}
           pollingUnits={pollingUnits}
           incidents={incidents}
+          queuedItems={queuedItems}
           isOnline={isOnline}
+          onRetrySync={() => void handleManualSync()}
+          syncingNow={syncingNow}
         />
       ) : null}
 
@@ -623,7 +1142,10 @@ export default function App() {
           results={results}
           approvedPuResults={approvedPuResults}
           partyConfigs={partyConfigs}
+          queuedItems={queuedItems}
           isOnline={isOnline}
+          onRetrySync={() => void handleManualSync()}
+          syncingNow={syncingNow}
         />
       ) : null}
 
@@ -714,6 +1236,7 @@ export default function App() {
           wards={wards}
           pollingUnits={pollingUnits}
           puAssignments={puAssignments}
+          passwordResetRequests={passwordResetRequests}
           loading={loadingData}
         />
       ) : null}
@@ -729,6 +1252,7 @@ export default function App() {
           notifications={notifications}
           timelineEvents={timelineEvents}
           reportAttachments={reportAttachments}
+          notes={mergedNotes}
         />
       ) : null}
 

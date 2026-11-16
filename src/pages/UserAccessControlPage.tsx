@@ -1,6 +1,9 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowLeftRight,
+  CheckCircle2,
+  Copy,
+  KeyRound,
   Lock,
   RotateCcw,
   ShieldAlert,
@@ -18,18 +21,22 @@ import {
   canDeleteUsers,
   canManageUsers,
   formatFirestoreTime,
+  type PasswordResetRequest,
   type PollingUnit,
   type PuAssignment,
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
 import {
+  approvePasswordResetRequest,
   controlledReassignPollingUnit,
   permanentlyDeleteUser,
   reactivateUser,
+  rejectPasswordResetRequest,
   revokeOrSuspendUser,
   updateUserRoleAndScope,
 } from '../services/directoryService';
+import { formatAccountIdentifier } from '../utils/phoneAuth';
 
 interface UserAccessControlPageProps {
   currentUser: UserAccount;
@@ -37,6 +44,7 @@ interface UserAccessControlPageProps {
   wards: Ward[];
   pollingUnits: PollingUnit[];
   puAssignments: PuAssignment[];
+  passwordResetRequests?: PasswordResetRequest[];
   loading: boolean;
 }
 
@@ -46,6 +54,7 @@ export function UserAccessControlPage({
   wards,
   pollingUnits,
   puAssignments,
+  passwordResetRequests = [],
   loading,
 }: UserAccessControlPageProps) {
   const canEdit = canManageUsers(currentUser.role);
@@ -75,6 +84,15 @@ export function UserAccessControlPage({
   const [reassignAgentUid, setReassignAgentUid] = useState('');
   const [reassignReason, setReassignReason] = useState('');
 
+  const [issuedPinInfo, setIssuedPinInfo] = useState<{
+    applicantName: string;
+    maskedPhone: string;
+    resetPin: string;
+  } | null>(null);
+  const [copiedPin, setCopiedPin] = useState(false);
+  const [rejectingReq, setRejectingReq] = useState<PasswordResetRequest | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
@@ -83,6 +101,7 @@ export function UserAccessControlPage({
       return (
         u.displayName.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
+        (u.phone || '').toLowerCase().includes(q) ||
         u.role.toLowerCase().includes(q)
       );
     });
@@ -124,17 +143,36 @@ export function UserAccessControlPage({
     setEditingUser(u);
     setEditRole(u.role);
     setEditStatus(u.status);
+
+    let nextLga = u.assignedLgaId || '';
     if (currentUser.role === UserRole.FUNTUA_SUPER_ADMIN) {
-      setEditLga('funtua');
+      nextLga = 'funtua';
     } else if (currentUser.role === UserRole.DANDUME_SUPER_ADMIN) {
-      setEditLga('dandume');
-    } else if (u.role === UserRole.VERIFICATION_OFFICER) {
-      setEditLga(u.assignedLgaId || '');
-    } else {
-      setEditLga(u.assignedLgaId || 'funtua');
+      nextLga = 'dandume';
+    } else if (!nextLga) {
+      if (u.requestedLgaId) {
+        nextLga = u.requestedLgaId;
+      } else if (u.role !== UserRole.VERIFICATION_OFFICER) {
+        nextLga = 'funtua';
+      }
     }
-    setEditWard(u.assignedWardId || '');
-    setEditPu(u.assignedPollingUnitId || '');
+    setEditLga(nextLga);
+
+    const nextWard = u.assignedWardId || (!u.assignedLgaId && u.requestedWardId ? u.requestedWardId : '');
+    setEditWard(nextWard);
+
+    if (u.assignedPollingUnitId) {
+      setEditPu(u.assignedPollingUnitId);
+    } else if (u.requestedPollingUnitId) {
+      const occupiedByOther =
+        puAssignments.some((a) => a.puId === u.requestedPollingUnitId && a.agentUid && a.agentUid !== u.uid) ||
+        pollingUnits.some(
+          (p) => p.id === u.requestedPollingUnitId && p.assignedAgentUid && p.assignedAgentUid !== u.uid
+        );
+      setEditPu(occupiedByOther ? '' : u.requestedPollingUnitId);
+    } else {
+      setEditPu('');
+    }
   };
 
   const handleSaveRole = async (e: FormEvent) => {
@@ -273,6 +311,64 @@ export function UserAccessControlPage({
     }
   };
 
+  const handleApproveReset = async (req: PasswordResetRequest) => {
+    setBusy(true);
+    setFeedback(null);
+    setCopiedPin(false);
+    try {
+      const res = await approvePasswordResetRequest(currentUser, req);
+      setIssuedPinInfo({
+        applicantName: req.applicantName,
+        maskedPhone: res.maskedPhone,
+        resetPin: res.resetPin,
+      });
+      setFeedback({
+        type: 'ok',
+        text: `Issued one-time password Reset PIN for ${req.applicantName} (${res.maskedPhone}).`,
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Failed to approve password reset request.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRejectReset = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!rejectingReq) return;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      await rejectPasswordResetRequest(currentUser, rejectingReq, rejectReason);
+      setFeedback({
+        type: 'ok',
+        text: `Rejected password reset request for ${rejectingReq.applicantName}.`,
+      });
+      setRejectingReq(null);
+      setRejectReason('');
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Failed to reject password reset request.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopyPin = async (pin: string) => {
+    try {
+      await navigator.clipboard.writeText(pin);
+      setCopiedPin(true);
+      window.setTimeout(() => setCopiedPin(false), 2500);
+    } catch {
+      // Clipboard API restricted
+    }
+  };
+
   const scopedWards = useMemo(() => {
     if (!editLga) return [];
     return wards.filter((w) => w.lgaId === editLga);
@@ -298,7 +394,7 @@ export function UserAccessControlPage({
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search operator name, email, or role..."
+            placeholder="Search operator name, phone, email, or role..."
             className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
           />
 
@@ -385,7 +481,14 @@ export function UserAccessControlPage({
                     <tr key={u.uid} className="hover:bg-slate-50/70">
                       <td className="px-4 py-3.5">
                         <p className="font-medium text-slate-900">{u.displayName}</p>
-                        <p className="text-xs text-slate-500">{u.email}</p>
+                        <p className="text-xs text-slate-500">{formatAccountIdentifier(u)}</p>
+                        {u.status === AccountStatus.PENDING_APPROVAL && u.requestedLgaId ? (
+                          <p className="mt-0.5 text-[11px] font-medium text-amber-800">
+                            Requested: {u.requestedLgaId.toUpperCase()}
+                            {u.requestedWardName ? ` · ${u.requestedWardName}` : ''}
+                            {u.requestedPollingUnitCode ? ` · ${u.requestedPollingUnitCode}` : ''}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3.5">
                         <RoleBadge role={u.role} />
@@ -482,7 +585,7 @@ export function UserAccessControlPage({
                   Assign Role &amp; Area Scope
                 </h3>
                 <p className="text-xs text-slate-500">
-                  {editingUser.displayName} · {editingUser.email}
+                  {editingUser.displayName} · {formatAccountIdentifier(editingUser)}
                 </p>
               </div>
               <button
@@ -705,8 +808,8 @@ export function UserAccessControlPage({
             <p className="mt-3 text-xs leading-relaxed text-slate-600">
               Immediately revokes active sessions and suspends{' '}
               <span className="font-semibold text-slate-900">{revokingUser.displayName}</span> (
-              {revokingUser.email}). Their Polling Unit assignment and historical election records
-              remain preserved.
+              {formatAccountIdentifier(revokingUser)}). Their Polling Unit assignment and historical
+              election records remain preserved.
             </p>
             <form onSubmit={handleRevoke} className="mt-4 space-y-4">
               <div>
@@ -768,8 +871,8 @@ export function UserAccessControlPage({
             </div>
             <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs leading-relaxed text-red-950">
               Permanently removes{' '}
-              <span className="font-semibold">{deletingUser.displayName}</span> ({deletingUser.email})
-              and releases any assigned Polling Unit lock (
+              <span className="font-semibold">{deletingUser.displayName}</span> (
+              {formatAccountIdentifier(deletingUser)}) and releases any assigned Polling Unit lock (
               <span className="font-mono">
                 {deletingUser.assignedPollingUnitId || 'none'}
               </span>
@@ -875,7 +978,7 @@ export function UserAccessControlPage({
                     .filter((u) => !u.sessionRevoked && u.role !== UserRole.FULL_CONTROL_ADMIN)
                     .map((u) => (
                       <option key={u.uid} value={u.uid}>
-                        {u.displayName} ({u.email}) — {USER_ROLE_META[u.role].shortLabel}
+                        {u.displayName} ({formatAccountIdentifier(u)}) — {USER_ROLE_META[u.role].shortLabel}
                       </option>
                     ))}
                 </select>
@@ -910,6 +1013,217 @@ export function UserAccessControlPage({
                   className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
                 >
                   {busy ? 'Transferring...' : 'Execute Reassignment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Password Recovery Requests Panel */}
+      {canEdit ? (
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+              <div>
+                <h2 className="font-display text-sm font-semibold text-slate-900">
+                  Password Recovery Requests
+                </h2>
+                <p className="text-xs text-slate-600">
+                  Verify operator identity before issuing a one-time Reset PIN. Completed resets
+                  require role and area scope re-activation above.
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-medium text-slate-600">
+              {passwordResetRequests.filter((r) => r.status === 'PENDING').length} pending review
+            </span>
+          </div>
+
+          {passwordResetRequests.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-500">
+              No password recovery requests submitted in your authorized scope.
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {passwordResetRequests.map((req) => (
+                <div
+                  key={req.id}
+                  className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="space-y-1 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-900">{req.applicantName}</span>
+                      <span className="font-mono text-slate-600">{req.maskedPhone}</span>
+                      {req.recoveryKeyMatched ? (
+                        <span className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-900">
+                          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                          <span>Recovery Key Verified</span>
+                        </span>
+                      ) : null}
+                      <span
+                        className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                          req.status === 'PENDING'
+                            ? 'border-amber-200 bg-amber-50 text-amber-900'
+                            : req.status === 'APPROVED'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                              : req.status === 'COMPLETED'
+                                ? 'border-slate-200 bg-slate-100 text-slate-700'
+                                : 'border-red-200 bg-red-50 text-red-900'
+                        }`}
+                      >
+                        {req.status}
+                      </span>
+                    </div>
+                    <p className="text-slate-600">
+                      {req.lgaId ? req.lgaId.toUpperCase() : 'LGA Unspecified'}
+                      {req.wardName ? ` · ${req.wardName}` : ''}
+                      {req.puCode ? ` · ${req.puCode}` : ''} · Submitted{' '}
+                      {formatFirestoreTime(req.createdAt)}
+                    </p>
+                    {req.reviewerNote ? (
+                      <p className="text-slate-500">Note: {req.reviewerNote}</p>
+                    ) : null}
+                  </div>
+
+                  {req.status === 'PENDING' ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void handleApproveReset(req)}
+                        className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                      >
+                        <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Approve &amp; Issue Reset PIN</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          setRejectingReq(req);
+                          setRejectReason('');
+                        }}
+                        className="inline-flex min-h-[38px] items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-100 disabled:opacity-60"
+                      >
+                        <span>Reject</span>
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {/* One-Time Issued Reset PIN Modal */}
+      {issuedPinInfo ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-emerald-200 bg-white p-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2 text-[#0b3b24]">
+                <KeyRound className="h-5 w-5" aria-hidden="true" />
+                <h3 className="font-display text-base font-semibold text-slate-900">
+                  One-Time Reset PIN Issued
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIssuedPinInfo(null)}
+                aria-label="Close modal"
+                className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-slate-600">
+              Share this single-use PIN securely with{' '}
+              <span className="font-semibold text-slate-900">{issuedPinInfo.applicantName}</span> (
+              {issuedPinInfo.maskedPhone}). It is displayed once and hashed in the database. After
+              completing the reset, re-approve the operator&apos;s Role &amp; Scope under the
+              Pending tab.
+            </p>
+            <div className="mt-4 flex items-center justify-between gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
+              <span className="font-mono text-base font-bold tracking-wider text-slate-900">
+                {issuedPinInfo.resetPin}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleCopyPin(issuedPinInfo.resetPin)}
+                className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{copiedPin ? 'Copied' : 'Copy'}</span>
+              </button>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIssuedPinInfo(null)}
+                className="min-h-[42px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233]"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Reject Password Recovery Modal */}
+      {rejectingReq ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-display text-base font-semibold text-slate-900">
+                Reject Recovery Request
+              </h3>
+              <button
+                type="button"
+                onClick={() => setRejectingReq(null)}
+                aria-label="Close modal"
+                className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-slate-600">
+              Rejecting recovery for{' '}
+              <span className="font-semibold text-slate-900">{rejectingReq.applicantName}</span> (
+              {rejectingReq.maskedPhone}).
+            </p>
+            <form onSubmit={handleRejectReset} className="mt-4 space-y-4">
+              <div>
+                <label htmlFor="reject-reason" className="block text-xs font-medium text-slate-700">
+                  Rejection Reason (min 4 chars) *
+                </label>
+                <textarea
+                  id="reject-reason"
+                  required
+                  minLength={4}
+                  maxLength={300}
+                  rows={2}
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="Specify reason for rejecting recovery request..."
+                  className="mt-1.5 w-full rounded-lg border border-slate-300 p-3 text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRejectingReq(null)}
+                  className="min-h-[42px] rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="min-h-[42px] rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-60"
+                >
+                  {busy ? 'Rejecting...' : 'Reject Request'}
                 </button>
               </div>
             </form>

@@ -1,7 +1,19 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
-import { AlertOctagon, AlertTriangle, FileImage, Plus, ShieldAlert, X } from 'lucide-react';
+import {
+  AlertOctagon,
+  AlertTriangle,
+  FileImage,
+  Plus,
+  RefreshCw,
+  ShieldAlert,
+  X,
+} from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
-import { IncidentStatusBadge, IncidentUrgencyBadge } from '../components/StatusBadge';
+import {
+  IncidentStatusBadge,
+  IncidentUrgencyBadge,
+  OfflineSyncBadge,
+} from '../components/StatusBadge';
 import {
   INCIDENT_CATEGORIES,
   INCIDENT_STATUS_META,
@@ -12,6 +24,7 @@ import {
   canReviewIncidents,
   formatFirestoreTime,
   type IncidentReport,
+  type OfflineQueuedItem,
   type PollingUnit,
   type UserAccount,
 } from '../types/fdmis';
@@ -31,14 +44,20 @@ interface IncidentsPageProps {
   user: UserAccount;
   pollingUnits: PollingUnit[];
   incidents: IncidentReport[];
+  queuedItems?: OfflineQueuedItem[];
   isOnline: boolean;
+  onRetrySync?: () => void;
+  syncingNow?: boolean;
 }
 
 export function IncidentsPage({
   user,
   pollingUnits,
   incidents,
+  queuedItems = [],
   isOnline,
+  onRetrySync,
+  syncingNow = false,
 }: IncidentsPageProps) {
   const canReview = canReviewIncidents(user.role);
 
@@ -230,6 +249,14 @@ export function IncidentsPage({
       setSavingReview(false);
     }
   };
+
+  const queuedIncidents = useMemo(
+    () =>
+      queuedItems.filter(
+        (item) => item.reportType === 'INCIDENT_REPORT' && item.status !== 'SYNCED'
+      ),
+    [queuedItems]
+  );
 
   const filteredIncidents = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -459,8 +486,62 @@ export function IncidentsPage({
         </section>
       ) : null}
 
+      {/* Pending Offline Incidents Queue */}
+      {queuedIncidents.length > 0 ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-950">
+                Pending Offline Incident Reports ({queuedIncidents.length})
+              </h3>
+              <p className="text-xs text-amber-900">
+                Saved safely on this device. These reports sync automatically once connectivity is available.
+              </p>
+            </div>
+            {onRetrySync ? (
+              <button
+                type="button"
+                disabled={!isOnline || syncingNow}
+                onClick={onRetrySync}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${syncingNow ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>{syncingNow ? 'Syncing...' : 'Retry Sync'}</span>
+              </button>
+            ) : null}
+          </div>
+          <div className="divide-y divide-amber-200/70 rounded-lg border border-amber-200 bg-white">
+            {queuedIncidents.map((item) => {
+              const titleText = String(item.payload?.title || item.summary);
+              const categoryText = String(item.payload?.category || 'Incident');
+              return (
+                <div
+                  key={item.clientSubmissionId}
+                  className="flex flex-col justify-between gap-2 p-3 sm:flex-row sm:items-center"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-900">{titleText}</p>
+                    <p className="text-[11px] text-slate-600">
+                      {item.puCode} · {item.puName} · {categoryText} · Queued{' '}
+                      {formatFirestoreTime(item.createdAtIso)}
+                    </p>
+                    {item.errorMessage ? (
+                      <p className="mt-0.5 text-[11px] text-red-700">{item.errorMessage}</p>
+                    ) : null}
+                  </div>
+                  <OfflineSyncBadge status={item.status} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
       {/* Incidents List */}
-      {filteredIncidents.length === 0 ? (
+      {filteredIncidents.length === 0 && queuedIncidents.length === 0 ? (
         <EmptyState
           title="No operational data has been submitted yet."
           description={
@@ -469,7 +550,7 @@ export function IncidentsPage({
               : 'No incidents match your selected urgency, status, or search filter.'
           }
         />
-      ) : (
+      ) : filteredIncidents.length === 0 ? null : (
         <div className="space-y-3">
           {filteredIncidents.map((inc) => (
             <article

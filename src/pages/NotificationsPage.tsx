@@ -272,7 +272,7 @@ export function NotificationsPage({
                     onChange={(e) => setIsTestData(e.target.checked)}
                     className="h-4 w-4 accent-amber-700"
                   />
-                  <span>Mark as Test / Drill Notification</span>
+                  <span>Mark as Test Notification</span>
                 </label>
               ) : null}
             </div>

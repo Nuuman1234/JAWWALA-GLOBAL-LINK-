@@ -16,14 +16,26 @@ service cloud.firestore {
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
 
-    function isVerifiedUser() {
+    function isVerifiedGoogleUser() {
       return isSignedIn() &&
         'email_verified' in request.auth.token &&
         request.auth.token.email_verified == true;
     }
 
+    function isPhonePasswordUser() {
+      return isSignedIn() &&
+        'firebase' in request.auth.token &&
+        request.auth.token.firebase.sign_in_provider == 'password' &&
+        'email' in request.auth.token &&
+        request.auth.token.email.matches('^ph_[0-9]{10,15}(\\.r[0-9]{1,3})?@fdmis\\.local$');
+    }
+
+    function isVerifiedUser() {
+      return isVerifiedGoogleUser() || isPhonePasswordUser();
+    }
+
     function isBootstrappedEmail() {
-      return isVerifiedUser() &&
+      return isVerifiedGoogleUser() &&
         'email' in request.auth.token &&
         request.auth.token.email == 'abdulbasirnuuman01@gmail.com';
     }
@@ -200,19 +212,87 @@ service cloud.firestore {
 
     function isValidUserAccount(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'revokedReason', 'lastLoginAt', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'authMethod', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'requestedLgaId', 'requestedWardId', 'requestedWardName', 'requestedPollingUnitId', 'requestedPollingUnitCode', 'requestedPollingUnitName', 'sessionRevoked', 'revokedReason', 'lastLoginAt', 'createdAt', 'updatedAt']) &&
         data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
         data.email is string && data.email.size() <= 200 &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
         (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30)) &&
+        (!('authMethod' in data) || data.authMethod in ['GOOGLE', 'PHONE_PASSWORD']) &&
         isValidRole(data.role) &&
         isValidAccountStatus(data.status) &&
         data.assignedLgaId is string && data.assignedLgaId.size() <= 32 &&
         data.assignedWardId is string && data.assignedWardId.size() <= 128 &&
         data.assignedPollingUnitId is string && data.assignedPollingUnitId.size() <= 128 &&
+        (!('requestedLgaId' in data) || data.requestedLgaId == null || (data.requestedLgaId is string && data.requestedLgaId.size() <= 32)) &&
+        (!('requestedWardId' in data) || data.requestedWardId == null || (data.requestedWardId is string && data.requestedWardId.size() <= 128)) &&
+        (!('requestedWardName' in data) || data.requestedWardName == null || (data.requestedWardName is string && data.requestedWardName.size() <= 120)) &&
+        (!('requestedPollingUnitId' in data) || data.requestedPollingUnitId == null || (data.requestedPollingUnitId is string && data.requestedPollingUnitId.size() <= 128)) &&
+        (!('requestedPollingUnitCode' in data) || data.requestedPollingUnitCode == null || (data.requestedPollingUnitCode is string && data.requestedPollingUnitCode.size() <= 40)) &&
+        (!('requestedPollingUnitName' in data) || data.requestedPollingUnitName == null || (data.requestedPollingUnitName is string && data.requestedPollingUnitName.size() <= 160)) &&
         data.sessionRevoked is bool &&
         (!('revokedReason' in data) || data.revokedReason == null || (data.revokedReason is string && data.revokedReason.size() <= 300)) &&
         (!('lastLoginAt' in data) || data.lastLoginAt == null || (data.lastLoginAt is timestamp && data.lastLoginAt <= request.time)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidUserCredential(data, uid) {
+      return data.keys().hasAll(['uid', 'phoneHash', 'passwordSalt', 'passwordHash', 'passwordAlgorithm', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'phoneHash', 'passwordSalt', 'passwordHash', 'passwordAlgorithm', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
+        data.uid == uid &&
+        data.phoneHash is string && data.phoneHash.size() >= 16 && data.phoneHash.size() <= 128 &&
+        data.passwordSalt is string && data.passwordSalt.size() >= 16 && data.passwordSalt.size() <= 128 &&
+        data.passwordHash is string && data.passwordHash.size() >= 32 && data.passwordHash.size() <= 256 &&
+        data.passwordAlgorithm == 'PBKDF2-SHA256-100K' &&
+        data.recoveryKeySalt is string && data.recoveryKeySalt.size() <= 128 &&
+        data.recoveryKeyHash is string && data.recoveryKeyHash.size() <= 256 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPhoneIndex(data, phoneHash) {
+      return data.keys().hasAll(['phoneHash', 'ownerUidHash', 'authSeq', 'pendingNextAuthSeq', 'resetPinSalt', 'resetPinHash', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['phoneHash', 'ownerUidHash', 'authSeq', 'pendingNextAuthSeq', 'resetPinSalt', 'resetPinHash', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
+        data.phoneHash == phoneHash &&
+        data.ownerUidHash is string && data.ownerUidHash.size() >= 16 && data.ownerUidHash.size() <= 128 &&
+        data.authSeq is int && data.authSeq >= 0 && data.authSeq <= 100 &&
+        data.pendingNextAuthSeq is int && data.pendingNextAuthSeq >= 0 && data.pendingNextAuthSeq <= 100 &&
+        data.resetPinSalt is string && data.resetPinSalt.size() <= 128 &&
+        data.resetPinHash is string && data.resetPinHash.size() <= 256 &&
+        data.recoveryKeySalt is string && data.recoveryKeySalt.size() <= 128 &&
+        data.recoveryKeyHash is string && data.recoveryKeyHash.size() <= 256 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLocationCatalog(data, lgaId) {
+      return isValidLgaId(lgaId) &&
+        data.keys().hasAll(['lgaId', 'lgaName', 'lgaCode', 'wards', 'pollingUnits', 'wardCount', 'puCount', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['lgaId', 'lgaName', 'lgaCode', 'wards', 'pollingUnits', 'wardCount', 'puCount', 'updatedByUid', 'updatedAt']) &&
+        data.lgaId == lgaId &&
+        data.lgaName is string && data.lgaName.size() >= 2 && data.lgaName.size() <= 80 &&
+        data.lgaCode is string && data.lgaCode.size() >= 2 && data.lgaCode.size() <= 24 &&
+        data.wards is list && data.wards.size() <= 50 && (data.wards.size() == 0 || data.wards[0] is map) &&
+        data.pollingUnits is list && data.pollingUnits.size() <= 1000 && (data.pollingUnits.size() == 0 || data.pollingUnits[0] is map) &&
+        data.wardCount is int && data.wardCount >= 0 && data.wardCount <= 50 &&
+        data.puCount is int && data.puCount >= 0 && data.puCount <= 1000 &&
+        data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPasswordResetRequest(data) {
+      return data.keys().hasAll(['phoneHash', 'maskedPhone', 'applicantName', 'lgaId', 'wardName', 'puCode', 'recoveryKeyMatched', 'status', 'reviewerNote', 'reviewedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['phoneHash', 'maskedPhone', 'applicantName', 'lgaId', 'wardName', 'puCode', 'recoveryKeyMatched', 'status', 'reviewerNote', 'reviewedByUid', 'createdAt', 'updatedAt']) &&
+        data.phoneHash is string && data.phoneHash.size() >= 16 && data.phoneHash.size() <= 128 &&
+        data.maskedPhone is string && data.maskedPhone.size() >= 4 && data.maskedPhone.size() <= 32 &&
+        data.applicantName is string && data.applicantName.size() >= 2 && data.applicantName.size() <= 120 &&
+        data.lgaId is string && data.lgaId.size() <= 32 &&
+        data.wardName is string && data.wardName.size() <= 120 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.recoveryKeyMatched is bool &&
+        data.status in ['PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'] &&
+        data.reviewerNote is string && data.reviewerNote.size() <= 400 &&
+        data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
@@ -549,6 +629,27 @@ service cloud.firestore {
         data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidOperationalNote(data) {
+      return data.keys().hasAll(['clientNoteId', 'title', 'content', 'category', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'authorUid', 'authorName', 'isPinned', 'isTestData', 'revision', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['clientNoteId', 'title', 'content', 'category', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'authorUid', 'authorName', 'isPinned', 'isTestData', 'revision', 'createdAt', 'updatedAt']) &&
+        data.clientNoteId is string && data.clientNoteId.size() >= 1 && data.clientNoteId.size() <= 128 &&
+        data.title is string && data.title.size() <= 120 &&
+        data.content is string && data.content.size() >= 1 && data.content.size() <= 1000 &&
+        data.category in ['GENERAL', 'FIELD_UPDATE', 'LOGISTICS', 'HANDOVER', 'URGENT'] &&
+        data.lgaId in ['all', 'funtua', 'dandume'] &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128 &&
+        data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120 &&
+        data.isPinned is bool &&
+        data.isTestData is bool &&
+        data.revision is int && data.revision >= 1 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
     function isValidAuditLog(data) {
       return data.keys().hasAll(['actorUid', 'actorName', 'actorEmail', 'actorRole', 'action', 'affectedEntity', 'affectedId', 'details', 'createdAt']) &&
         data.keys().hasOnly(['actorUid', 'actorName', 'actorEmail', 'actorRole', 'action', 'affectedEntity', 'affectedId', 'details', 'createdAt']) &&
@@ -568,12 +669,13 @@ service cloud.firestore {
       allow get: if isVerifiedUser() && isValidId(settingId);
       allow create: if isVerifiedUser() && isValidId(settingId) && (
         (settingId == 'bootstrap' &&
+          isVerifiedGoogleUser() &&
           !exists(/databases/$(database)/documents/system_settings/bootstrap) &&
           incoming().initializedByUid == request.auth.uid &&
           incoming().createdAt == request.time &&
           isValidBootstrap(incoming())) ||
         (settingId == 'global' &&
-          (isFullControlAdmin() || !exists(/databases/$(database)/documents/system_settings/bootstrap)) &&
+          (isFullControlAdmin() || (isVerifiedGoogleUser() && !exists(/databases/$(database)/documents/system_settings/bootstrap))) &&
           incoming().updatedByUid == request.auth.uid &&
           incoming().updatedAt == request.time &&
           isValidGlobalSettings(incoming()))
@@ -590,7 +692,7 @@ service cloud.firestore {
     match /admins/{uid} {
       allow get: if isVerifiedUser() && isValidId(uid) && (request.auth.uid == uid || isFullControlAdmin());
       allow list: if isFullControlAdmin();
-      allow create: if isVerifiedUser() && isValidId(uid) &&
+      allow create: if isVerifiedGoogleUser() && isValidId(uid) &&
         isValidAdminDoc(incoming()) &&
         incoming().uid == uid &&
         incoming().createdAt == request.time && (
@@ -607,11 +709,13 @@ service cloud.firestore {
         request.auth.uid == uid ||
         isFullControlAdmin() ||
         isLgaAdminFor(existing().assignedLgaId) ||
+        (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId)) ||
         isWardCoordFor(existing().assignedWardId)
       );
       allow list: if isVerifiedUser() && (
         isFullControlAdmin() ||
         isLgaAdminFor(existing().assignedLgaId) ||
+        (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId)) ||
         isWardCoordFor(existing().assignedWardId)
       );
       allow create: if isVerifiedUser() && isValidId(uid) &&
@@ -626,7 +730,8 @@ service cloud.firestore {
             incoming().assignedLgaId == '' &&
             incoming().assignedWardId == '' &&
             incoming().assignedPollingUnitId == '') ||
-          (request.auth.uid == uid &&
+          (isVerifiedGoogleUser() &&
+            request.auth.uid == uid &&
             incoming().role == 'FULL_CONTROL_ADMIN' &&
             incoming().status == 'ACTIVE' &&
             incoming().sessionRevoked == false &&
@@ -641,7 +746,7 @@ service cloud.firestore {
         incoming().updatedAt == request.time &&
         (uid != request.auth.uid || incoming().role == existing().role) && (
           isFullControlAdmin() ||
-          (isLgaAdminFor(existing().assignedLgaId) &&
+          ((isLgaAdminFor(existing().assignedLgaId) || (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId))) &&
             isLgaAdminFor(incoming().assignedLgaId) &&
             existing().role != 'FULL_CONTROL_ADMIN' &&
             incoming().role in ['VERIFICATION_OFFICER', 'WARD_COORDINATOR', 'POLLING_UNIT_AGENT', 'PENDING'] &&
@@ -658,6 +763,99 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'lastLoginAt', 'updatedAt']))
         );
       allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
+    }
+
+    // --- 3A. PRIVATE SALTED CREDENTIALS & RECOVERY HASHES ---
+    match /user_credentials/{uid} {
+      allow get: if isVerifiedUser() && isValidId(uid) && (request.auth.uid == uid || isFullControlAdmin());
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidId(uid) &&
+        request.auth.uid == uid &&
+        isValidUserCredential(incoming(), uid) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(uid) &&
+        isValidUserCredential(incoming(), uid) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        request.auth.uid == uid;
+      allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
+    }
+
+    // --- 3A2. ZERO-PII PHONE UNIQUENESS INDEX & RECOVERY SLOTS ---
+    match /phone_index/{phoneHash} {
+      allow get: if isValidId(phoneHash);
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidId(phoneHash) &&
+        !exists(/databases/$(database)/documents/phone_index/$(phoneHash)) &&
+        isValidPhoneIndex(incoming(), phoneHash) &&
+        incoming().authSeq == 0 &&
+        incoming().pendingNextAuthSeq == 0 &&
+        incoming().resetPinSalt == '' &&
+        incoming().resetPinHash == '' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(phoneHash) &&
+        isValidPhoneIndex(incoming(), phoneHash) &&
+        incoming().phoneHash == existing().phoneHash &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor('funtua') ||
+          isLgaAdminFor('dandume') ||
+          incoming().ownerUidHash == existing().ownerUidHash ||
+          (isPhonePasswordUser() &&
+            existing().pendingNextAuthSeq > existing().authSeq &&
+            existing().resetPinHash.size() > 0 &&
+            incoming().authSeq == existing().pendingNextAuthSeq &&
+            incoming().resetPinSalt == '' &&
+            incoming().resetPinHash == '')
+        );
+      allow delete: if isFullControlAdmin() && isValidId(phoneHash);
+    }
+
+    // --- 3A3. PUBLIC ZERO-PII LOCATION CATALOG (SYNCED FOR SIGN-UP & APK) ---
+    match /location_catalog/{lgaId} {
+      allow get: if isValidId(lgaId) && isValidLgaId(lgaId);
+      allow list: if isValidLgaId(existing().lgaId);
+      allow create, update: if isVerifiedUser() && isValidId(lgaId) &&
+        isValidLgaId(lgaId) &&
+        isValidLocationCatalog(incoming(), lgaId) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(lgaId)
+        );
+      allow delete: if false;
+    }
+
+    // --- 3A4. PASSWORD RECOVERY REQUEST QUEUE ---
+    match /password_reset_requests/{requestId} {
+      allow get, list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().lgaId)
+      );
+      allow create: if isValidId(requestId) &&
+        !exists(/databases/$(database)/documents/password_reset_requests/$(requestId)) &&
+        isValidPasswordResetRequest(incoming()) &&
+        incoming().status == 'PENDING' &&
+        incoming().reviewedByUid == '' &&
+        incoming().reviewerNote == '' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(requestId) &&
+        isValidPasswordResetRequest(incoming()) &&
+        incoming().phoneHash == existing().phoneHash &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(existing().lgaId) ||
+          (isPhonePasswordUser() &&
+            existing().status == 'APPROVED' &&
+            incoming().status == 'COMPLETED' &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(requestId);
     }
 
     // --- 3B. USER NOTIFICATION & ACCOUNT PREFERENCES ---
@@ -1077,6 +1275,71 @@ service cloud.firestore {
       allow delete: if isVerifiedUser() && isValidId(contactId) && (
         isFullControlAdmin() ||
         isLgaAdminFor(existing().scopeLgaId)
+      );
+    }
+
+    // --- 11C. OPERATIONAL NOTES & SHORT FIELD MESSAGES ---
+    match /operational_notes/{noteId} {
+      allow get: if isVerifiedUser() && isValidId(noteId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && hasActiveUser() && (
+          existing().authorUid == request.auth.uid ||
+          (callerDoc().role == 'FUNTUA_SUPER_ADMIN' && existing().lgaId in ['all', 'funtua']) ||
+          (callerDoc().role == 'DANDUME_SUPER_ADMIN' && existing().lgaId in ['all', 'dandume']) ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && (
+            callerDoc().assignedLgaId == '' ||
+            (existing().lgaId == callerDoc().assignedLgaId && (callerDoc().assignedWardId == '' || existing().wardId == callerDoc().assignedWardId))
+          )) ||
+          (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
+          (callerDoc().role == 'POLLING_UNIT_AGENT' && callerDoc().assignedPollingUnitId.size() > 0 && existing().puId == callerDoc().assignedPollingUnitId)
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          existing().authorUid == request.auth.uid ||
+          (callerDoc().role == 'FUNTUA_SUPER_ADMIN' && existing().lgaId in ['all', 'funtua']) ||
+          (callerDoc().role == 'DANDUME_SUPER_ADMIN' && existing().lgaId in ['all', 'dandume']) ||
+          (callerDoc().role == 'VERIFICATION_OFFICER' && (
+            callerDoc().assignedLgaId == '' ||
+            (existing().lgaId == callerDoc().assignedLgaId && (callerDoc().assignedWardId == '' || existing().wardId == callerDoc().assignedWardId))
+          )) ||
+          (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
+          (callerDoc().role == 'POLLING_UNIT_AGENT' && callerDoc().assignedPollingUnitId.size() > 0 && existing().puId == callerDoc().assignedPollingUnitId)
+        ))
+      );
+      allow create: if isVerifiedUser() && isValidId(noteId) &&
+        isValidOperationalNote(incoming()) &&
+        incoming().clientNoteId == noteId &&
+        incoming().authorUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (hasActiveUser() && (
+            (callerDoc().role == 'FUNTUA_SUPER_ADMIN' && incoming().lgaId in ['all', 'funtua']) ||
+            (callerDoc().role == 'DANDUME_SUPER_ADMIN' && incoming().lgaId in ['all', 'dandume']) ||
+            (callerDoc().role == 'VERIFICATION_OFFICER' && (
+              callerDoc().assignedLgaId == '' ||
+              incoming().lgaId == callerDoc().assignedLgaId
+            )) ||
+            (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && incoming().wardId == callerDoc().assignedWardId) ||
+            (callerDoc().role == 'POLLING_UNIT_AGENT' && (incoming().puId == '' || incoming().puId == callerDoc().assignedPollingUnitId))
+          ))
+        );
+      allow update: if isVerifiedUser() && isValidId(noteId) &&
+        isValidOperationalNote(incoming()) &&
+        incoming().clientNoteId == existing().clientNoteId &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().revision >= existing().revision && (
+          isFullControlAdmin() ||
+          (hasActiveUser() && existing().authorUid == request.auth.uid)
+        );
+      allow delete: if isVerifiedUser() && isValidId(noteId) && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && existing().authorUid == request.auth.uid)
       );
     }
 

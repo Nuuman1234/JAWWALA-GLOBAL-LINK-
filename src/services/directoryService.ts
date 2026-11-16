@@ -20,6 +20,7 @@ import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import {
   AccountStatus,
   DEFAULT_WHATSAPP_GROUP_NAME,
+  LGA_DEFINITIONS,
   PuOperationalStatus,
   UserRole,
   canAssignFieldUsers,
@@ -33,11 +34,23 @@ import {
   type DirectoryImportSummary,
   type GlobalSettings,
   type LgaId,
+  type LocationCatalogLga,
+  type LocationCatalogPuItem,
+  type LocationCatalogWardItem,
+  type PasswordResetRequest,
   type PollingUnit,
   type PuAssignment,
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
+import {
+  computePhoneBlindHash,
+  computeUidBlindHash,
+  generateResetPin,
+  hashSecretPBKDF2,
+  normalizePhoneNumber,
+} from '../utils/phoneAuth';
+import { loadGlobalSnapshot, saveGlobalSnapshot } from './offlineQueue';
 import {
   getOfficialDirectoryDataset,
   getPuDocId,
@@ -245,37 +258,109 @@ export function observeUsers(
   onError: (err: Error) => void
 ): Unsubscribe {
   const base = collection(db, 'users');
-  let q: Query;
 
   if (user.role === UserRole.FULL_CONTROL_ADMIN) {
-    q = base;
-  } else if (user.role === UserRole.FUNTUA_SUPER_ADMIN) {
-    q = query(base, where('assignedLgaId', '==', 'funtua'));
-  } else if (user.role === UserRole.DANDUME_SUPER_ADMIN) {
-    q = query(base, where('assignedLgaId', '==', 'dandume'));
-  } else if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
-    q = query(base, where('assignedWardId', '==', user.assignedWardId));
-  } else {
-    onData([]);
-    return () => {};
+    return onSnapshot(
+      base,
+      (snapshot) => {
+        const items = snapshot.docs
+          .map((d) => d.data() as UserAccount)
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        onData(items);
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    );
   }
 
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const items = snapshot.docs
-        .map((d) => d.data() as UserAccount)
-        .sort((a, b) => a.displayName.localeCompare(b.displayName));
-      onData(items);
-    },
-    (error) => {
-      try {
-        handleFirestoreError(error, OperationType.LIST, 'users');
-      } catch (wrapped) {
-        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+  if (
+    user.role === UserRole.FUNTUA_SUPER_ADMIN ||
+    user.role === UserRole.DANDUME_SUPER_ADMIN
+  ) {
+    const lgaId: LgaId = user.role === UserRole.FUNTUA_SUPER_ADMIN ? 'funtua' : 'dandume';
+    const assignedQ = query(base, where('assignedLgaId', '==', lgaId));
+    const pendingReqQ = query(
+      base,
+      where('requestedLgaId', '==', lgaId),
+      where('status', '==', AccountStatus.PENDING_APPROVAL)
+    );
+
+    const assignedMap = new Map<string, UserAccount>();
+    const pendingMap = new Map<string, UserAccount>();
+
+    const emitMerged = () => {
+      const merged = new Map<string, UserAccount>(pendingMap);
+      assignedMap.forEach((val, key) => merged.set(key, val));
+      onData(Array.from(merged.values()).sort((a, b) => a.displayName.localeCompare(b.displayName)));
+    };
+
+    const unsubAssigned = onSnapshot(
+      assignedQ,
+      (snapshot) => {
+        assignedMap.clear();
+        snapshot.docs.forEach((d) => {
+          const rec = d.data() as UserAccount;
+          assignedMap.set(rec.uid, rec);
+        });
+        emitMerged();
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
       }
-    }
-  );
+    );
+
+    const unsubPending = onSnapshot(
+      pendingReqQ,
+      (snapshot) => {
+        pendingMap.clear();
+        snapshot.docs.forEach((d) => {
+          const rec = d.data() as UserAccount;
+          pendingMap.set(rec.uid, rec);
+        });
+        emitMerged();
+      },
+      () => {
+        // Ignore secondary listener error if primary assigned list succeeded
+      }
+    );
+
+    return () => {
+      unsubAssigned();
+      unsubPending();
+    };
+  }
+
+  if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+    const q = query(base, where('assignedWardId', '==', user.assignedWardId));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const items = snapshot.docs
+          .map((d) => d.data() as UserAccount)
+          .sort((a, b) => a.displayName.localeCompare(b.displayName));
+        onData(items);
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    );
+  }
+
+  onData([]);
+  return () => {};
 }
 
 export function observeAuditLogs(
@@ -429,6 +514,8 @@ export async function importOfficialDirectory(
   const totalVerified = verifiedFuntua + verifiedDandume;
   const countsVerified = verifiedFuntua >= 298 && verifiedDandume >= 177;
 
+  await rebuildAndSyncLocationCatalog(actor);
+
   await writeAuditLog(
     actor,
     'OFFICIAL_DIRECTORY_IMPORTED',
@@ -481,6 +568,8 @@ export async function createWard(
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `wards/${wardId}`);
   }
+
+  await rebuildAndSyncLocationCatalog(actor, input.lgaId);
 
   await writeAuditLog(
     actor,
@@ -576,6 +665,8 @@ export async function createPollingUnit(
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `polling_units/${puId}`);
   }
+
+  await rebuildAndSyncLocationCatalog(actor, input.lgaId);
 
   await writeAuditLog(
     actor,
@@ -1180,20 +1271,33 @@ export async function permanentlyDeleteUser(
 
   const userRef = doc(db, 'users', target.uid);
   const adminRef = doc(db, 'admins', target.uid);
+  const credRef = doc(db, 'user_credentials', target.uid);
+
+  const normPhone = target.phone ? normalizePhoneNumber(target.phone) : null;
+  const phoneHash = normPhone?.valid ? await computePhoneBlindHash(normPhone.digits) : '';
+  const phoneIndexRef = phoneHash ? doc(db, 'phone_index', phoneHash) : null;
+  const targetUidHash = phoneHash ? await computeUidBlindHash(target.uid) : '';
 
   try {
     await runTransaction(db, async (tx) => {
       const userSnap = await tx.get(userRef);
       const adminSnap = await tx.get(adminRef);
+      const credSnap = await tx.get(credRef);
+      const phoneIndexSnap = phoneIndexRef ? await tx.get(phoneIndexRef) : null;
+
       const livePuId = userSnap.exists()
         ? (userSnap.data() as UserAccount).assignedPollingUnitId
         : target.assignedPollingUnitId;
 
-      if (livePuId) {
-        const puRef = doc(db, 'polling_units', livePuId);
-        const assignRef = doc(db, 'pu_assignments', livePuId);
-        const [puSnap, assignSnap] = await Promise.all([tx.get(puRef), tx.get(assignRef)]);
+      let puSnap = null;
+      let assignSnap = null;
+      const puRef = livePuId ? doc(db, 'polling_units', livePuId) : null;
+      const assignRef = livePuId ? doc(db, 'pu_assignments', livePuId) : null;
+      if (puRef && assignRef) {
+        [puSnap, assignSnap] = await Promise.all([tx.get(puRef), tx.get(assignRef)]);
+      }
 
+      if (puRef && assignRef && puSnap && assignSnap) {
         if (assignSnap.exists() && (assignSnap.data() as PuAssignment).agentUid === target.uid) {
           tx.delete(assignRef);
         }
@@ -1211,6 +1315,17 @@ export async function permanentlyDeleteUser(
         }
       }
 
+      if (credSnap.exists()) {
+        tx.delete(credRef);
+      }
+      if (
+        phoneIndexRef &&
+        phoneIndexSnap &&
+        phoneIndexSnap.exists() &&
+        (phoneIndexSnap.data() as { ownerUidHash?: string }).ownerUidHash === targetUidHash
+      ) {
+        tx.delete(phoneIndexRef);
+      }
       if (adminSnap.exists()) {
         tx.delete(adminRef);
       }
@@ -1294,6 +1409,352 @@ export async function updateGlobalSettings(
     'system_settings',
     'global',
     `Updated inactivityTimeoutMinutes=${timeout}, mfaPrepared=${updates.mfaPrepared}, publicSummaryEnabled=${updates.publicSummaryEnabled}, whatsappGroupEnabled=${groupEnabled}, whatsappGroupName=${cleanGroupName}.`
+  );
+}
+
+// ---------- PUBLIC DYNAMIC LOCATION CATALOG (FOR REGISTRATION & APK SYNC) ----------
+
+function sortLocationCatalog(items: LocationCatalogLga[]): LocationCatalogLga[] {
+  const order: Record<string, number> = { funtua: 0, dandume: 1 };
+  return [...items].sort((a, b) => (order[a.lgaId] ?? 9) - (order[b.lgaId] ?? 9));
+}
+
+export async function syncLocationCatalogFromLiveDirectory(
+  actor: UserAccount,
+  wardsList: Ward[],
+  pollingUnitsList: PollingUnit[],
+  targetLgas?: LgaId[]
+): Promise<void> {
+  const uid = auth.currentUser?.uid;
+  if (!uid || !canManageDirectory(actor.role)) return;
+
+  const allowedLgas: LgaId[] =
+    actor.role === UserRole.FULL_CONTROL_ADMIN
+      ? targetLgas && targetLgas.length > 0
+        ? targetLgas
+        : ['funtua', 'dandume']
+      : actor.role === UserRole.FUNTUA_SUPER_ADMIN
+        ? ['funtua']
+        : actor.role === UserRole.DANDUME_SUPER_ADMIN
+          ? ['dandume']
+          : [];
+
+  if (allowedLgas.length === 0) return;
+
+  const batch = writeBatch(db);
+  let writeCount = 0;
+
+  for (const lgaId of allowedLgas) {
+    const lgaDef = LGA_DEFINITIONS[lgaId];
+    const wardsForLga: LocationCatalogWardItem[] = wardsList
+      .filter((w) => w.lgaId === lgaId)
+      .sort(
+        (a, b) => a.wardCode.localeCompare(b.wardCode) || a.name.localeCompare(b.name)
+      )
+      .slice(0, 50)
+      .map((w) => ({
+        id: w.id,
+        wardCode: w.wardCode,
+        name: w.name,
+      }));
+
+    const pusForLga: LocationCatalogPuItem[] = pollingUnitsList
+      .filter((p) => p.lgaId === lgaId)
+      .sort(
+        (a, b) =>
+          a.wardName.localeCompare(b.wardName) ||
+          a.puCode.localeCompare(b.puCode) ||
+          a.name.localeCompare(b.name)
+      )
+      .slice(0, 1000)
+      .map((p) => ({
+        id: p.id,
+        wardId: p.wardId,
+        wardName: p.wardName,
+        puCode: p.puCode,
+        name: p.name,
+      }));
+
+    if (wardsForLga.length === 0 && pusForLga.length === 0) continue;
+
+    batch.set(doc(db, 'location_catalog', lgaId), {
+      lgaId,
+      lgaName: lgaDef.displayName,
+      lgaCode: lgaDef.lgaCode,
+      wards: wardsForLga,
+      pollingUnits: pusForLga,
+      wardCount: wardsForLga.length,
+      puCount: pusForLga.length,
+      updatedByUid: uid,
+      updatedAt: serverTimestamp(),
+    });
+    writeCount += 1;
+  }
+
+  if (writeCount > 0) {
+    try {
+      await batch.commit();
+    } catch {
+      // Non-fatal background catalog sync if caller lacks write permission on an unimported LGA
+    }
+  }
+}
+
+export async function rebuildAndSyncLocationCatalog(
+  actor: UserAccount,
+  onlyLgaId?: LgaId
+): Promise<void> {
+  if (!auth.currentUser || !canManageDirectory(actor.role)) return;
+
+  const targetLgas: LgaId[] =
+    actor.role === UserRole.FULL_CONTROL_ADMIN
+      ? onlyLgaId
+        ? [onlyLgaId]
+        : ['funtua', 'dandume']
+      : actor.role === UserRole.FUNTUA_SUPER_ADMIN
+        ? ['funtua']
+        : ['dandume'];
+
+  try {
+    const wardQuery =
+      targetLgas.length === 1
+        ? query(collection(db, 'wards'), where('lgaId', '==', targetLgas[0]))
+        : collection(db, 'wards');
+    const puQuery =
+      targetLgas.length === 1
+        ? query(collection(db, 'polling_units'), where('lgaId', '==', targetLgas[0]))
+        : collection(db, 'polling_units');
+
+    const [wardSnap, puSnap] = await Promise.all([getDocs(wardQuery), getDocs(puQuery)]);
+    const wardsList = wardSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<Ward, 'id'>),
+    }));
+    const pusList = puSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<PollingUnit, 'id'>),
+    }));
+
+    await syncLocationCatalogFromLiveDirectory(actor, wardsList, pusList, targetLgas);
+  } catch {
+    // Best-effort catalog rebuild
+  }
+}
+
+export function subscribeToPublicLocationCatalog(
+  onData: (catalog: LocationCatalogLga[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  let receivedLive = false;
+
+  void loadGlobalSnapshot<LocationCatalogLga[]>('locationCatalog').then((cached) => {
+    if (!receivedLive && Array.isArray(cached) && cached.length > 0) {
+      onData(sortLocationCatalog(cached));
+    }
+  });
+
+  return onSnapshot(
+    collection(db, 'location_catalog'),
+    (snapshot) => {
+      receivedLive = true;
+      const items = sortLocationCatalog(
+        snapshot.docs.map((d) => d.data() as LocationCatalogLga)
+      );
+      if (items.length > 0) {
+        void saveGlobalSnapshot('locationCatalog', items);
+      }
+      onData(items);
+    },
+    (error) => {
+      if (onError) {
+        onError(error instanceof Error ? error : new Error(String(error)));
+      }
+    }
+  );
+}
+
+export async function fetchPublicLocationCatalog(): Promise<LocationCatalogLga[]> {
+  try {
+    const snap = await getDocs(collection(db, 'location_catalog'));
+    const items = sortLocationCatalog(
+      snap.docs.map((d) => d.data() as LocationCatalogLga)
+    );
+    if (items.length > 0) {
+      await saveGlobalSnapshot('locationCatalog', items);
+      return items;
+    }
+  } catch {
+    // Fall back to cached snapshot when offline or unavailable
+  }
+
+  const cached = await loadGlobalSnapshot<LocationCatalogLga[]>('locationCatalog');
+  return Array.isArray(cached) ? sortLocationCatalog(cached) : [];
+}
+
+// ---------- PASSWORD RECOVERY REQUEST REVIEW (ADMIN) ----------
+
+function toTimeMs(ts: unknown): number {
+  if (!ts || typeof ts !== 'object') return 0;
+  if ('toMillis' in ts && typeof (ts as { toMillis: () => number }).toMillis === 'function') {
+    return (ts as { toMillis: () => number }).toMillis();
+  }
+  if ('seconds' in ts && typeof (ts as { seconds: number }).seconds === 'number') {
+    return (ts as { seconds: number }).seconds * 1000;
+  }
+  return 0;
+}
+
+export function observePasswordResetRequests(
+  user: UserAccount,
+  onData: (requests: PasswordResetRequest[]) => void,
+  onError: (err: Error) => void
+): Unsubscribe {
+  if (!canManageUsers(user.role)) {
+    onData([]);
+    return () => {};
+  }
+
+  const base = collection(db, 'password_reset_requests');
+  const q: Query =
+    user.role === UserRole.FULL_CONTROL_ADMIN
+      ? base
+      : query(
+          base,
+          where('lgaId', '==', user.role === UserRole.FUNTUA_SUPER_ADMIN ? 'funtua' : 'dandume')
+        );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const statusWeight: Record<string, number> = {
+        PENDING: 0,
+        APPROVED: 1,
+        COMPLETED: 2,
+        REJECTED: 3,
+      };
+      const items = snapshot.docs
+        .map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<PasswordResetRequest, 'id'>),
+        }))
+        .sort(
+          (a, b) =>
+            (statusWeight[a.status] ?? 9) - (statusWeight[b.status] ?? 9) ||
+            toTimeMs(b.createdAt) - toTimeMs(a.createdAt)
+        );
+      onData(items);
+    },
+    (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'password_reset_requests');
+      } catch (wrapped) {
+        onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+      }
+    }
+  );
+}
+
+export async function approvePasswordResetRequest(
+  actor: UserAccount,
+  request: PasswordResetRequest,
+  reviewerNote = ''
+): Promise<{ resetPin: string; maskedPhone: string }> {
+  const actorUid = requireAuthUid();
+  if (!canManageUsers(actor.role)) {
+    throw new Error('Only authorized administrators can approve password recovery requests.');
+  }
+  if (actor.role === UserRole.FUNTUA_SUPER_ADMIN && request.lgaId !== 'funtua') {
+    throw new Error('Funtua Super Admin can only approve requests within Funtua LGA.');
+  }
+  if (actor.role === UserRole.DANDUME_SUPER_ADMIN && request.lgaId !== 'dandume') {
+    throw new Error('Dandume Super Admin can only approve requests within Dandume LGA.');
+  }
+
+  const resetPin = generateResetPin();
+  const hashedPin = await hashSecretPBKDF2(resetPin);
+  const cleanNote = reviewerNote.trim().slice(0, 400);
+
+  const indexRef = doc(db, 'phone_index', request.phoneHash);
+  const reqRef = doc(db, 'password_reset_requests', request.id);
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const idxSnap = await tx.get(indexRef);
+      if (!idxSnap.exists()) {
+        throw new Error(
+          'No registered phone credential record matches this recovery request.'
+        );
+      }
+      const idxData = idxSnap.data() as { authSeq?: number };
+      const currentSeq = typeof idxData.authSeq === 'number' ? idxData.authSeq : 0;
+      const nextSeq = currentSeq + 1;
+      if (nextSeq > 100) {
+        throw new Error('Maximum credential rotation limit reached for this phone account.');
+      }
+
+      tx.update(indexRef, {
+        pendingNextAuthSeq: nextSeq,
+        resetPinSalt: hashedPin.saltHex,
+        resetPinHash: hashedPin.hashHex,
+        updatedAt: serverTimestamp(),
+      });
+
+      tx.update(reqRef, {
+        status: 'APPROVED',
+        reviewedByUid: actorUid,
+        reviewerNote: cleanNote || 'Approved by administrator; one-time reset PIN issued.',
+        updatedAt: serverTimestamp(),
+      });
+    });
+  } catch (error) {
+    if (error instanceof Error && (error.message.includes('registered phone') || error.message.includes('rotation limit'))) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.WRITE, `password_reset_requests/${request.id}`);
+  }
+
+  await writeAuditLog(
+    actor,
+    'PASSWORD_RESET_REQUEST_APPROVED',
+    'password_reset_requests',
+    request.id,
+    `Approved password reset for ${request.applicantName} (${request.maskedPhone}, LGA=${request.lgaId || 'unspecified'}).`
+  );
+
+  return { resetPin, maskedPhone: request.maskedPhone };
+}
+
+export async function rejectPasswordResetRequest(
+  actor: UserAccount,
+  request: PasswordResetRequest,
+  reason: string
+): Promise<void> {
+  const actorUid = requireAuthUid();
+  if (!canManageUsers(actor.role)) {
+    throw new Error('Only authorized administrators can reject password recovery requests.');
+  }
+  const cleanReason = reason.trim().slice(0, 400);
+  if (cleanReason.length < 4) {
+    throw new Error('Provide a brief rejection reason (min 4 characters).');
+  }
+
+  try {
+    await updateDoc(doc(db, 'password_reset_requests', request.id), {
+      status: 'REJECTED',
+      reviewedByUid: actorUid,
+      reviewerNote: cleanReason,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `password_reset_requests/${request.id}`);
+  }
+
+  await writeAuditLog(
+    actor,
+    'PASSWORD_RESET_REQUEST_REJECTED',
+    'password_reset_requests',
+    request.id,
+    `Rejected password reset for ${request.applicantName} (${request.maskedPhone}). Reason: ${cleanReason}`
   );
 }
 

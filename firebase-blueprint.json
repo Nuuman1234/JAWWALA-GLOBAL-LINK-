@@ -50,9 +50,10 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "Firebase Auth UID." },
-        "email": { "type": "string", "description": "User email." },
+        "email": { "type": "string", "description": "User email or phone auth alias." },
         "displayName": { "type": "string", "description": "Full operational name." },
-        "phone": { "type": "string", "description": "Optional operational contact phone." },
+        "phone": { "type": "string", "description": "Operational contact phone." },
+        "authMethod": { "type": "string", "enum": ["GOOGLE", "PHONE_PASSWORD"] },
         "role": {
           "type": "string",
           "enum": ["FULL_CONTROL_ADMIN", "FUNTUA_SUPER_ADMIN", "DANDUME_SUPER_ADMIN", "VERIFICATION_OFFICER", "WARD_COORDINATOR", "POLLING_UNIT_AGENT", "PENDING"]
@@ -64,6 +65,12 @@
         "assignedLgaId": { "type": "string", "description": "funtua, dandume, or empty." },
         "assignedWardId": { "type": "string", "description": "Assigned ward ID or empty." },
         "assignedPollingUnitId": { "type": "string", "description": "Assigned polling unit ID or empty." },
+        "requestedLgaId": { "type": "string", "description": "LGA requested during self-registration." },
+        "requestedWardId": { "type": "string", "description": "Ward requested during self-registration." },
+        "requestedWardName": { "type": "string", "description": "Ward name requested during self-registration." },
+        "requestedPollingUnitId": { "type": "string", "description": "Polling Unit ID requested during self-registration." },
+        "requestedPollingUnitCode": { "type": "string", "description": "Polling Unit code requested during self-registration." },
+        "requestedPollingUnitName": { "type": "string", "description": "Polling Unit name requested during self-registration." },
         "sessionRevoked": { "type": "boolean", "description": "Emergency session revocation flag." },
         "revokedReason": { "type": "string", "description": "Reason for emergency revocation or suspension." },
         "lastLoginAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last login." },
@@ -71,6 +78,78 @@
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
       },
       "required": ["uid", "email", "displayName", "role", "status", "assignedLgaId", "assignedWardId", "assignedPollingUnitId", "sessionRevoked", "createdAt", "updatedAt"]
+    },
+    "UserCredential": {
+      "title": "UserCredential",
+      "description": "Strictly private PBKDF2-SHA256 salted password and recovery hash metadata for a user UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "phoneHash": { "type": "string" },
+        "passwordSalt": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "passwordAlgorithm": { "type": "string" },
+        "recoveryKeySalt": { "type": "string" },
+        "recoveryKeyHash": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "phoneHash", "passwordSalt", "passwordHash", "passwordAlgorithm", "recoveryKeySalt", "recoveryKeyHash", "createdAt", "updatedAt"]
+    },
+    "PhoneIndex": {
+      "title": "PhoneIndex",
+      "description": "Zero-PII blind index enforcing phone uniqueness and password recovery sequence tracking.",
+      "type": "object",
+      "properties": {
+        "phoneHash": { "type": "string" },
+        "ownerUidHash": { "type": "string" },
+        "authSeq": { "type": "integer" },
+        "pendingNextAuthSeq": { "type": "integer" },
+        "resetPinSalt": { "type": "string" },
+        "resetPinHash": { "type": "string" },
+        "recoveryKeySalt": { "type": "string" },
+        "recoveryKeyHash": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phoneHash", "ownerUidHash", "authSeq", "pendingNextAuthSeq", "resetPinSalt", "resetPinHash", "recoveryKeySalt", "recoveryKeyHash", "createdAt", "updatedAt"]
+    },
+    "LocationCatalog": {
+      "title": "LocationCatalog",
+      "description": "Zero-PII synchronized LGA, Ward, and Polling Unit catalog for registration and offline APK sync.",
+      "type": "object",
+      "properties": {
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "lgaName": { "type": "string" },
+        "lgaCode": { "type": "string" },
+        "wards": { "type": "array" },
+        "pollingUnits": { "type": "array" },
+        "wardCount": { "type": "integer" },
+        "puCount": { "type": "integer" },
+        "updatedByUid": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["lgaId", "lgaName", "lgaCode", "wards", "pollingUnits", "wardCount", "puCount", "updatedByUid", "updatedAt"]
+    },
+    "PasswordResetRequest": {
+      "title": "PasswordResetRequest",
+      "description": "Admin-reviewed account password recovery request queue.",
+      "type": "object",
+      "properties": {
+        "phoneHash": { "type": "string" },
+        "maskedPhone": { "type": "string" },
+        "applicantName": { "type": "string" },
+        "lgaId": { "type": "string" },
+        "wardName": { "type": "string" },
+        "puCode": { "type": "string" },
+        "recoveryKeyMatched": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "COMPLETED", "REJECTED"] },
+        "reviewerNote": { "type": "string" },
+        "reviewedByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phoneHash", "maskedPhone", "applicantName", "lgaId", "wardName", "puCode", "recoveryKeyMatched", "status", "reviewerNote", "reviewedByUid", "createdAt", "updatedAt"]
     },
     "UserPreferences": {
       "title": "UserPreferences",
@@ -460,6 +539,30 @@
       },
       "required": ["name", "roleLabel", "phoneNumber", "scopeLgaId", "isPriority", "notes", "createdByUid", "updatedByUid", "createdAt", "updatedAt"]
     },
+    "OperationalNote": {
+      "title": "OperationalNote",
+      "description": "Offline-capable operational note or short field message synced without duplication.",
+      "type": "object",
+      "properties": {
+        "clientNoteId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 120 },
+        "content": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "category": { "type": "string", "enum": ["GENERAL", "FIELD_UPDATE", "LOGISTICS", "HANDOVER", "URGENT"] },
+        "lgaId": { "type": "string", "enum": ["all", "funtua", "dandume"] },
+        "wardId": { "type": "string" },
+        "puId": { "type": "string" },
+        "puCode": { "type": "string" },
+        "puName": { "type": "string" },
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "isPinned": { "type": "boolean" },
+        "isTestData": { "type": "boolean" },
+        "revision": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["clientNoteId", "title", "content", "category", "lgaId", "wardId", "puId", "puCode", "puName", "authorUid", "authorName", "isPinned", "isTestData", "revision", "createdAt", "updatedAt"]
+    },
     "AuditLog": {
       "title": "AuditLog",
       "description": "Immutable administrative and operational audit trail record.",
@@ -490,6 +593,22 @@
     "/users/{uid}": {
       "schema": { "$ref": "#/entities/UserAccount" },
       "description": "Registered FDMIS users, roles, scopes, and revocation state."
+    },
+    "/user_credentials/{uid}": {
+      "schema": { "$ref": "#/entities/UserCredential" },
+      "description": "Private salted PBKDF2-SHA256 credential and recovery key hashes."
+    },
+    "/phone_index/{phoneHash}": {
+      "schema": { "$ref": "#/entities/PhoneIndex" },
+      "description": "Zero-PII blind phone uniqueness index and password recovery slot tracker."
+    },
+    "/location_catalog/{lgaId}": {
+      "schema": { "$ref": "#/entities/LocationCatalog" },
+      "description": "Zero-PII synchronized LGA, Ward, and Polling Unit catalog."
+    },
+    "/password_reset_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/PasswordResetRequest" },
+      "description": "Admin-reviewed password recovery requests."
     },
     "/user_preferences/{uid}": {
       "schema": { "$ref": "#/entities/UserPreferences" },
@@ -558,6 +677,10 @@
     "/emergency_contacts/{contactId}": {
       "schema": { "$ref": "#/entities/EmergencyContact" },
       "description": "Emergency assistance contact numbers for authenticated field and situation room staff."
+    },
+    "/operational_notes/{noteId}": {
+      "schema": { "$ref": "#/entities/OperationalNote" },
+      "description": "Operational notes and short field messages with offline sync deduplication."
     },
     "/audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },

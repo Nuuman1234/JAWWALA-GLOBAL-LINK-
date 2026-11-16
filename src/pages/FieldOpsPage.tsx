@@ -41,6 +41,7 @@ interface FieldOpsPageProps {
   results: ResultSubmission[];
   queuedItems: OfflineQueuedItem[];
   isOnline: boolean;
+  onRetryQueueItem?: (item: OfflineQueuedItem) => Promise<void> | void;
 }
 
 export function FieldOpsPage({
@@ -50,6 +51,7 @@ export function FieldOpsPage({
   results,
   queuedItems,
   isOnline,
+  onRetryQueueItem,
 }: FieldOpsPageProps) {
   const defaultPuId =
     pollingUnits.find((p) => p.id === user.assignedPollingUnitId)?.id ||
@@ -283,7 +285,7 @@ export function FieldOpsPage({
       const res = await flushOfflineQueue(user, pollingUnits, results);
       setFeedback({
         type: res.failedCount > 0 ? 'warn' : 'ok',
-        text: `Sync complete: ${res.syncedCount} confirmed by Firestore, ${res.failedCount} failed.`,
+        text: `Sync complete: ${res.syncedCount} synchronized, ${res.failedCount} failed.`,
       });
     } finally {
       setSyncing(false);
@@ -520,10 +522,10 @@ export function FieldOpsPage({
         <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center">
           <div>
             <h3 className="font-display text-base font-semibold text-slate-900">
-              Offline Sync Queue (Deduplicated)
+              Offline Sync Queue
             </h3>
             <p className="text-xs text-slate-500">
-              Reports saved locally while offline use unique clientSubmissionIds and sync automatically on reconnect.
+              Reports saved while offline stay safely on this device and synchronize automatically without duplicates once connected.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -562,14 +564,27 @@ export function FieldOpsPage({
               >
                 <div>
                   <p className="text-sm font-medium text-slate-900">{item.summary}</p>
-                  <p className="font-mono text-xs text-slate-500">
-                    {item.reportType} · {item.clientSubmissionId}
+                  <p className="text-xs text-slate-500">
+                    {item.reportType.replace(/_/g, ' ')} · Queued {formatFirestoreTime(item.createdAtIso)}
+                    {item.retryCount ? ` · Retries: ${item.retryCount}` : ''}
                   </p>
                   {item.errorMessage ? (
                     <p className="mt-0.5 text-xs text-red-700">{item.errorMessage}</p>
                   ) : null}
                 </div>
-                <OfflineSyncBadge status={item.status} />
+                <div className="flex items-center gap-2">
+                  <OfflineSyncBadge status={item.status} />
+                  {isOnline && onRetryQueueItem && item.status !== 'SYNCED' && item.status !== 'SYNCING' ? (
+                    <button
+                      type="button"
+                      onClick={() => void onRetryQueueItem(item)}
+                      className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                      <span>Retry</span>
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))}
           </div>

@@ -68,7 +68,7 @@ export function PartyManagementPage({ user, partyConfigs }: PartyManagementPageP
       handleCancelPreview(partyCode);
       setFeedback({
         type: 'ok',
-        text: `Official logo for ${saved.partyCode} (${saved.partyName}) saved to cloud (${saved.storageMode === 'firebase_storage' ? 'Firebase Storage' : 'Cloud Firestore'}).`,
+        text: `Official logo for ${saved.partyCode} (${saved.partyName}) saved securely to ${saved.storageMode === 'firebase_storage' ? 'Cloud Storage' : 'Cloud Database'}.`,
       });
     } catch (err) {
       setFeedback({
@@ -157,7 +157,7 @@ export function PartyManagementPage({ user, partyConfigs }: PartyManagementPageP
                       </h3>
                       <p className="mt-0.5 text-xs text-slate-500">
                         {config?.logoUrl
-                          ? `Uploaded (${config.storageMode === 'firebase_storage' ? 'Firebase Storage' : 'Cloud Firestore'})`
+                          ? `Uploaded (${config.storageMode === 'firebase_storage' ? 'Cloud Storage' : 'Cloud Database'})`
                           : 'No logo uploaded — showing party abbreviation fallback'}
                       </p>
                     </div>

@@ -21,6 +21,7 @@ import {
   type ApprovedPuResult,
   type IncidentReport,
   type NotificationItem,
+  type OperationalNote,
   type PollingUnit,
   type ReportAttachment,
   type ResultSubmission,
@@ -28,6 +29,7 @@ import {
   type UserAccount,
 } from '../types/fdmis';
 import { applyAggregationDelta, computeAggregationDelta } from '../utils/aggregationEngine';
+import { purgeDeletedRecordsEverywhere } from './offlineQueue';
 
 function requireAuthUid(): string {
   const uid = auth.currentUser?.uid;
@@ -72,6 +74,7 @@ export interface TestDeletionSelection {
   notificationIds: string[];
   timelineEventIds: string[];
   reportAttachmentIds: string[];
+  noteIds?: string[];
 }
 
 export interface TestDeletionResult {
@@ -83,6 +86,7 @@ export interface TestDeletionResult {
   deletedNotifications: number;
   deletedTimelineEvents: number;
   deletedEvidenceAttachments: number;
+  deletedNotes: number;
   totalDeleted: number;
   executedAtIso: string;
 }
@@ -114,12 +118,13 @@ export async function deleteSelectedTestData(
     notifications: NotificationItem[];
     timelineEvents: TimelineEvent[];
     attachments: ReportAttachment[];
+    notes?: OperationalNote[];
     pollingUnits: PollingUnit[];
   }
 ): Promise<TestDeletionResult> {
   const uid = requireAuthUid();
   if (!canManageTestData(actor.role)) {
-    throw new Error('Only Full Control Admin can manage or delete test data.');
+    throw new Error('Only Full Control Admin can manage or delete operational test data.');
   }
 
   const resultIdSet = new Set(selection.resultSubmissionIds);
@@ -127,8 +132,9 @@ export async function deleteSelectedTestData(
   const checkInIdSet = new Set(selection.checkInIds);
   const notificationIdSet = new Set(selection.notificationIds);
   const timelineIdSet = new Set(selection.timelineEventIds);
+  const noteIdSet = new Set(selection.noteIds || []);
 
-  // Include approved PU results either explicitly selected or derived from deleted test submissions
+  // Include approved PU results either explicitly selected or derived from deleted submissions
   const approvedIdSet = new Set(selection.approvedPuResultIds);
   context.approvedPuResults.forEach((apr) => {
     if (resultIdSet.has(apr.sourceSubmissionId)) {
@@ -144,13 +150,58 @@ export async function deleteSelectedTestData(
     }
   });
 
-  // Include evidence attachments either explicitly selected or linked to deleted test results/incidents
+  // Track PUs linked to deleted operational items to ensure linked attachments/dates are also cleaned
+  const deletedPuIds = new Set<string>(approvedIdSet);
+  context.results.forEach((r) => {
+    if (resultIdSet.has(r.id)) deletedPuIds.add(r.puId);
+  });
+  context.incidents.forEach((i) => {
+    if (incidentIdSet.has(i.id)) deletedPuIds.add(i.puId);
+  });
+  context.checkIns.forEach((c) => {
+    if (checkInIdSet.has(c.id)) deletedPuIds.add(c.puId);
+  });
+
+  // Include evidence attachments either explicitly selected or linked to deleted results/incidents
   const attachmentIdSet = new Set(selection.reportAttachmentIds);
   context.attachments.forEach((att) => {
     if (resultIdSet.has(att.reportId) || incidentIdSet.has(att.reportId)) {
       attachmentIdSet.add(att.id);
     }
   });
+  // Verify on Firestore directly in case an attachment was not yet reflected in local memory
+  if (resultIdSet.size > 0 || incidentIdSet.size > 0) {
+    try {
+      const attSnap = await getDocs(collection(db, 'report_attachments'));
+      attSnap.docs.forEach((d) => {
+        const reportId = String(d.data()?.reportId || '');
+        if (resultIdSet.has(reportId) || incidentIdSet.has(reportId)) {
+          attachmentIdSet.add(d.id);
+        }
+      });
+    } catch {
+      // Fall back cleanly to selected/context attachment IDs
+    }
+  }
+
+  // On full test reset, ensure any remaining flagged test timeline/notification items linked to deleted records are also removed
+  if (context.mode === 'RESET_ALL_TEST_DATA') {
+    context.timelineEvents.forEach((ev) => {
+      if (ev.isTestData || (ev.puId && deletedPuIds.has(ev.puId))) {
+        timelineIdSet.add(ev.id);
+      }
+    });
+    context.notifications.forEach((n) => {
+      if (n.isTestData) {
+        notificationIdSet.add(n.id);
+      }
+    });
+    (context.notes || []).forEach((n) => {
+      if (n.isTestData) {
+        noteIdSet.add(n.clientNoteId || n.id);
+      }
+    });
+  }
 
   const totalRequested =
     resultIdSet.size +
@@ -159,13 +210,15 @@ export async function deleteSelectedTestData(
     checkInIdSet.size +
     notificationIdSet.size +
     timelineIdSet.size +
-    attachmentIdSet.size;
+    attachmentIdSet.size +
+    noteIdSet.size;
 
   if (totalRequested === 0) {
-    throw new Error('Select at least one record before confirming deletion.');
+    throw new Error('Select at least one record before confirming permanent deletion.');
   }
 
   // 1. Atomically reverse approved_pu_results, public_results, and aggregated_results deltas
+  // Delete empty aggregate buckets rather than retaining stale timestamps.
   let deletedApprovedCount = 0;
   for (const puId of approvedIdSet) {
     const approvedRef = doc(db, 'approved_pu_results', puId);
@@ -206,22 +259,27 @@ export async function deleteSelectedTestData(
             id: wardAggId,
             ...(wardAggSnap.data() as Omit<AggregatedResult, 'id'>),
           };
-          tx.set(wardAggRef, {
-            ...applyAggregationDelta(
-              existingWardAgg,
-              {
-                id: wardAggId,
-                scopeType: 'WARD',
-                scopeId: existingApproved.wardId,
-                lgaId: existingApproved.lgaId,
-                wardId: existingApproved.wardId,
-                label: existingApproved.wardName,
-                actorUid: uid,
-              },
-              delta
-            ),
-            updatedAt: serverTimestamp(),
-          });
+          const nextWardAgg = applyAggregationDelta(
+            existingWardAgg,
+            {
+              id: wardAggId,
+              scopeType: 'WARD',
+              scopeId: existingApproved.wardId,
+              lgaId: existingApproved.lgaId,
+              wardId: existingApproved.wardId,
+              label: existingApproved.wardName,
+              actorUid: uid,
+            },
+            delta
+          );
+          if (nextWardAgg.verifiedPuCount <= 0 && nextWardAgg.totalVotesCast <= 0) {
+            tx.delete(wardAggRef);
+          } else {
+            tx.set(wardAggRef, {
+              ...nextWardAgg,
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
 
         if (lgaAggSnap.exists()) {
@@ -229,22 +287,27 @@ export async function deleteSelectedTestData(
             id: lgaAggId,
             ...(lgaAggSnap.data() as Omit<AggregatedResult, 'id'>),
           };
-          tx.set(lgaAggRef, {
-            ...applyAggregationDelta(
-              existingLgaAgg,
-              {
-                id: lgaAggId,
-                scopeType: 'LGA',
-                scopeId: existingApproved.lgaId,
-                lgaId: existingApproved.lgaId,
-                wardId: '',
-                label: LGA_DEFINITIONS[existingApproved.lgaId]?.displayName || existingApproved.lgaId,
-                actorUid: uid,
-              },
-              delta
-            ),
-            updatedAt: serverTimestamp(),
-          });
+          const nextLgaAgg = applyAggregationDelta(
+            existingLgaAgg,
+            {
+              id: lgaAggId,
+              scopeType: 'LGA',
+              scopeId: existingApproved.lgaId,
+              lgaId: existingApproved.lgaId,
+              wardId: '',
+              label: LGA_DEFINITIONS[existingApproved.lgaId]?.displayName || existingApproved.lgaId,
+              actorUid: uid,
+            },
+            delta
+          );
+          if (nextLgaAgg.verifiedPuCount <= 0 && nextLgaAgg.totalVotesCast <= 0) {
+            tx.delete(lgaAggRef);
+          } else {
+            tx.set(lgaAggRef, {
+              ...nextLgaAgg,
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
 
         if (constAggSnap.exists()) {
@@ -252,22 +315,27 @@ export async function deleteSelectedTestData(
             id: constAggId,
             ...(constAggSnap.data() as Omit<AggregatedResult, 'id'>),
           };
-          tx.set(constAggRef, {
-            ...applyAggregationDelta(
-              existingConstAgg,
-              {
-                id: constAggId,
-                scopeType: 'CONSTITUENCY',
-                scopeId: 'all',
-                lgaId: 'all',
-                wardId: '',
-                label: 'Funtua & Dandume Federal Constituency',
-                actorUid: uid,
-              },
-              delta
-            ),
-            updatedAt: serverTimestamp(),
-          });
+          const nextConstAgg = applyAggregationDelta(
+            existingConstAgg,
+            {
+              id: constAggId,
+              scopeType: 'CONSTITUENCY',
+              scopeId: 'all',
+              lgaId: 'all',
+              wardId: '',
+              label: 'Funtua–Dandume Federal Constituency',
+              actorUid: uid,
+            },
+            delta
+          );
+          if (nextConstAgg.verifiedPuCount <= 0 && nextConstAgg.totalVotesCast <= 0) {
+            tx.delete(constAggRef);
+          } else {
+            tx.set(constAggRef, {
+              ...nextConstAgg,
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
 
         deletedApprovedCount += 1;
@@ -277,7 +345,7 @@ export async function deleteSelectedTestData(
     }
   }
 
-  // 2. Delete result_submissions + their history subcollection
+  // 2. Delete result_submissions + all history subcollections (including history timestamps/dates)
   const resultDeleteRefs: DocumentReference[] = [];
   for (const resId of resultIdSet) {
     try {
@@ -291,7 +359,7 @@ export async function deleteSelectedTestData(
   }
   await commitDeletesInChunks(resultDeleteRefs, 'result_submissions');
 
-  // 3. Delete incidents, check-ins, notifications, timeline events, and attachments
+  // 3. Delete incidents, check-ins, notifications, timeline events, attachments, and operational notes
   await commitDeletesInChunks(
     Array.from(incidentIdSet).map((id) => doc(db, 'incidents', id)),
     'incidents'
@@ -312,21 +380,14 @@ export async function deleteSelectedTestData(
     Array.from(attachmentIdSet).map((id) => doc(db, 'report_attachments', id)),
     'report_attachments'
   );
+  await commitDeletesInChunks(
+    Array.from(noteIdSet).map((id) => doc(db, 'operational_notes', id)),
+    'operational_notes'
+  );
 
   // 4. Safely reconcile PU operationalStatus ONLY if all operational records for that PU were removed
   // Never modify PU directory identity, ward, registered voters, or agent assignments.
-  const affectedPuIds = new Set<string>();
-  context.results.forEach((r) => {
-    if (resultIdSet.has(r.id)) affectedPuIds.add(r.puId);
-  });
-  context.incidents.forEach((i) => {
-    if (incidentIdSet.has(i.id)) affectedPuIds.add(i.puId);
-  });
-  context.checkIns.forEach((c) => {
-    if (checkInIdSet.has(c.id)) affectedPuIds.add(c.puId);
-  });
-
-  if (affectedPuIds.size > 0) {
+  if (deletedPuIds.size > 0) {
     const remainingResultsByPu = new Set(
       context.results.filter((r) => !resultIdSet.has(r.id)).map((r) => r.puId)
     );
@@ -338,7 +399,7 @@ export async function deleteSelectedTestData(
     );
 
     const puToReset: PollingUnit[] = [];
-    affectedPuIds.forEach((puId) => {
+    deletedPuIds.forEach((puId) => {
       if (
         !remainingResultsByPu.has(puId) &&
         !remainingIncidentsByPu.has(puId) &&
@@ -368,6 +429,34 @@ export async function deleteSelectedTestData(
     }
   }
 
+  // 5. Permanently purge deleted records, dates, drafts, offline queue entries, local notes, and cached snapshots
+  const allDeletedIds = [
+    ...Array.from(resultIdSet),
+    ...Array.from(incidentIdSet),
+    ...Array.from(checkInIdSet),
+    ...Array.from(notificationIdSet),
+    ...Array.from(timelineIdSet),
+    ...Array.from(attachmentIdSet),
+    ...Array.from(noteIdSet),
+  ];
+
+  // Also capture clientSubmissionIds so offline queues referencing the same record cannot re-upload it
+  context.results.forEach((r) => {
+    if (resultIdSet.has(r.id) && r.clientSubmissionId) allDeletedIds.push(r.clientSubmissionId);
+  });
+  context.incidents.forEach((i) => {
+    if (incidentIdSet.has(i.id) && i.clientSubmissionId) allDeletedIds.push(i.clientSubmissionId);
+  });
+  context.checkIns.forEach((c) => {
+    if (checkInIdSet.has(c.id) && c.clientSubmissionId) allDeletedIds.push(c.clientSubmissionId);
+  });
+
+  await purgeDeletedRecordsEverywhere({
+    ids: allDeletedIds,
+    puIdsForApproved: Array.from(approvedIdSet),
+    wipeAllOperational: context.mode === 'RESET_ALL_TEST_DATA',
+  });
+
   const executedAtIso = new Date().toISOString();
   const totalDeleted =
     resultIdSet.size +
@@ -376,15 +465,16 @@ export async function deleteSelectedTestData(
     checkInIdSet.size +
     notificationIdSet.size +
     timelineIdSet.size +
-    attachmentIdSet.size;
+    attachmentIdSet.size +
+    noteIdSet.size;
 
   const auditAction =
     context.mode === 'RESET_ALL_TEST_DATA' ? 'TEST_DATA_RESET' : 'TEST_DATA_SELECTED_DELETED';
   const summaryDetails =
-    `[${executedAtIso}] Admin ${actor.displayName} (${actor.email}) deleted ${totalDeleted} test/selected record(s): ` +
+    `[${executedAtIso}] Admin ${actor.displayName} (${actor.email}) permanently deleted ${totalDeleted} record(s): ` +
     `results=${resultIdSet.size}, approvedResults=${deletedApprovedCount}, incidents=${incidentIdSet.size}, ` +
     `checkIns=${checkInIdSet.size}, notifications=${notificationIdSet.size}, timelineEvents=${timelineIdSet.size}, ` +
-    `evidenceAttachments=${attachmentIdSet.size}. Directories, accounts, roles, and settings preserved.`;
+    `evidenceAttachments=${attachmentIdSet.size}, notes=${noteIdSet.size}. Local queues, snapshots, and cached dates purged.`;
 
   try {
     await setDoc(doc(collection(db, 'audit_logs')), {
@@ -411,6 +501,7 @@ export async function deleteSelectedTestData(
     deletedNotifications: notificationIdSet.size,
     deletedTimelineEvents: timelineIdSet.size,
     deletedEvidenceAttachments: attachmentIdSet.size,
+    deletedNotes: noteIdSet.size,
     totalDeleted,
     executedAtIso,
   };

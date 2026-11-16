@@ -135,7 +135,7 @@ export function PollingUnitsDirectoryPage({
       setImportSummary(summary);
       setFeedback({
         type: 'ok',
-        text: `Official INEC directory verified in Firestore: ${summary.funtuaVerifiedInDatabase} Funtua PUs and ${summary.dandumeVerifiedInDatabase} Dandume PUs (${summary.totalVerifiedInDatabase} total).`,
+        text: `Official INEC directory verified: ${summary.funtuaVerifiedInDatabase} Funtua PUs and ${summary.dandumeVerifiedInDatabase} Dandume PUs (${summary.totalVerifiedInDatabase} total).`,
       });
     } catch (err) {
       setFeedback({
@@ -279,7 +279,7 @@ export function PollingUnitsDirectoryPage({
       );
       setFeedback({
         type: 'ok',
-        text: `Master record ${correctingPu.puCode} updated with immutable snapshot backup in directory_backups.`,
+        text: `Master record ${correctingPu.puCode} updated and immutable snapshot backup recorded.`,
       });
       setCorrectingPu(null);
     } catch (err) {
@@ -339,7 +339,7 @@ export function PollingUnitsDirectoryPage({
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
           <div className="space-y-1">
             <p className="font-semibold">
-              Dataset {importSummary.datasetVersion} verified in Cloud Firestore
+              Dataset {importSummary.datasetVersion} verified
             </p>
             <p className="font-mono tabular-nums">
               Funtua: {importSummary.funtuaVerifiedInDatabase} / 298 · Dandume:{' '}
@@ -812,7 +812,7 @@ export function PollingUnitsDirectoryPage({
               </button>
             </div>
             <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-              Creates an immutable pre-change backup in <span className="font-mono">directory_backups</span> and records the correction reason in <span className="font-mono">audit_logs</span>. Never enter unverified coordinates.
+              Creates an immutable pre-change backup and records the correction reason in the audit trail. Never enter unverified coordinates.
             </p>
             <form onSubmit={handleCorrectMasterPu} className="mt-4 space-y-3.5">
               <div>

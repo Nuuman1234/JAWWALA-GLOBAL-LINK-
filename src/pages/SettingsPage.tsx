@@ -33,6 +33,7 @@ import {
   type LgaId,
   type UserAccount,
 } from '../types/fdmis';
+import { formatAccountIdentifier } from '../utils/phoneAuth';
 
 interface SettingsPageProps {
   user: UserAccount;
@@ -310,7 +311,8 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
               <AccountStatusBadge status={user.status} />
             </div>
             <p className="mt-1 text-xs text-slate-600">
-              Signed in as <span className="font-medium text-slate-900">{user.email}</span> ·
+              Signed in as{' '}
+              <span className="font-medium text-slate-900">{formatAccountIdentifier(user)}</span> ·
               Scope: <span className="font-medium text-slate-800">{describeUserScope(user)}</span>
             </p>
             <p className="mt-1 text-xs text-slate-500">
@@ -344,13 +346,15 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
           <form onSubmit={handleSaveProfile} className="mt-4 space-y-3.5">
             <div>
               <label htmlFor="prof-email" className="block text-xs font-medium text-slate-700">
-                Verified Email (Immutable)
+                {user.authMethod === 'PHONE_PASSWORD' || user.email.endsWith('@fdmis.local')
+                  ? 'Verified Sign-In Phone Identifier (Immutable)'
+                  : 'Verified Email (Immutable)'}
               </label>
               <input
                 id="prof-email"
                 type="text"
                 disabled
-                value={user.email}
+                value={formatAccountIdentifier(user)}
                 className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600"
               />
             </div>
@@ -379,10 +383,11 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
                 id="prof-phone"
                 type="tel"
                 maxLength={30}
+                disabled={user.authMethod === 'PHONE_PASSWORD'}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="e.g. +234 800 000 0000"
-                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900"
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm text-slate-900 disabled:bg-slate-50 disabled:text-slate-500"
               />
             </div>
 
@@ -471,9 +476,9 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
                 <p className="font-medium text-slate-800">Session Enforcement</p>
                 <p className="mt-1 text-slate-600">
-                  Token verification, server-side revocation checks, and{' '}
+                  Active session verification, server-side access checks, and{' '}
                   {settings?.inactivityTimeoutMinutes ?? 30}-minute inactivity lockouts remain active
-                  on every request.
+                  across the application.
                 </p>
               </div>
             </div>
@@ -490,7 +495,7 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
               Notification Preferences
             </h3>
             <p className="text-xs text-slate-500">
-              Saved privately to your operator profile in Cloud Firestore.
+              Saved privately to your operator profile.
             </p>
           </div>
         </div>
@@ -605,8 +610,7 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
                       Multi-Factor Authentication (MFA) Enforcement Prepared
                     </span>
                     <span className="block text-xs text-slate-500">
-                      Marks operator profiles ready for hardware/TOTP MFA enforcement via Firebase
-                      Auth.
+                      Marks operator profiles ready for hardware/TOTP MFA enforcement via your sign-in provider.
                     </span>
                   </span>
                 </label>

@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Bell,
   Building2,
+  CheckCircle2,
   ClipboardCheck,
   ClipboardList,
   Clock,
@@ -20,10 +21,12 @@ import {
   RefreshCw,
   Settings,
   Shield,
+  StickyNote,
   Users,
   WifiOff,
   X,
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   LGA_DEFINITIONS,
   UserRole,
@@ -36,6 +39,7 @@ import {
   type LgaId,
   type UserAccount,
 } from '../types/fdmis';
+import { formatAccountIdentifier } from '../utils/phoneAuth';
 import { RoleBadge } from './StatusBadge';
 
 export type NavSectionId =
@@ -43,6 +47,7 @@ export type NavSectionId =
   | 'wards'
   | 'polling_units'
   | 'field_ops'
+  | 'notes'
   | 'incidents'
   | 'results'
   | 'verification'
@@ -79,6 +84,13 @@ export const NAV_ITEMS: NavItem[] = [
     shortLabel: 'Field',
     icon: Radio,
     visible: () => true,
+  },
+  {
+    id: 'notes',
+    label: 'Notes & Messages',
+    shortLabel: 'Notes',
+    icon: StickyNote,
+    visible: (role) => role !== UserRole.PENDING,
   },
   {
     id: 'incidents',
@@ -196,6 +208,8 @@ interface AppShellProps {
   inactivityMinutes: number;
   isOnline: boolean;
   pendingSyncCount: number;
+  syncingCount?: number;
+  failedSyncCount?: number;
   criticalAlertCount: number;
   lastUpdatedAt: Date | null;
   onManualSync: () => void;
@@ -237,6 +251,8 @@ export function AppShell({
   inactivityMinutes,
   isOnline,
   pendingSyncCount,
+  syncingCount = 0,
+  failedSyncCount = 0,
   criticalAlertCount,
   lastUpdatedAt,
   onManualSync,
@@ -317,7 +333,7 @@ export function AppShell({
         <div className="border-t border-slate-200 p-4">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-slate-900">{user.displayName}</p>
-            <p className="truncate text-xs text-slate-500">{user.email}</p>
+            <p className="truncate text-xs text-slate-500">{formatAccountIdentifier(user)}</p>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <RoleBadge role={user.role} />
@@ -389,7 +405,7 @@ export function AppShell({
 
             <div className="border-t border-slate-200 p-4">
               <p className="truncate text-sm font-semibold text-slate-900">{user.displayName}</p>
-              <p className="truncate text-xs text-slate-500">{user.email}</p>
+              <p className="truncate text-xs text-slate-500">{formatAccountIdentifier(user)}</p>
               <div className="mt-2">
                 <RoleBadge role={user.role} />
               </div>
@@ -426,27 +442,48 @@ export function AppShell({
             </h1>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <PWAInstallButton compact />
             {!isOnline ? (
               <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 whitespace-nowrap">
                 <WifiOff className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Offline Mode</span>
+                <span>Offline</span>
               </span>
             ) : null}
-            {pendingSyncCount > 0 ? (
+            {syncingNow || syncingCount > 0 ? (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-900 whitespace-nowrap">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
+                <span>Syncing</span>
+              </span>
+            ) : failedSyncCount > 0 ? (
               <button
                 type="button"
-                onClick={() => handleNavigate('field_ops')}
-                className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 whitespace-nowrap"
+                onClick={isOnline ? onManualSync : () => handleNavigate('field_ops')}
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-900 hover:bg-red-100 whitespace-nowrap"
               >
+                <AlertTriangle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
+                <span>{failedSyncCount} Failed · Retry</span>
+              </button>
+            ) : pendingSyncCount > 0 ? (
+              <button
+                type="button"
+                onClick={isOnline ? onManualSync : () => handleNavigate('field_ops')}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 whitespace-nowrap"
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
                 <span>{pendingSyncCount} Pending Sync</span>
               </button>
+            ) : isOnline && lastUpdatedAt ? (
+              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 whitespace-nowrap">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                <span>Synced</span>
+              </span>
             ) : null}
             <button
               type="button"
               onClick={onManualSync}
               disabled={syncingNow}
-              title="Refresh live Firestore snapshots"
+              title="Refresh and synchronize records"
               className="inline-flex min-h-[34px] items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60 whitespace-nowrap"
             >
               <RefreshCw

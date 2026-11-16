@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError';
+import { rebuildAndSyncLocationCatalog } from './directoryService';
 import {
   IncidentStatus,
   IncidentUrgency,
@@ -37,6 +38,8 @@ import {
   type LgaId,
   type NotificationItem,
   type OfflineQueuedItem,
+  type OperationalNote,
+  type OperationalNoteCategory,
   type PollingUnit,
   type PublicVerifiedResult,
   type ResultHistoryEntry,
@@ -52,10 +55,17 @@ import {
 } from '../utils/aggregationEngine';
 import { toValidDocId } from './officialDirectory';
 import {
+  deleteQueueItem,
   generateClientSubmissionId,
+  getDeletedTombstones,
   getQueuedItems,
+  saveLocalNote,
   updateQueueItemStatus,
 } from './offlineQueue';
+import {
+  syncNoteDeleteToFirestore,
+  syncNoteUpsertToFirestore,
+} from './notesService';
 
 function requireAuthUid(): string {
   const uid = auth.currentUser?.uid;
@@ -106,10 +116,18 @@ async function addTimelineEvent(
     puId: string;
     puCode: string;
     isTestData?: boolean;
+    deterministicEventId?: string;
   }
 ): Promise<void> {
   try {
-    await setDoc(doc(collection(db, 'timeline_events')), {
+    const ref = event.deterministicEventId
+      ? doc(db, 'timeline_events', toValidDocId(event.deterministicEventId))
+      : doc(collection(db, 'timeline_events'));
+    if (event.deterministicEventId) {
+      const existing = await getDoc(ref);
+      if (existing.exists()) return;
+    }
+    await setDoc(ref, {
       eventType: event.eventType.slice(0, 64),
       title: event.title.slice(0, 160),
       description: event.description.slice(0, 600),
@@ -582,6 +600,7 @@ export async function submitCheckIn(
     targetLgaId: pu.lgaId,
     targetWardId: pu.wardId,
     isCritical: false,
+    isTestData: Boolean(input.isTestData),
   });
 
   await logAudit(
@@ -599,7 +618,8 @@ export async function updatePollingUnitStatus(
   actor: UserAccount,
   pu: PollingUnit,
   nextStatus: PuOperationalStatus,
-  note = ''
+  note = '',
+  existingClientSubmissionId?: string
 ): Promise<void> {
   requireAuthUid();
   try {
@@ -620,6 +640,9 @@ export async function updatePollingUnitStatus(
     wardId: pu.wardId,
     puId: pu.id,
     puCode: pu.puCode,
+    deterministicEventId: existingClientSubmissionId
+      ? `evt_${existingClientSubmissionId}`
+      : undefined,
   });
 
   await logAudit(
@@ -752,6 +775,7 @@ export async function submitIncidentReport(
     targetLgaId: pu.lgaId,
     targetWardId: pu.wardId,
     isCritical: input.urgency === IncidentUrgency.CRITICAL,
+    isTestData: Boolean(input.isTestData),
   });
 
   await logAudit(
@@ -981,6 +1005,7 @@ export async function submitPollingUnitResult(
         wardId: pu.wardId,
         puId: pu.id,
         puCode: pu.puCode,
+        isTestData: Boolean(existingResult.isTestData || input.isTestData),
       });
 
       await logAudit(
@@ -1130,6 +1155,7 @@ export async function submitPollingUnitResult(
       targetLgaId: pu.lgaId,
       targetWardId: pu.wardId,
       isCritical: false,
+      isTestData: Boolean(input.isTestData),
     });
 
     await logAudit(
@@ -1200,6 +1226,7 @@ export async function reviewResultSubmission(
   const publicRef = doc(db, 'public_results', submission.puId);
 
   let previousStatusRecorded: string = submission.verificationStatus;
+  let liveIsTestData: boolean = Boolean(submission.isTestData);
 
   try {
     await runTransaction(db, async (tx) => {
@@ -1210,6 +1237,7 @@ export async function reviewResultSubmission(
       }
       const liveSub = subSnap.data() as Omit<ResultSubmission, 'id'>;
       previousStatusRecorded = liveSub.verificationStatus;
+      liveIsTestData = Boolean(liveSub.isTestData);
 
       if (
         decision === VerificationStatus.VERIFIED &&
@@ -1454,6 +1482,7 @@ export async function reviewResultSubmission(
     wardId: submission.wardId,
     puId: submission.puId,
     puCode: submission.puCode,
+    isTestData: liveIsTestData,
   });
 
   await addNotification(actor, {
@@ -1463,6 +1492,7 @@ export async function reviewResultSubmission(
     targetLgaId: submission.lgaId,
     targetWardId: submission.wardId,
     isCritical: decision === VerificationStatus.REJECTED,
+    isTestData: liveIsTestData,
   });
 
   await logAudit(
@@ -1570,6 +1600,8 @@ export async function correctMasterPollingUnit(
     handleFirestoreError(error, OperationType.WRITE, `polling_units/${pu.id}`);
   }
 
+  await rebuildAndSyncLocationCatalog(actor, pu.lgaId);
+
   await logAudit(
     actor,
     'MASTER_PU_CORRECTED',
@@ -1577,6 +1609,128 @@ export async function correctMasterPollingUnit(
     pu.id,
     `Corrected ${pu.puCode} with immutable backup (${backupRef.id}). Reason: ${cleanReason}`
   );
+}
+
+let activeQueueFlushPromise: Promise<{ syncedCount: number; failedCount: number }> | null =
+  null;
+
+export async function syncSingleQueuedItem(
+  actor: UserAccount,
+  item: OfflineQueuedItem,
+  pollingUnits: PollingUnit[],
+  existingResults: ResultSubmission[]
+): Promise<boolean> {
+  if (!navigator.onLine) return false;
+
+  const tombstones = await getDeletedTombstones();
+  const targetResultId =
+    typeof item.payload?.targetResultId === 'string' ? item.payload.targetResultId : '';
+  const clientNoteId =
+    typeof item.payload?.clientNoteId === 'string' ? item.payload.clientNoteId : '';
+
+  if (
+    item.reportType !== 'NOTE_DELETE' &&
+    (tombstones.has(item.clientSubmissionId) ||
+      (targetResultId && tombstones.has(targetResultId)) ||
+      (clientNoteId && tombstones.has(clientNoteId)))
+  ) {
+    await deleteQueueItem(item.clientSubmissionId);
+    return true;
+  }
+
+  await updateQueueItemStatus(item.clientSubmissionId, 'SYNCING');
+
+  try {
+    if (item.reportType === 'NOTE_UPSERT') {
+      const noteObj: OperationalNote = {
+        id: clientNoteId || item.clientSubmissionId,
+        clientNoteId: clientNoteId || item.clientSubmissionId,
+        title: String(item.payload.title || ''),
+        content: String(item.payload.content || ''),
+        category: (item.payload.category as OperationalNoteCategory) || 'GENERAL',
+        lgaId: (item.payload.lgaId as 'all' | LgaId) || item.lgaId || 'all',
+        wardId: String(item.payload.wardId || item.wardId || ''),
+        puId: String(item.payload.puId || item.puId || ''),
+        puCode: String(item.payload.puCode || item.puCode || ''),
+        puName: String(item.payload.puName || item.puName || ''),
+        authorUid: actor.uid,
+        authorName: actor.displayName,
+        isPinned: Boolean(item.payload.isPinned),
+        isTestData: Boolean(item.payload.isTestData),
+        revision: Number(item.payload.revision || 1),
+        updatedAt: String(item.payload.updatedAtIso || new Date().toISOString()),
+        syncState: 'SYNCED',
+      };
+      await syncNoteUpsertToFirestore(actor, noteObj);
+      await saveLocalNote(noteObj);
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    if (item.reportType === 'NOTE_DELETE') {
+      await syncNoteDeleteToFirestore(clientNoteId || item.clientSubmissionId);
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    const pu = pollingUnits.find((p) => p.id === item.puId);
+    if (!pu) {
+      await updateQueueItemStatus(
+        item.clientSubmissionId,
+        'SYNC_FAILED',
+        'Polling unit record is not yet loaded in active scope.'
+      );
+      return false;
+    }
+
+    if (item.reportType === 'CHECK_IN') {
+      await submitCheckIn(
+        actor,
+        pu,
+        item.payload as Parameters<typeof submitCheckIn>[2],
+        item.clientSubmissionId
+      );
+    } else if (item.reportType === 'STATUS_UPDATE') {
+      await updatePollingUnitStatus(
+        actor,
+        pu,
+        item.payload.operationalStatus as PuOperationalStatus,
+        String(item.payload.note || ''),
+        item.clientSubmissionId
+      );
+    } else if (item.reportType === 'INCIDENT_REPORT') {
+      await submitIncidentReport(
+        actor,
+        pu,
+        item.payload as Parameters<typeof submitIncidentReport>[2],
+        item.clientSubmissionId
+      );
+    } else if (item.reportType === 'RESULT_SUBMISSION') {
+      const prev =
+        (targetResultId
+          ? existingResults.find((r) => r.id === targetResultId)
+          : undefined) ||
+        existingResults.find((r) => r.puId === pu.id) ||
+        null;
+      await submitPollingUnitResult(
+        actor,
+        pu,
+        item.payload as Parameters<typeof submitPollingUnitResult>[2],
+        prev,
+        item.clientSubmissionId
+      );
+    }
+
+    await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+    return true;
+  } catch (err) {
+    await updateQueueItemStatus(
+      item.clientSubmissionId,
+      'SYNC_FAILED',
+      err instanceof Error ? err.message : 'Unable to synchronize submission.'
+    );
+    return false;
+  }
 }
 
 export async function flushOfflineQueue(
@@ -1588,71 +1742,39 @@ export async function flushOfflineQueue(
     return { syncedCount: 0, failedCount: 0 };
   }
 
-  const items: OfflineQueuedItem[] = await getQueuedItems(actor.uid);
-  const pending = items
-    .filter((i) => i.status === 'PENDING_SYNC' || i.status === 'SYNC_FAILED')
-    .sort((a, b) => a.createdAtIso.localeCompare(b.createdAtIso));
-
-  let syncedCount = 0;
-  let failedCount = 0;
-
-  for (const item of pending) {
-    const pu = pollingUnits.find((p) => p.id === item.puId);
-    if (!pu) {
-      failedCount += 1;
-      await updateQueueItemStatus(
-        item.clientSubmissionId,
-        'SYNC_FAILED',
-        'Polling unit record not available in active scope.'
-      );
-      continue;
-    }
-
-    try {
-      if (item.reportType === 'CHECK_IN') {
-        await submitCheckIn(
-          actor,
-          pu,
-          item.payload as Parameters<typeof submitCheckIn>[2],
-          item.clientSubmissionId
-        );
-      } else if (item.reportType === 'STATUS_UPDATE') {
-        await updatePollingUnitStatus(
-          actor,
-          pu,
-          item.payload.operationalStatus as PuOperationalStatus,
-          String(item.payload.note || '')
-        );
-      } else if (item.reportType === 'INCIDENT_REPORT') {
-        await submitIncidentReport(
-          actor,
-          pu,
-          item.payload as Parameters<typeof submitIncidentReport>[2],
-          item.clientSubmissionId
-        );
-      } else if (item.reportType === 'RESULT_SUBMISSION') {
-        const prev = existingResults.find((r) => r.puId === pu.id) || null;
-        await submitPollingUnitResult(
-          actor,
-          pu,
-          item.payload as Parameters<typeof submitPollingUnitResult>[2],
-          prev,
-          item.clientSubmissionId
-        );
-      }
-      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
-      syncedCount += 1;
-    } catch (err) {
-      failedCount += 1;
-      await updateQueueItemStatus(
-        item.clientSubmissionId,
-        'SYNC_FAILED',
-        err instanceof Error ? err.message : 'Sync rejected by Firestore.'
-      );
-    }
+  if (activeQueueFlushPromise) {
+    return activeQueueFlushPromise;
   }
 
-  return { syncedCount, failedCount };
+  activeQueueFlushPromise = (async () => {
+    const items: OfflineQueuedItem[] = await getQueuedItems(actor.uid);
+    const pending = items
+      .filter(
+        (i) =>
+          i.status === 'PENDING_SYNC' ||
+          i.status === 'SYNC_FAILED' ||
+          i.status === 'SAVED_LOCALLY' ||
+          i.status === 'SYNCING'
+      )
+      .sort((a, b) => a.createdAtIso.localeCompare(b.createdAtIso));
+
+    let syncedCount = 0;
+    let failedCount = 0;
+
+    for (const item of pending) {
+      const ok = await syncSingleQueuedItem(actor, item, pollingUnits, existingResults);
+      if (ok) syncedCount += 1;
+      else failedCount += 1;
+    }
+
+    return { syncedCount, failedCount };
+  })();
+
+  try {
+    return await activeQueueFlushPromise;
+  } finally {
+    activeQueueFlushPromise = null;
+  }
 }
 
 export type { Ward, LgaId };

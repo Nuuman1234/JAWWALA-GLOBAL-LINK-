@@ -46,6 +46,7 @@ import {
   canViewAuditLogs,
   canViewTasksModule,
   type LgaId,
+  type SessionVerificationMode,
   type UserAccount,
 } from '../types/fdmis';
 import { formatAccountIdentifier } from '../utils/phoneAuth';
@@ -242,6 +243,7 @@ interface AppShellProps {
   onSignOut: () => Promise<void>;
   inactivityMinutes: number;
   isOnline: boolean;
+  sessionMode?: SessionVerificationMode;
   pendingSyncCount: number;
   syncingCount?: number;
   failedSyncCount?: number;
@@ -290,6 +292,7 @@ export function AppShell({
   onSignOut,
   inactivityMinutes,
   isOnline,
+  sessionMode = 'online_verified',
   pendingSyncCount,
   syncingCount = 0,
   failedSyncCount = 0,
@@ -314,7 +317,9 @@ export function AppShell({
 
   const formattedSyncTime = lastUpdatedAt
     ? lastUpdatedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : 'Connecting...';
+    : !isOnline || sessionMode === 'offline_trusted'
+      ? 'Offline Cache'
+      : 'Connecting...';
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -546,10 +551,15 @@ export function AppShell({
           <div className="flex items-center gap-2 shrink-0">
             <BatteryMonitor onBatteryUpdate={onBatteryUpdate} />
             <PWAInstallButton compact />
-            {!isOnline ? (
+            {!isOnline || sessionMode === 'offline_trusted' ? (
               <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900 whitespace-nowrap">
                 <WifiOff className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>OFFLINE</span>
+                <span>OFFLINE · LOCAL</span>
+              </span>
+            ) : sessionMode === 'revalidating' ? (
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-900 whitespace-nowrap">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
+                <span>VERIFYING</span>
               </span>
             ) : (
               <span className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800 whitespace-nowrap">

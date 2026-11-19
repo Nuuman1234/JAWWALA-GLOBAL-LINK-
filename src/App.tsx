@@ -29,11 +29,13 @@ import { auth, testFirestoreConnection, type ConnectionCheckStatus } from './lib
 import {
   checkUserAndBootstrapState,
   completeApprovedPasswordReset,
+  completeEmailPasswordReset,
   hasStoredOfflineRegistrationKey,
   initializeFullControlAdmin,
   registerPendingAccount,
   registerWithEmailAndPhone,
   resolvePendingOfflinePassword,
+  revalidateTrustedSessionWithServer,
   sendEmailPasswordReset,
   signInWithGoogle,
   signInWithIdentifierAndPassword,
@@ -43,9 +45,18 @@ import {
   subscribeToUserAccount,
   syncPendingOfflineRegistration,
   updateUserBatteryStatus,
+  verifyEmailPasswordResetCode,
   type RegistrationLocationSelection,
 } from './services/authService';
-import { observeReportAttachments } from './services/dataManagementService';
+import {
+  verifyTrustedDeviceSession,
+  type TrustedSessionVerificationResult,
+} from './services/trustedDeviceSession';
+import {
+  observeDeletionTombstones,
+  observeReportAttachments,
+} from './services/dataManagementService';
+import { observeSystemBackups } from './services/backupRecoveryService';
 import {
   canManageDirectory,
   fetchPublicLocationCatalogWithStatus,
@@ -59,7 +70,11 @@ import {
   syncLocationCatalogFromLiveDirectory,
 } from './services/directoryService';
 import { buildBundledLocationCatalog } from './services/officialDirectory';
-import { observeEmergencyContacts } from './services/emergencyService';
+import {
+  observeEmergencyContacts,
+  observeEmergencyReports,
+  observeEscalationRules,
+} from './services/emergencyService';
 import {
   buildMergedOperationalNotes,
   observeOperationalNotes,
@@ -87,10 +102,15 @@ import {
   observeTimelineEvents,
   syncSingleQueuedItem,
 } from './services/operationsService';
-import { observePartyConfigs } from './services/partyService';
+import {
+  hasConfiguredPartyLogo,
+  observePartyConfigs,
+  resolvePartyLogoDisplayUrl,
+} from './services/partyService';
 import { observeGeneratedReports } from './services/reportArchiveService';
 import { observeOperationalTasks } from './services/taskService';
 import {
+  DEFAULT_OFFLINE_SESSION_MAX_DAYS,
   IncidentUrgency,
   UserRole,
   isAuthorizedActive,
@@ -99,7 +119,10 @@ import {
   type AggregatedResult,
   type ApprovedPuResult,
   type AuditLog,
+  type DeletionTombstone,
   type EmergencyContact,
+  type EmergencyReport,
+  type EscalationRule,
   type GeneratedReportRecord,
   type GlobalSettings,
   type IncidentReport,
@@ -117,6 +140,8 @@ import {
   type PublicVerifiedResult,
   type ReportAttachment,
   type ResultSubmission,
+  type SessionVerificationMode,
+  type SystemBackupRecord,
   type TimelineEvent,
   type UserAccount,
   type Ward,
@@ -152,6 +177,11 @@ export default function App() {
   const [needsRegistration, setNeedsRegistration] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [checkingProfile, setCheckingProfile] = useState(false);
+  const [sessionMode, setSessionMode] = useState<SessionVerificationMode>('online_verified');
+  const [lastServerVerifiedAtMs, setLastServerVerifiedAtMs] = useState<number | null>(null);
+  const [sessionCheckHint, setSessionCheckHint] = useState<string>(
+    'Checking authentication credentials, role permissions, and local trusted session.'
+  );
 
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [partyConfigs, setPartyConfigs] =
@@ -170,6 +200,10 @@ export default function App() {
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
+  const [emergencyReports, setEmergencyReports] = useState<EmergencyReport[]>([]);
+  const [escalationRules, setEscalationRules] = useState<EscalationRule[]>([]);
+  const [deletionTombstones, setDeletionTombstones] = useState<DeletionTombstone[]>([]);
+  const [systemBackups, setSystemBackups] = useState<SystemBackupRecord[]>([]);
   const [reportAttachments, setReportAttachments] = useState<ReportAttachment[]>([]);
   const [serverNotes, setServerNotes] = useState<OperationalNote[]>([]);
   const [mergedNotes, setMergedNotes] = useState<OperationalNote[]>([]);
@@ -201,6 +235,19 @@ export default function App() {
   const wasOfflineRef = useRef(!isOnline);
   const startupPrunedRef = useRef(false);
   const lastCatalogSignatureRef = useRef('');
+  const trustedSessionPromiseRef = useRef<Promise<TrustedSessionVerificationResult> | null>(null);
+  const sessionModeRef = useRef<SessionVerificationMode>('online_verified');
+  const revalidatingRef = useRef(false);
+  const offlineMaxDaysRef = useRef<number>(DEFAULT_OFFLINE_SESSION_MAX_DAYS);
+
+  useEffect(() => {
+    sessionModeRef.current = sessionMode;
+  }, [sessionMode]);
+
+  useEffect(() => {
+    offlineMaxDaysRef.current =
+      settings?.offlineSessionMaxDays ?? DEFAULT_OFFLINE_SESSION_MAX_DAYS;
+  }, [settings?.offlineSessionMaxDays]);
 
   // 1. Boot-time Firestore connectivity, offline storage pruning, location catalog sync & online/offline listeners
   useEffect(() => {
@@ -234,15 +281,62 @@ export default function App() {
     };
   }, []);
 
+  const clearProtectedMemoryState = useCallback(() => {
+    setAccount(null);
+    setNeedsBootstrap(false);
+    setNeedsRegistration(false);
+    setPartyConfigs(EMPTY_PARTY_CONFIGS);
+    setWards([]);
+    setPollingUnits([]);
+    setPuAssignments([]);
+    setUsers([]);
+    setAuditLogs([]);
+    setCheckIns([]);
+    setIncidents([]);
+    setResults([]);
+    setApprovedPuResults([]);
+    setAggregatedResults([]);
+    setPublicResults([]);
+    setTimelineEvents([]);
+    setNotifications([]);
+    setEmergencyContacts([]);
+    setEmergencyReports([]);
+    setEscalationRules([]);
+    setDeletionTombstones([]);
+    setSystemBackups([]);
+    setReportAttachments([]);
+    setServerNotes([]);
+    setMergedNotes([]);
+    setOperationalTasks([]);
+    setGeneratedReports([]);
+    setQueuedItems([]);
+    setPasswordResetRequests([]);
+    setLastUpdatedAt(null);
+    setLastServerVerifiedAtMs(null);
+  }, []);
+
   // 2. Load or check user profile after Firebase Auth state resolves
   const evaluateProfile = useCallback(async (fbUser: FirebaseUser) => {
     setCheckingProfile(true);
     setAuthError(null);
+    setSessionCheckHint(
+      typeof navigator !== 'undefined' && !navigator.onLine
+        ? 'Verifying encrypted local trusted session offline...'
+        : 'Verifying operator identity and role permissions with FDMIS server...'
+    );
     try {
-      const result = await checkUserAndBootstrapState(fbUser);
+      const result = await checkUserAndBootstrapState(fbUser, {
+        maxOfflineDays: offlineMaxDaysRef.current,
+      });
       setAccount(result.account);
       setNeedsBootstrap(result.needsBootstrap);
       setNeedsRegistration(result.needsRegistration);
+      if (result.offlineRestored) {
+        setSessionMode('offline_trusted');
+      } else if (result.account) {
+        setSessionMode('online_verified');
+        setLastServerVerifiedAtMs(Date.now());
+      }
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : 'Unable to verify operator profile.');
     } finally {
@@ -250,45 +344,128 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (fbUser) => {
-      setFirebaseUser(fbUser);
-      setAuthReady(true);
-      if (fbUser) {
-        void evaluateProfile(fbUser);
-      } else {
-        setAccount(null);
-        setNeedsBootstrap(false);
-        setNeedsRegistration(false);
-        setPartyConfigs(EMPTY_PARTY_CONFIGS);
-        setWards([]);
-        setPollingUnits([]);
-        setPuAssignments([]);
-        setUsers([]);
-        setAuditLogs([]);
-        setCheckIns([]);
-        setIncidents([]);
-        setResults([]);
-        setApprovedPuResults([]);
-        setAggregatedResults([]);
-        setPublicResults([]);
-        setTimelineEvents([]);
-        setNotifications([]);
-        setEmergencyContacts([]);
-        setReportAttachments([]);
-        setServerNotes([]);
-        setMergedNotes([]);
-        setOperationalTasks([]);
-        setGeneratedReports([]);
-        setQueuedItems([]);
-        setPasswordResetRequests([]);
-        setLastUpdatedAt(null);
-        void getPendingOfflineRegistrations().then(setPendingOfflineRegistrations);
-        window.history.replaceState({ fdmisLocked: true }, '', '/');
+  const runBackgroundServerRevalidation = useCallback(
+    async (uid: string, currentAccountSnapshot?: UserAccount | null) => {
+      if (revalidatingRef.current) return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setSessionMode('offline_trusted');
+        return;
       }
+      revalidatingRef.current = true;
+      setSessionMode('revalidating');
+      try {
+        const res = await revalidateTrustedSessionWithServer(uid, offlineMaxDaysRef.current);
+        if (res.status === 'VERIFIED') {
+          setAccount(res.account);
+          setSessionMode('online_verified');
+          setLastServerVerifiedAtMs(res.verifiedAtMs);
+          setAuthError(null);
+        } else if (res.status === 'REVOKED') {
+          await signOutSession(currentAccountSnapshot || res.account, 'SERVER_SESSION_REVOKED');
+          setFirebaseUser(null);
+          setSessionMode('online_verified');
+          clearProtectedMemoryState();
+          setAuthError(res.reason);
+        } else if (res.status === 'REAUTH_REQUIRED') {
+          setSessionMode('online_verified');
+          clearProtectedMemoryState();
+          setAuthError(res.reason);
+        } else if (res.status === 'OFFLINE') {
+          setSessionMode('offline_trusted');
+        }
+      } finally {
+        revalidatingRef.current = false;
+      }
+    },
+    [clearProtectedMemoryState]
+  );
+
+  // Fast, flicker-free startup authentication:
+  // - Offline: verify local encrypted trusted-device session immediately (zero network timeout)
+  // - Online: restore matching trusted session smoothly while revalidating live with server
+  useEffect(() => {
+    let active = true;
+    const trustedPromise = verifyTrustedDeviceSession();
+    trustedSessionPromiseRef.current = trustedPromise;
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setSessionCheckHint('Checking encrypted local trusted session for offline access...');
+      void trustedPromise.then((trusted) => {
+        if (!active) return;
+        if (trusted.valid) {
+          setAccount(trusted.payload.account);
+          setSessionMode('offline_trusted');
+          setLastServerVerifiedAtMs(trusted.payload.lastServerVerifiedAtMs);
+          setNeedsBootstrap(false);
+          setNeedsRegistration(false);
+          setCheckingProfile(false);
+          setAuthReady(true);
+        } else {
+          if (trusted.reason === 'EXPIRED') {
+            setAuthError(
+              'Your offline trusted session expired. Connect to the internet to sign in and re-verify your account.'
+            );
+          }
+          setCheckingProfile(false);
+          setAuthReady(true);
+        }
+      });
+    }
+
+    const unsub = onAuthStateChanged(auth, (fbUser) => {
+      void (async () => {
+        const trusted = await trustedPromise;
+        if (!active) return;
+
+        setFirebaseUser(fbUser);
+
+        if (fbUser) {
+          const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
+          if (trusted.valid && trusted.payload.uid === fbUser.uid) {
+            setAccount(trusted.payload.account);
+            setLastServerVerifiedAtMs(trusted.payload.lastServerVerifiedAtMs);
+            setNeedsBootstrap(false);
+            setNeedsRegistration(false);
+            setCheckingProfile(false);
+            setAuthReady(true);
+
+            if (onlineNow) {
+              void runBackgroundServerRevalidation(fbUser.uid, trusted.payload.account);
+            } else {
+              setSessionMode('offline_trusted');
+            }
+          } else {
+            setAuthReady(true);
+            void evaluateProfile(fbUser);
+          }
+        } else {
+          const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
+          // Preserve a cryptographically verified offline trusted session on cold offline restarts
+          if (!onlineNow && trusted.valid) {
+            setAccount(trusted.payload.account);
+            setSessionMode('offline_trusted');
+            setLastServerVerifiedAtMs(trusted.payload.lastServerVerifiedAtMs);
+            setNeedsBootstrap(false);
+            setNeedsRegistration(false);
+            setCheckingProfile(false);
+            setAuthReady(true);
+            return;
+          }
+
+          setAuthReady(true);
+          setSessionMode('online_verified');
+          clearProtectedMemoryState();
+          void getPendingOfflineRegistrations().then(setPendingOfflineRegistrations);
+          window.history.replaceState({ fdmisLocked: true }, '', '/');
+        }
+      })();
     });
-    return () => unsub();
-  }, [evaluateProfile]);
+
+    return () => {
+      active = false;
+      unsub();
+    };
+  }, [clearProtectedMemoryState, evaluateProfile, runBackgroundServerRevalidation]);
 
   // 3. Real-time profile & revocation watcher + global settings watcher
   useEffect(() => {
@@ -297,9 +474,16 @@ export default function App() {
     const unsubUser = subscribeToUserAccount(
       firebaseUser.uid,
       (updated) => {
-        if (updated) setAccount(updated);
+        if (updated) {
+          setAccount(updated);
+          if (isOnline && updated.status === 'ACTIVE' && !updated.sessionRevoked) {
+            setSessionMode('online_verified');
+            setLastServerVerifiedAtMs(Date.now());
+          }
+        }
       },
-      (err) => setAuthError(err.message)
+      (err) => setAuthError(err.message),
+      offlineMaxDaysRef.current
     );
 
     const unsubSettings = subscribeToGlobalSettings(
@@ -313,9 +497,10 @@ export default function App() {
       unsubUser();
       unsubSettings();
     };
-  }, [firebaseUser, needsBootstrap, needsRegistration]);
+  }, [firebaseUser, needsBootstrap, needsRegistration, isOnline]);
 
   const activeAuthorized = isAuthorizedActive(account);
+  const hasAuthenticatedSession = Boolean(firebaseUser || sessionMode === 'offline_trusted');
 
   const {
     activeSection,
@@ -329,7 +514,7 @@ export default function App() {
 
   // Guard browser history navigation after logout or revocation so Back cannot restore protected routes
   useEffect(() => {
-    if (firebaseUser && activeAuthorized) {
+    if (hasAuthenticatedSession && activeAuthorized) {
       return;
     }
 
@@ -339,11 +524,11 @@ export default function App() {
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [firebaseUser, activeAuthorized]);
+  }, [hasAuthenticatedSession, activeAuthorized]);
 
   // 4. Scoped real-time listeners + offline snapshot hydration & tombstone filtering
   useEffect(() => {
-    if (!authReady || !firebaseUser || !account || !activeAuthorized) {
+    if (!authReady || !hasAuthenticatedSession || !account || !activeAuthorized) {
       setPartyConfigs(EMPTY_PARTY_CONFIGS);
       setWards([]);
       setPollingUnits([]);
@@ -359,6 +544,10 @@ export default function App() {
       setTimelineEvents([]);
       setNotifications([]);
       setEmergencyContacts([]);
+      setEmergencyReports([]);
+      setEscalationRules([]);
+      setDeletionTombstones([]);
+      setSystemBackups([]);
       setReportAttachments([]);
       setServerNotes([]);
       setOperationalTasks([]);
@@ -408,6 +597,8 @@ export default function App() {
         cResetReqs,
         cTasks,
         cReports,
+        cEmgReports,
+        cEscRules,
       ] = await Promise.all([
         getDeletedTombstones(),
         loadCollectionSnapshot<Record<PartyCode, PartyConfig | null>>(uid, 'partyConfigs'),
@@ -430,6 +621,8 @@ export default function App() {
         loadCollectionSnapshot<PasswordResetRequest[]>(uid, 'passwordResetRequests'),
         loadCollectionSnapshot<OperationalTask[]>(uid, 'operationalTasks'),
         loadCollectionSnapshot<GeneratedReportRecord[]>(uid, 'generatedReports'),
+        loadCollectionSnapshot<EmergencyReport[]>(uid, 'emergencyReports'),
+        loadCollectionSnapshot<EscalationRule[]>(uid, 'escalationRules'),
       ]);
 
       if (cancelled) return;
@@ -481,16 +674,34 @@ export default function App() {
       if (!liveLoaded.has('generatedReports') && cReports) {
         setGeneratedReports(filterOutTombstones(cReports, tombstones));
       }
-      if (!navigator.onLine) {
+      if (!liveLoaded.has('emergencyReports') && cEmgReports) {
+        setEmergencyReports(filterOutTombstones(cEmgReports, tombstones));
+      }
+      if (!liveLoaded.has('escalationRules') && cEscRules) {
+        setEscalationRules(cEscRules);
+      }
+      if (!navigator.onLine || !firebaseUser) {
         setLoadingData(false);
       }
     })();
+
+    // In cold-offline trusted-session mode (no live Firebase Auth handle yet), keep cached snapshots active
+    if (!firebaseUser) {
+      return () => {
+        cancelled = true;
+      };
+    }
 
     const unsubPartyConfigs = observePartyConfigs(
       (configs) => {
         liveLoaded.add('partyConfigs');
         setPartyConfigs(configs);
         void saveCollectionSnapshot(account.uid, 'partyConfigs', configs);
+        Object.values(configs).forEach((cfg) => {
+          if (cfg && hasConfiguredPartyLogo(cfg)) {
+            void resolvePartyLogoDisplayUrl(cfg);
+          }
+        });
         markSynced();
       },
       handleSubError
@@ -738,6 +949,38 @@ export default function App() {
       },
       handleSubError
     );
+    const unsubTombstones = observeDeletionTombstones(
+      (items) => {
+        setDeletionTombstones(items);
+      }
+    );
+    const unsubEmergencyReports = observeEmergencyReports(
+      account,
+      (items) => {
+        liveLoaded.add('emergencyReports');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setEmergencyReports(clean);
+          void saveCollectionSnapshot(account.uid, 'emergencyReports', clean);
+          markSynced();
+        });
+      }
+    );
+    const unsubEscalationRules = observeEscalationRules(
+      account,
+      (items) => {
+        liveLoaded.add('escalationRules');
+        setEscalationRules(items);
+        void saveCollectionSnapshot(account.uid, 'escalationRules', items);
+      }
+    );
+    const unsubSystemBackups = observeSystemBackups(
+      account,
+      (items) => {
+        setSystemBackups(items);
+      }
+    );
 
     return () => {
       cancelled = true;
@@ -761,8 +1004,12 @@ export default function App() {
       unsubResetReqs();
       unsubTasks();
       unsubGeneratedReports();
+      unsubTombstones();
+      unsubEmergencyReports();
+      unsubEscalationRules();
+      unsubSystemBackups();
     };
-  }, [authReady, firebaseUser, account, activeAuthorized, syncNonce]);
+  }, [authReady, hasAuthenticatedSession, firebaseUser, account, activeAuthorized, syncNonce]);
 
   // 4a. Keep public location_catalog synchronized whenever an authorized directory admin opens FDMIS
   useEffect(() => {
@@ -906,7 +1153,7 @@ export default function App() {
   }, [account, activeAuthorized]);
 
   const executeQueueSync = useCallback(
-    async (includeFailed: boolean) => {
+    async (includeFailed: boolean, force = false) => {
       if (!isOnline || !account || !activeAuthorized || isFlushingRef.current) return;
 
       const eligible = queuedItems.filter((item) => {
@@ -921,7 +1168,8 @@ export default function App() {
           item.reportType === 'NOTIFICATION_BROADCAST' ||
           item.reportType === 'TASK_CREATE' ||
           item.reportType === 'TASK_OFFICER_UPDATE' ||
-          item.reportType === 'REPORT_ARCHIVE';
+          item.reportType === 'REPORT_ARCHIVE' ||
+          item.reportType === 'EMERGENCY_REPORT';
         return isIndependent || pollingUnits.length > 0;
       });
 
@@ -930,10 +1178,10 @@ export default function App() {
       isFlushingRef.current = true;
       try {
         if (pollingUnits.length > 0) {
-          await flushOfflineQueue(account, pollingUnits, results);
+          await flushOfflineQueue(account, pollingUnits, results, { force });
         } else {
           for (const item of eligible) {
-            await syncSingleQueuedItem(account, item, pollingUnits, results);
+            await syncSingleQueuedItem(account, item, pollingUnits, results, { force });
           }
         }
       } finally {
@@ -943,17 +1191,29 @@ export default function App() {
     [isOnline, account, activeAuthorized, queuedItems, pollingUnits, results]
   );
 
-  // Trigger full retry once when connectivity returns from offline -> online
+  // Trigger server session revalidation + full queue sync when connectivity returns (offline -> online)
   useEffect(() => {
     if (!isOnline) {
       wasOfflineRef.current = true;
+      if (account && activeAuthorized) {
+        setSessionMode('offline_trusted');
+      }
       return;
     }
-    if (wasOfflineRef.current) {
+    if (wasOfflineRef.current || sessionModeRef.current === 'offline_trusted') {
       wasOfflineRef.current = false;
-      void executeQueueSync(true);
+      if (account && activeAuthorized) {
+        void (async () => {
+          await runBackgroundServerRevalidation(account.uid, account);
+          if (sessionModeRef.current !== 'offline_trusted') {
+            await executeQueueSync(true);
+          }
+        })();
+      } else {
+        void executeQueueSync(true);
+      }
     }
-  }, [isOnline, executeQueueSync]);
+  }, [isOnline, account, activeAuthorized, runBackgroundServerRevalidation, executeQueueSync]);
 
   // Auto-flush newly queued PENDING_SYNC / SAVED_LOCALLY items whenever online
   useEffect(() => {
@@ -1052,28 +1312,31 @@ export default function App() {
     [notifications, lastSeenNotifMs]
   );
 
-  const handleManualSync = useCallback(async () => {
-    if (syncingNow) return;
-    setSyncingNow(true);
-    try {
-      const status = await testFirestoreConnection();
-      setConnectionStatus(status);
-      if (account && isOnline && pendingSyncCount > 0) {
-        await executeQueueSync(true);
+  const handleManualSync = useCallback(
+    async (force = false) => {
+      if (syncingNow) return;
+      setSyncingNow(true);
+      try {
+        const status = await testFirestoreConnection();
+        setConnectionStatus(status);
+        if (account && isOnline && (pendingSyncCount > 0 || force)) {
+          await executeQueueSync(true, force);
+        }
+        setSyncNonce((prev) => prev + 1);
+        setLastUpdatedAt(new Date());
+      } finally {
+        setSyncingNow(false);
       }
-      setSyncNonce((prev) => prev + 1);
-      setLastUpdatedAt(new Date());
-    } finally {
-      setSyncingNow(false);
-    }
-  }, [syncingNow, account, isOnline, pendingSyncCount, executeQueueSync]);
+    },
+    [syncingNow, account, isOnline, pendingSyncCount, executeQueueSync]
+  );
 
   const handleRetryQueueItem = useCallback(
-    async (item: OfflineQueuedItem) => {
+    async (item: OfflineQueuedItem, force = false) => {
       if (!account || !isOnline || syncingNow) return;
       setSyncingNow(true);
       try {
-        await syncSingleQueuedItem(account, item, pollingUnits, results);
+        await syncSingleQueuedItem(account, item, pollingUnits, results, { force });
         setLastUpdatedAt(new Date());
       } finally {
         setSyncingNow(false);
@@ -1081,6 +1344,12 @@ export default function App() {
     },
     [account, isOnline, syncingNow, pollingUnits, results]
   );
+
+  const handleRefreshQueue = useCallback(async () => {
+    if (!account) return;
+    const items = await getQueuedItems(account.uid);
+    setQueuedItems(items);
+  }, [account]);
 
   const handleRefreshLocations = useCallback(async () => {
     setRefreshingLocations(true);
@@ -1176,6 +1445,9 @@ export default function App() {
   const handleSignOut = async () => {
     resetNavigation();
     await signOutSession(account);
+    setFirebaseUser(null);
+    setSessionMode('online_verified');
+    clearProtectedMemoryState();
   };
 
   const handleRecheckProfile = async () => {
@@ -1184,7 +1456,7 @@ export default function App() {
     }
   };
 
-  if (!authReady || checkingProfile || !firebaseUser || !activeAuthorized || !account) {
+  if (!authReady || checkingProfile || !hasAuthenticatedSession || !activeAuthorized || !account) {
     return (
       <AuthGate
         firebaseUser={firebaseUser}
@@ -1192,6 +1464,7 @@ export default function App() {
         needsBootstrap={needsBootstrap}
         needsRegistration={needsRegistration}
         loading={!authReady || checkingProfile}
+        sessionCheckHint={sessionCheckHint}
         authError={authError}
         connectionStatus={connectionStatus}
         isOnline={isOnline}
@@ -1205,6 +1478,8 @@ export default function App() {
         onEmailPhoneRegister={handleEmailPhoneRegister}
         onGoogleSignIn={handleGoogleSignIn}
         onSendEmailPasswordReset={sendEmailPasswordReset}
+        onVerifyEmailResetCode={verifyEmailPasswordResetCode}
+        onCompleteEmailReset={completeEmailPasswordReset}
         onSubmitPasswordResetRequest={submitPasswordResetRequest}
         onCompleteApprovedPasswordReset={completeApprovedPasswordReset}
         onSyncPendingOfflineRegistration={handleSyncPendingOfflineRegistration}
@@ -1231,6 +1506,7 @@ export default function App() {
       onSignOut={handleSignOut}
       inactivityMinutes={inactivityMinutes}
       isOnline={isOnline}
+      sessionMode={sessionMode}
       pendingSyncCount={pendingSyncCount}
       syncingCount={syncingCount}
       failedSyncCount={failedSyncCount}
@@ -1269,6 +1545,8 @@ export default function App() {
             reportAttachments={reportAttachments}
             auditLogs={auditLogs}
             isOnline={isOnline}
+            sessionMode={sessionMode}
+            lastServerVerifiedAtMs={lastServerVerifiedAtMs}
             lastUpdatedAt={lastUpdatedAt}
             pendingSyncCount={pendingSyncCount}
             syncingCount={syncingCount}
@@ -1314,7 +1592,10 @@ export default function App() {
             results={results}
             queuedItems={queuedItems}
             isOnline={isOnline}
+            lastSyncedAtIso={lastUpdatedAt ? lastUpdatedAt.toISOString() : null}
+            serverTombstoneCount={deletionTombstones.length}
             onRetryQueueItem={handleRetryQueueItem}
+            onRefreshQueue={handleRefreshQueue}
           />
         </div>
       ) : null}
@@ -1431,7 +1712,15 @@ export default function App() {
 
       {isSectionMounted('party_management') ? (
         <div className={activeSection === 'party_management' ? 'block' : 'hidden print:hidden'}>
-          <PartyManagementPage user={account} partyConfigs={partyConfigs} />
+          <PartyManagementPage
+            user={account}
+            partyConfigs={partyConfigs}
+            onPartyConfigsRefreshed={(configs) => {
+              setPartyConfigs(configs);
+              void saveCollectionSnapshot(account.uid, 'partyConfigs', configs);
+              setLastUpdatedAt(new Date());
+            }}
+          />
         </div>
       ) : null}
 
@@ -1466,6 +1755,10 @@ export default function App() {
             wards={wards}
             notifications={notifications}
             settings={settings}
+            incidents={incidents}
+            results={results}
+            tasks={operationalTasks}
+            escalationRules={escalationRules}
             isOnline={isOnline}
             queuedItems={queuedItems}
             onRetrySync={() => void handleManualSync()}
@@ -1476,7 +1769,14 @@ export default function App() {
 
       {isSectionMounted('emergency_assistance') ? (
         <div className={activeSection === 'emergency_assistance' ? 'block' : 'hidden print:hidden'}>
-          <EmergencyAssistancePage user={account} contacts={emergencyContacts} />
+          <EmergencyAssistancePage
+            user={account}
+            contacts={emergencyContacts}
+            pollingUnits={pollingUnits}
+            emergencyReports={emergencyReports}
+            users={users}
+            isOnline={isOnline}
+          />
         </div>
       ) : null}
 
@@ -1510,6 +1810,9 @@ export default function App() {
             currentUser={account}
             users={users}
             wards={wards}
+            pollingUnits={pollingUnits}
+            results={results}
+            tasks={operationalTasks}
             checkIns={checkIns}
             incidents={incidents}
             notes={mergedNotes}
@@ -1532,6 +1835,17 @@ export default function App() {
             timelineEvents={timelineEvents}
             reportAttachments={reportAttachments}
             notes={mergedNotes}
+            tasks={operationalTasks}
+            generatedReports={generatedReports}
+            systemBackups={systemBackups}
+            deletionTombstones={deletionTombstones}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            isSyncing={syncingNow}
+            lastSyncedAtIso={lastUpdatedAt ? lastUpdatedAt.toISOString() : null}
+            onManualSync={handleManualSync}
+            onRetryQueueItem={handleRetryQueueItem}
+            onRefreshQueue={handleRefreshQueue}
           />
         </div>
       ) : null}
@@ -1544,7 +1858,15 @@ export default function App() {
 
       {isSectionMounted('settings') ? (
         <div className={activeSection === 'settings' ? 'block' : 'hidden print:hidden'}>
-          <SettingsPage user={account} settings={settings} onSignOut={handleSignOut} />
+          <SettingsPage
+            user={account}
+            settings={settings}
+            users={users}
+            isOnline={isOnline}
+            sessionMode={sessionMode}
+            lastServerVerifiedAtMs={lastServerVerifiedAtMs}
+            onSignOut={handleSignOut}
+          />
         </div>
       ) : null}
     </AppShell>

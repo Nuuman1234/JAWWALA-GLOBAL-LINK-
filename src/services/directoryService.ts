@@ -1414,6 +1414,7 @@ export async function updateGlobalSettings(
   updates: Pick<
     GlobalSettings,
     | 'inactivityTimeoutMinutes'
+    | 'offlineSessionMaxDays'
     | 'mfaPrepared'
     | 'publicSummaryEnabled'
     | 'smsFallbackConfigured'
@@ -1430,6 +1431,10 @@ export async function updateGlobalSettings(
   }
 
   const timeout = Math.max(5, Math.min(480, Math.floor(updates.inactivityTimeoutMinutes)));
+  const offlineDays = Math.max(
+    1,
+    Math.min(30, Math.floor(updates.offlineSessionMaxDays ?? 14))
+  );
   const cleanGroupName = (updates.whatsappGroupName || DEFAULT_WHATSAPP_GROUP_NAME)
     .trim()
     .slice(0, 120);
@@ -1451,6 +1456,7 @@ export async function updateGlobalSettings(
   try {
     await updateDoc(doc(db, 'system_settings', 'global'), {
       inactivityTimeoutMinutes: timeout,
+      offlineSessionMaxDays: offlineDays,
       mfaPrepared: updates.mfaPrepared,
       publicSummaryEnabled: updates.publicSummaryEnabled,
       smsFallbackConfigured: updates.smsFallbackConfigured,
@@ -1471,7 +1477,7 @@ export async function updateGlobalSettings(
     'SYSTEM_SETTINGS_UPDATED',
     'system_settings',
     'global',
-    `Updated inactivityTimeoutMinutes=${timeout}, mfaPrepared=${updates.mfaPrepared}, publicSummaryEnabled=${updates.publicSummaryEnabled}, whatsappGroupEnabled=${groupEnabled}, whatsappGroupName=${cleanGroupName}.`
+    `Updated inactivityTimeoutMinutes=${timeout}, offlineSessionMaxDays=${offlineDays}, mfaPrepared=${updates.mfaPrepared}, publicSummaryEnabled=${updates.publicSummaryEnabled}, whatsappGroupEnabled=${groupEnabled}, whatsappGroupName=${cleanGroupName}.`
   );
 }
 

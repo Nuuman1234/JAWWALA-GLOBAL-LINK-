@@ -10,8 +10,10 @@ import {
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   X,
   XCircle,
+  ZoomIn,
 } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
 import { PartyLogo } from '../components/PartyLogo';
@@ -31,6 +33,7 @@ import {
   type ResultSubmission,
   type UserAccount,
 } from '../types/fdmis';
+import { analyzeResultDiscrepancies } from '../utils/aggregationEngine';
 import {
   fetchResultHistory,
   reviewResultSubmission,
@@ -64,6 +67,11 @@ export function VerificationCenterPage({
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
+  // Assisted EC8A Figure Cross-Check UI state (strictly human-confirmed, never auto-edits figures)
+  const [ec8aZoom, setEc8aZoom] = useState<1 | 1.5 | 2>(1);
+  const [highContrastEc8a, setHighContrastEc8a] = useState(false);
+  const [assistedChecks, setAssistedChecks] = useState<Record<string, boolean>>({});
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return results.filter((r) => {
@@ -84,7 +92,14 @@ export function VerificationCenterPage({
       awaiting: results.filter(
         (r) =>
           r.verificationStatus === VerificationStatus.SUBMITTED ||
-          r.verificationStatus === VerificationStatus.UNDER_REVIEW
+          r.verificationStatus === VerificationStatus.PENDING_VERIFICATION ||
+          r.verificationStatus === VerificationStatus.UNDER_REVIEW ||
+          r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED
+      ).length,
+      discrepancies: results.filter(
+        (r) =>
+          r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED ||
+          Boolean(r.discrepancyFlag)
       ).length,
       verified: results.filter((r) => r.verificationStatus === VerificationStatus.VERIFIED).length,
       correction: results.filter(
@@ -94,11 +109,20 @@ export function VerificationCenterPage({
     };
   }, [results]);
 
+  const reviewDiscrepancy = useMemo(
+    () => (reviewTarget ? analyzeResultDiscrepancies(reviewTarget, results) : null),
+    [reviewTarget, results]
+  );
+
   const openReviewModal = async (sub: ResultSubmission) => {
     setReviewTarget(sub);
+    setEc8aZoom(1);
+    setHighContrastEc8a(false);
+    setAssistedChecks({});
     const isSelfSubmitted = sub.submittedByUid === user.uid;
     setDecision(
-      sub.verificationStatus === VerificationStatus.SUBMITTED
+      sub.verificationStatus === VerificationStatus.SUBMITTED ||
+        sub.verificationStatus === VerificationStatus.PENDING_VERIFICATION
         ? isSelfSubmitted
           ? VerificationStatus.UNDER_REVIEW
           : VerificationStatus.VERIFIED
@@ -183,11 +207,21 @@ export function VerificationCenterPage({
       </div>
 
       {/* Queue KPI Strip */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="text-xs font-medium text-slate-500">Awaiting Review</p>
           <p className="mt-1 font-mono text-2xl font-bold text-amber-800 tabular-nums">
             {counts.awaiting}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <p className="text-xs font-medium text-slate-500">Discrepancies Flagged</p>
+          <p
+            className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
+              counts.discrepancies > 0 ? 'text-red-700' : 'text-slate-900'
+            }`}
+          >
+            {counts.discrepancies}
           </p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -395,19 +429,57 @@ export function VerificationCenterPage({
             </div>
 
             <div className="mt-4 grid gap-6 lg:grid-cols-2">
-              {/* Left: Form EC8A Evidence Preview */}
+              {/* Left: Form EC8A Evidence Preview + Human-Confirmed Assisted Cross-Check */}
               <div className="space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Form EC8A Evidence Sheet
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Form EC8A Evidence Sheet
+                  </p>
+                  {reviewTarget.ec8aImageBase64?.startsWith('data:image/') ? (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEc8aZoom((z) => (z === 1 ? 1.5 : z === 1.5 ? 2 : 1))
+                        }
+                        className="inline-flex min-h-[28px] items-center gap-1 rounded border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
+                      >
+                        <ZoomIn className="h-3 w-3" aria-hidden="true" />
+                        <span>Zoom {ec8aZoom}x</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHighContrastEc8a((v) => !v)}
+                        className={`min-h-[28px] rounded border px-2 text-[11px] font-medium whitespace-nowrap ${
+                          highContrastEc8a
+                            ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        High Contrast
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
                 {reviewTarget.ec8aImageBase64 ? (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     {reviewTarget.ec8aImageBase64.startsWith('data:image/') ? (
-                      <img
-                        src={reviewTarget.ec8aImageBase64}
-                        alt={`Form EC8A for ${reviewTarget.puCode}`}
-                        className="max-h-[380px] w-full rounded-lg bg-white object-contain"
-                      />
+                      <div className="max-h-[380px] overflow-auto rounded-lg bg-white">
+                        <img
+                          src={reviewTarget.ec8aImageBase64}
+                          alt={`Form EC8A for ${reviewTarget.puCode}`}
+                          className={`mx-auto rounded-lg object-contain transition-transform ${
+                            highContrastEc8a ? 'contrast-150 saturate-0' : ''
+                          } ${
+                            ec8aZoom === 2
+                              ? 'w-[200%] max-w-none'
+                              : ec8aZoom === 1.5
+                                ? 'w-[150%] max-w-none'
+                                : 'max-h-[380px] w-full'
+                          }`}
+                        />
+                      </div>
                     ) : (
                       <div className="p-4 text-xs text-slate-700">
                         <p className="font-medium">Attached Document: {reviewTarget.ec8aFileName}</p>
@@ -429,6 +501,44 @@ export function VerificationCenterPage({
                     No Form EC8A photo or document was attached to this submission.
                   </div>
                 )}
+
+                {/* Assisted EC8A Figure Cross-Check (Human-Confirmed Only) */}
+                <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                    <Sparkles className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                    <span>Assisted EC8A Figure Cross-Check (Human Confirmed)</span>
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Tick each field after visually matching the scanned EC8A sheet. Figures are never altered automatically.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                    {[
+                      { k: 'apc', label: `APC: ${Number(reviewTarget.apcVotes ?? 0).toLocaleString()}` },
+                      { k: 'pdp', label: `PDP: ${Number(reviewTarget.pdpVotes ?? 0).toLocaleString()}` },
+                      { k: 'adc', label: `ADC: ${Number(reviewTarget.adcVotes ?? 0).toLocaleString()}` },
+                      { k: 'oth', label: `OTHERS: ${Number(reviewTarget.othersVotes ?? 0).toLocaleString()}` },
+                      { k: 'val', label: `Valid: ${reviewTarget.validVotes.toLocaleString()}` },
+                      { k: 'rej', label: `Rejected: ${reviewTarget.rejectedVotes.toLocaleString()}` },
+                      { k: 'tot', label: `Total Cast: ${reviewTarget.totalVotesCast.toLocaleString()}` },
+                      { k: 'sig', label: 'Presiding Officer Stamp / Sign' },
+                    ].map((row) => (
+                      <label
+                        key={row.k}
+                        className="flex items-center gap-1.5 rounded border border-slate-200 bg-slate-50 px-2 py-1.5 font-mono text-slate-700"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={Boolean(assistedChecks[row.k])}
+                          onChange={(e) =>
+                            setAssistedChecks((prev) => ({ ...prev, [row.k]: e.target.checked }))
+                          }
+                          className="h-3.5 w-3.5 accent-[#0b3b24]"
+                        />
+                        <span className="truncate">{row.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Revision History Snapshot */}
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
@@ -560,6 +670,29 @@ export function VerificationCenterPage({
                   ) : null}
                 </div>
 
+                {/* Automated Discrepancy & Duplicate Detection Alert */}
+                {reviewDiscrepancy && reviewDiscrepancy.hasDiscrepancy ? (
+                  <div
+                    className={`rounded-lg border p-3 text-xs ${
+                      reviewDiscrepancy.severity === 'CRITICAL'
+                        ? 'border-red-300 bg-red-50 text-red-950'
+                        : 'border-amber-300 bg-amber-50 text-amber-950'
+                    }`}
+                  >
+                    <p className="flex items-center gap-1.5 font-semibold">
+                      <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span>
+                        Automated Discrepancy Engine ({reviewDiscrepancy.severity})
+                      </span>
+                    </p>
+                    <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                      {reviewDiscrepancy.flags.map((flag) => (
+                        <li key={flag}>{flag}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
                 {/* Self-approval block alert */}
                 {isSelfSubmission ? (
                   <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-950">
@@ -612,21 +745,33 @@ export function VerificationCenterPage({
                             disabled: isSelfSubmission,
                           },
                           {
+                            id: VerificationStatus.DISCREPANCY_DETECTED,
+                            label: 'Flag Discrepancy',
+                            icon: AlertTriangle,
+                            disabled: false,
+                          },
+                          {
                             id: VerificationStatus.REQUIRES_CORRECTION,
                             label: 'Request Correction',
                             icon: RotateCcw,
                             disabled: false,
                           },
                           {
-                            id: VerificationStatus.REJECTED,
-                            label: 'Reject Result',
-                            icon: XCircle,
+                            id: VerificationStatus.CORRECTED,
+                            label: 'Mark Corrected',
+                            icon: FileCheck2,
                             disabled: false,
                           },
                           {
                             id: VerificationStatus.UNDER_REVIEW,
                             label: 'Under Review',
-                            icon: FileCheck2,
+                            icon: Eye,
+                            disabled: false,
+                          },
+                          {
+                            id: VerificationStatus.REJECTED,
+                            label: 'Reject Result',
+                            icon: XCircle,
                             disabled: false,
                           },
                         ].map((opt) => {
@@ -638,11 +783,12 @@ export function VerificationCenterPage({
                               type="button"
                               disabled={opt.disabled}
                               onClick={() => setDecision(opt.id)}
-                              className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40 ${
+                              className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40 whitespace-nowrap ${
                                 selected
                                   ? opt.id === VerificationStatus.VERIFIED
                                     ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
-                                    : opt.id === VerificationStatus.REJECTED
+                                    : opt.id === VerificationStatus.REJECTED ||
+                                        opt.id === VerificationStatus.DISCREPANCY_DETECTED
                                       ? 'border-red-700 bg-red-700 text-white'
                                       : 'border-amber-600 bg-amber-600 text-white'
                                   : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'

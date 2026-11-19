@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import {
   Bell,
   CheckCircle2,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   LogOut,
@@ -10,6 +12,7 @@ import {
   Settings as SettingsIcon,
   ShieldCheck,
   User,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { AccountStatusBadge, RoleBadge } from '../components/StatusBadge';
@@ -18,11 +21,14 @@ import {
   changeAccountPassword,
   getAuthProviderSummary,
   saveUserPreferences,
+  setupPasswordForGoogleAccount,
   subscribeToUserPreferences,
   updateOwnProfile,
 } from '../services/authService';
 import { updateGlobalSettings } from '../services/directoryService';
 import {
+  AccountStatus,
+  DEFAULT_OFFLINE_SESSION_MAX_DAYS,
   DEFAULT_WHATSAPP_GROUP_NAME,
   DEFAULT_WHATSAPP_GROUP_URL,
   LGA_DEFINITIONS,
@@ -31,13 +37,18 @@ import {
   resolveWhatsAppGroupConfig,
   type GlobalSettings,
   type LgaId,
+  type SessionVerificationMode,
   type UserAccount,
 } from '../types/fdmis';
-import { formatAccountIdentifier } from '../utils/phoneAuth';
+import { formatAccountIdentifier, validatePasswordStrength } from '../utils/phoneAuth';
 
 interface SettingsPageProps {
   user: UserAccount;
   settings: GlobalSettings | null;
+  users?: UserAccount[];
+  isOnline?: boolean;
+  sessionMode?: SessionVerificationMode;
+  lastServerVerifiedAtMs?: number | null;
   onSignOut: () => Promise<void>;
 }
 
@@ -61,9 +72,18 @@ function describeUserScope(user: UserAccount): string {
   return 'Unassigned';
 }
 
-export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
+export function SettingsPage({
+  user,
+  settings,
+  users = [],
+  isOnline = true,
+  sessionMode = 'online_verified',
+  lastServerVerifiedAtMs = null,
+  onSignOut,
+}: SettingsPageProps) {
   const isFullAdmin = canManageSettings(user.role);
-  const authSummary = getAuthProviderSummary();
+  const [, setProviderRefreshKey] = useState(0);
+  const authSummary = getAuthProviderSummary(user);
 
   // Profile state
   const [displayName, setDisplayName] = useState(user.displayName);
@@ -74,7 +94,15 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showChangePasswords, setShowChangePasswords] = useState(false);
+  const [signOutAfterPasswordUpdate, setSignOutAfterPasswordUpdate] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+
+  // Secure password setup state (for Google-only accounts)
+  const [setupNewPassword, setSetupNewPassword] = useState('');
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState('');
+  const [showSetupPasswords, setShowSetupPasswords] = useState(false);
+  const [settingUpPassword, setSettingUpPassword] = useState(false);
 
   // Notification preferences state
   const [criticalAlertsEnabled, setCriticalAlertsEnabled] = useState(true);
@@ -86,6 +114,9 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
   // Admin system policy state
   const [timeoutMinutes, setTimeoutMinutes] = useState(
     String(settings?.inactivityTimeoutMinutes ?? 30)
+  );
+  const [offlineSessionMaxDays, setOfflineSessionMaxDays] = useState(
+    String(settings?.offlineSessionMaxDays ?? DEFAULT_OFFLINE_SESSION_MAX_DAYS)
   );
   const [mfaPrepared, setMfaPrepared] = useState(settings?.mfaPrepared ?? true);
   const [publicSummaryEnabled, setPublicSummaryEnabled] = useState(
@@ -120,6 +151,9 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
   useEffect(() => {
     if (settings) {
       setTimeoutMinutes(String(settings.inactivityTimeoutMinutes));
+      setOfflineSessionMaxDays(
+        String(settings.offlineSessionMaxDays ?? DEFAULT_OFFLINE_SESSION_MAX_DAYS)
+      );
       setMfaPrepared(settings.mfaPrepared);
       setPublicSummaryEnabled(settings.publicSummaryEnabled);
       setWhatsappGroupEnabled(settings.whatsappGroupEnabled ?? true);
@@ -170,6 +204,18 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
   const handleChangePassword = async (e: FormEvent) => {
     e.preventDefault();
     setFeedback(null);
+    if (!isOnline || sessionMode === 'offline_trusted') {
+      setFeedback({
+        type: 'err',
+        text: 'Online server verification is required to update your password. Reconnect to the internet and try again.',
+      });
+      return;
+    }
+    const strengthErr = validatePasswordStrength(newPassword);
+    if (strengthErr) {
+      setFeedback({ type: 'err', text: strengthErr });
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setFeedback({ type: 'err', text: 'New password and confirmation do not match.' });
       return;
@@ -187,6 +233,14 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      if (signOutAfterPasswordUpdate) {
+        setFeedback({
+          type: 'ok',
+          text: 'Password updated. Signing out this device as requested...',
+        });
+        await onSignOut();
+        return;
+      }
       setFeedback({
         type: 'ok',
         text: 'Account password updated successfully. Your role, geographic assignments, and records remain intact.',
@@ -206,6 +260,45 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
       }
     } finally {
       setSavingPassword(false);
+    }
+  };
+
+  const handleSetupPasswordForGoogle = async (e: FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+    if (!isOnline || sessionMode === 'offline_trusted') {
+      setFeedback({
+        type: 'err',
+        text: 'Online Google identity confirmation is required to set up a password.',
+      });
+      return;
+    }
+    const strengthErr = validatePasswordStrength(setupNewPassword);
+    if (strengthErr) {
+      setFeedback({ type: 'err', text: strengthErr });
+      return;
+    }
+    if (setupNewPassword !== setupConfirmPassword) {
+      setFeedback({ type: 'err', text: 'New password and confirmation do not match.' });
+      return;
+    }
+    setSettingUpPassword(true);
+    try {
+      await setupPasswordForGoogleAccount(setupNewPassword, setupConfirmPassword);
+      setSetupNewPassword('');
+      setSetupConfirmPassword('');
+      setProviderRefreshKey((k) => k + 1);
+      setFeedback({
+        type: 'ok',
+        text: 'Account password linked securely. You can now sign in with either Google or your Email & Password. Your role and permissions remain unchanged.',
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Unable to set up password.',
+      });
+    } finally {
+      setSettingUpPassword(false);
     }
   };
 
@@ -233,11 +326,20 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
 
   const handleSaveSystemPolicy = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isOnline || sessionMode === 'offline_trusted') {
+      setFeedback({
+        type: 'err',
+        text: 'Online server verification is required to modify system security policies.',
+      });
+      return;
+    }
     setSavingPolicy(true);
     setFeedback(null);
     try {
       await updateGlobalSettings(user, {
         inactivityTimeoutMinutes: Number(timeoutMinutes) || 30,
+        offlineSessionMaxDays:
+          Number(offlineSessionMaxDays) || DEFAULT_OFFLINE_SESSION_MAX_DAYS,
         mfaPrepared,
         publicSummaryEnabled,
         smsFallbackConfigured: settings?.smsFallbackConfigured ?? false,
@@ -263,11 +365,21 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
 
   const handleSaveWhatsAppGroup = async (e: FormEvent) => {
     e.preventDefault();
+    if (!isOnline || sessionMode === 'offline_trusted') {
+      setFeedback({
+        type: 'err',
+        text: 'Online connection required to update WhatsApp group settings.',
+      });
+      return;
+    }
     setSavingWhatsapp(true);
     setFeedback(null);
     try {
       await updateGlobalSettings(user, {
         inactivityTimeoutMinutes: settings?.inactivityTimeoutMinutes ?? (Number(timeoutMinutes) || 30),
+        offlineSessionMaxDays:
+          settings?.offlineSessionMaxDays ??
+          (Number(offlineSessionMaxDays) || DEFAULT_OFFLINE_SESSION_MAX_DAYS),
         mfaPrepared: settings?.mfaPrepared ?? mfaPrepared,
         publicSummaryEnabled: settings?.publicSummaryEnabled ?? publicSummaryEnabled,
         smsFallbackConfigured: settings?.smsFallbackConfigured ?? false,
@@ -333,10 +445,35 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
               <span className="font-medium text-slate-900">{formatAccountIdentifier(user)}</span> ·
               Scope: <span className="font-medium text-slate-800">{describeUserScope(user)}</span>
             </p>
+            <p className="mt-1 text-xs text-slate-600">
+              Session state:{' '}
+              <strong
+                className={
+                  !isOnline || sessionMode === 'offline_trusted'
+                    ? 'text-amber-800'
+                    : 'text-[#0b3b24]'
+                }
+              >
+                {!isOnline || sessionMode === 'offline_trusted'
+                  ? 'Offline Mode · Local Trusted Session'
+                  : sessionMode === 'revalidating'
+                    ? 'Online · Revalidating with Server'
+                    : 'Online · Server Verified'}
+              </strong>
+              {lastServerVerifiedAtMs ? (
+                <>
+                  {' '}
+                  · Last server check:{' '}
+                  <span className="font-mono text-slate-700">
+                    {new Date(lastServerVerifiedAtMs).toLocaleString('en-NG')}
+                  </span>
+                </>
+              ) : null}
+            </p>
             <p className="mt-1 text-xs text-slate-500">
-              Inactivity auto-lock timeout: {settings?.inactivityTimeoutMinutes ?? 30} minutes.
-              Logging out terminates your active session, clears local auth tokens, and locks
-              protected routes.
+              Inactivity auto-lock: {settings?.inactivityTimeoutMinutes ?? 30} min · Offline
+              trusted-session window: {settings?.offlineSessionMaxDays ?? DEFAULT_OFFLINE_SESSION_MAX_DAYS}{' '}
+              days. Logging out wipes the encrypted local trusted session and cached data immediately.
             </p>
           </div>
 
@@ -452,33 +589,70 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
             ) : null}
           </div>
 
+          {!isOnline || sessionMode === 'offline_trusted' ? (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+              <span>
+                You are currently operating in Offline Mode. Password changes and credential setup
+                are protected and require an active online connection for live server verification.
+              </span>
+            </div>
+          ) : null}
+
           {authSummary.hasPasswordProvider ? (
             <form onSubmit={handleChangePassword} className="mt-4 space-y-3.5">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-slate-800">Change Account Password</p>
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswords((v) => !v)}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900"
+                >
+                  {showChangePasswords ? (
+                    <>
+                      <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Hide</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Show</span>
+                    </>
+                  )}
+                </button>
+              </div>
               <div>
                 <label htmlFor="sec-cur-pass" className="block text-xs font-medium text-slate-700">
                   Current Password *
                 </label>
                 <input
                   id="sec-cur-pass"
-                  type="password"
+                  type={showChangePasswords ? 'text' : 'password'}
                   required
+                  autoComplete="current-password"
+                  disabled={!isOnline || sessionMode === 'offline_trusted'}
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
-                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                  placeholder="Enter your current password"
+                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm disabled:bg-slate-50"
                 />
               </div>
               <div>
                 <label htmlFor="sec-new-pass" className="block text-xs font-medium text-slate-700">
-                  New Password (min 8 characters) *
+                  New Password *
                 </label>
                 <input
                   id="sec-new-pass"
-                  type="password"
+                  type={showChangePasswords ? 'text' : 'password'}
                   required
                   minLength={8}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  disabled={!isOnline || sessionMode === 'offline_trusted'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                  placeholder="At least 8 chars with letters & numbers"
+                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm disabled:bg-slate-50"
                 />
               </div>
               <div>
@@ -487,41 +661,165 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
                 </label>
                 <input
                   id="sec-conf-pass"
-                  type="password"
+                  type={showChangePasswords ? 'text' : 'password'}
                   required
                   minLength={8}
+                  maxLength={128}
+                  autoComplete="new-password"
+                  disabled={!isOnline || sessionMode === 'offline_trusted'}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                  placeholder="Re-enter new password"
+                  className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm disabled:bg-slate-50"
                 />
               </div>
+
+              {newPassword.length > 0 ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 space-y-1">
+                  <p className={newPassword.length >= 8 ? 'text-emerald-800 font-medium' : ''}>
+                    {newPassword.length >= 8 ? '✓' : '•'} Minimum 8 characters
+                  </p>
+                  <p
+                    className={
+                      /[A-Za-z]/.test(newPassword) && /\d/.test(newPassword)
+                        ? 'text-emerald-800 font-medium'
+                        : ''
+                    }
+                  >
+                    {/[A-Za-z]/.test(newPassword) && /\d/.test(newPassword) ? '✓' : '•'} Includes
+                    both letters and numbers
+                  </p>
+                  <p
+                    className={
+                      confirmPassword.length > 0 && newPassword === confirmPassword
+                        ? 'text-emerald-800 font-medium'
+                        : ''
+                    }
+                  >
+                    {confirmPassword.length > 0 && newPassword === confirmPassword ? '✓' : '•'}{' '}
+                    Matches confirmation field
+                  </p>
+                </div>
+              ) : null}
+
+              <label className="flex items-start gap-2.5 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={signOutAfterPasswordUpdate}
+                  onChange={(e) => setSignOutAfterPasswordUpdate(e.target.checked)}
+                  disabled={!isOnline || sessionMode === 'offline_trusted'}
+                  className="mt-0.5 h-4 w-4 accent-[#0b3b24]"
+                />
+                <span>Sign out this device immediately after updating password</span>
+              </label>
+
               <button
                 type="submit"
-                disabled={savingPassword}
+                disabled={savingPassword || !isOnline || sessionMode === 'offline_trusted'}
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
               >
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                 <span>{savingPassword ? 'Updating...' : 'Update Password'}</span>
               </button>
+
+              {authSummary.hasGoogleProvider ? (
+                <p className="text-[11px] text-slate-500">
+                  Google Single Sign-On is also linked to this account and remains active.
+                </p>
+              ) : null}
             </form>
           ) : (
-            <div className="mt-4 space-y-3 text-xs leading-relaxed text-slate-600">
+            <div className="mt-4 space-y-4 text-xs leading-relaxed text-slate-600">
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 text-emerald-950">
                 <p className="font-semibold">Google Single Sign-On Active</p>
                 <p className="mt-1">
                   Your FDMIS session is authenticated via Google Identity ({authSummary.email || user.email}).
-                  Password updates and 2-Step Verification are protected directly by your Google
-                  Account security settings.
+                  Google Sign-In remains preserved at all times. You can also set up an account
+                  password below after verifying your Google identity.
                 </p>
               </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5">
-                <p className="font-medium text-slate-800">Session Enforcement</p>
-                <p className="mt-1 text-slate-600">
-                  Active session verification, server-side access checks, and{' '}
-                  {settings?.inactivityTimeoutMinutes ?? 30}-minute inactivity lockouts remain active
-                  across the application.
+
+              <form
+                onSubmit={handleSetupPasswordForGoogle}
+                className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4"
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-900">
+                    Set Up Account Password (Optional)
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowSetupPasswords((v) => !v)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-slate-600 hover:text-slate-900"
+                  >
+                    {showSetupPasswords ? (
+                      <>
+                        <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Hide</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Show</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-600">
+                  Links an Email &amp; Password credential to{' '}
+                  <strong className="text-slate-800">{authSummary.email || user.email}</strong>{' '}
+                  without removing Google Sign-In. You will be prompted to confirm your Google
+                  identity first.
                 </p>
-              </div>
+                <div>
+                  <label htmlFor="setup-new-pass" className="block text-xs font-medium text-slate-700">
+                    New Password *
+                  </label>
+                  <input
+                    id="setup-new-pass"
+                    type={showSetupPasswords ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
+                    value={setupNewPassword}
+                    onChange={(e) => setSetupNewPassword(e.target.value)}
+                    placeholder="At least 8 chars with letters & numbers"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm disabled:bg-slate-100"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="setup-conf-pass" className="block text-xs font-medium text-slate-700">
+                    Confirm New Password *
+                  </label>
+                  <input
+                    id="setup-conf-pass"
+                    type={showSetupPasswords ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    maxLength={128}
+                    autoComplete="new-password"
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
+                    value={setupConfirmPassword}
+                    onChange={(e) => setSetupConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm disabled:bg-slate-100"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={settingUpPassword || !isOnline || sessionMode === 'offline_trusted'}
+                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                >
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  <span>
+                    {settingUpPassword
+                      ? 'Confirming Google Identity...'
+                      : 'Verify Google Identity & Set Password'}
+                  </span>
+                </button>
+              </form>
             </div>
           )}
         </div>
@@ -601,6 +899,55 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
       {/* 5. Full Control Admin System Policies & Gateways */}
       {isFullAdmin ? (
         <>
+          {/* Module 8: Admin Session & Security Posture Overview */}
+          <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+              <ShieldCheck className="h-5 w-5 text-[#0b3b24]" aria-hidden="true" />
+              <div>
+                <h3 className="font-display text-base font-semibold text-slate-900">
+                  Constituency Security Posture &amp; Session Overview
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Live RBAC account security status across all registered FDMIS operators
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-medium text-slate-500">Active Accounts</p>
+                <p className="mt-1 font-mono text-xl font-bold text-[#0b3b24] tabular-nums">
+                  {users.filter((u) => u.status === AccountStatus.ACTIVE && !u.sessionRevoked).length}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-medium text-slate-500">Suspended / Revoked</p>
+                <p className="mt-1 font-mono text-xl font-bold text-red-700 tabular-nums">
+                  {users.filter((u) => u.status === AccountStatus.SUSPENDED || u.sessionRevoked).length}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-medium text-slate-500">Pending Approval</p>
+                <p className="mt-1 font-mono text-xl font-bold text-amber-800 tabular-nums">
+                  {users.filter((u) => u.status === AccountStatus.PENDING_APPROVAL).length}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-[11px] font-medium text-slate-500">Elevated Admin / Verifiers</p>
+                <p className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+                  {
+                    users.filter(
+                      (u) =>
+                        u.role === UserRole.FULL_CONTROL_ADMIN ||
+                        u.role === UserRole.FUNTUA_SUPER_ADMIN ||
+                        u.role === UserRole.DANDUME_SUPER_ADMIN ||
+                        u.role === UserRole.VERIFICATION_OFFICER
+                    ).length
+                  }
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-xl border border-slate-200 bg-white p-6">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-4">
               <SettingsIcon className="h-5 w-5 text-[#0b3b24]" aria-hidden="true" />
@@ -615,27 +962,54 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
             </div>
 
             <form onSubmit={handleSaveSystemPolicy} className="mt-5 space-y-5">
-              <div>
-                <label
-                  htmlFor="inactivity-timeout"
-                  className="block text-xs font-medium text-slate-700"
-                >
-                  Inactivity Auto-Logout Timeout (Minutes, 5–480)
-                </label>
-                <input
-                  id="inactivity-timeout"
-                  type="number"
-                  min={5}
-                  max={480}
-                  required
-                  value={timeoutMinutes}
-                  onChange={(e) => setTimeoutMinutes(e.target.value)}
-                  className="mt-1.5 min-h-[44px] w-full max-w-xs rounded-lg border border-slate-300 px-3 font-mono text-sm tabular-nums"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  Automatically terminates inactive Situation Room sessions and logs the timeout
-                  event.
-                </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="inactivity-timeout"
+                    className="block text-xs font-medium text-slate-700"
+                  >
+                    Inactivity Auto-Logout Timeout (Minutes, 5–480)
+                  </label>
+                  <input
+                    id="inactivity-timeout"
+                    type="number"
+                    min={5}
+                    max={480}
+                    required
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
+                    value={timeoutMinutes}
+                    onChange={(e) => setTimeoutMinutes(e.target.value)}
+                    className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 font-mono text-sm tabular-nums disabled:bg-slate-50"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Automatically terminates inactive Situation Room sessions and logs the timeout
+                    event.
+                  </p>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="offline-session-days"
+                    className="block text-xs font-medium text-slate-700"
+                  >
+                    Offline Trusted-Session Expiry (Days, 1–30)
+                  </label>
+                  <input
+                    id="offline-session-days"
+                    type="number"
+                    min={1}
+                    max={30}
+                    required
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
+                    value={offlineSessionMaxDays}
+                    onChange={(e) => setOfflineSessionMaxDays(e.target.value)}
+                    className="mt-1.5 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 font-mono text-sm tabular-nums disabled:bg-slate-50"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Maximum days a previously authenticated device may open offline before requiring
+                    fresh server re-authentication.
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-3 border-t border-slate-100 pt-4">
@@ -643,6 +1017,7 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
                   <input
                     type="checkbox"
                     checked={mfaPrepared}
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
                     onChange={(e) => setMfaPrepared(e.target.checked)}
                     className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#0b3b24]"
                   />
@@ -660,6 +1035,7 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
                   <input
                     type="checkbox"
                     checked={publicSummaryEnabled}
+                    disabled={!isOnline || sessionMode === 'offline_trusted'}
                     onChange={(e) => setPublicSummaryEnabled(e.target.checked)}
                     className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#0b3b24]"
                   />
@@ -675,7 +1051,7 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
 
               <button
                 type="submit"
-                disabled={savingPolicy}
+                disabled={savingPolicy || !isOnline || sessionMode === 'offline_trusted'}
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-5 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
@@ -863,8 +1239,9 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
               </button>
             </div>
             <p className="mt-3 text-sm leading-relaxed text-slate-700">
-              Are you sure you want to log out of the FDMIS Situation Room? Your active session and
-              local authentication tokens will be cleared immediately.
+              Are you sure you want to log out of the FDMIS Situation Room? Your active session,
+              encrypted local trusted-device credentials, and cached offline snapshots will be
+              cleared immediately. You will need an internet connection to sign back in.
             </p>
             <div className="mt-5 flex justify-end gap-2">
               <button

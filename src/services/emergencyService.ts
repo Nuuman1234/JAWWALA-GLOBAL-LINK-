@@ -14,12 +14,18 @@ import {
 import { auth, db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import {
+  IncidentUrgency,
   UserRole,
   canManageEmergencyContacts,
   type EmergencyContact,
+  type EmergencyReport,
+  type EmergencyReportStatus,
+  type EscalationRule,
   type LgaId,
   type UserAccount,
 } from '../types/fdmis';
+import { toValidDocId } from './officialDirectory';
+import { generateClientSubmissionId } from './offlineQueue';
 
 const PHONE_REGEX = /^[+0-9][0-9\s\-()]{4,22}[0-9]$/;
 
@@ -216,3 +222,243 @@ export async function removeEmergencyContact(
     `Removed emergency contact "${contact.name}" (${contact.phoneNumber}), scope=${contact.scopeLgaId}.`
   );
 }
+
+// --- STRUCTURED EMERGENCY ASSISTANCE REPORTS (SEPARATE FROM VERIFIED INCIDENTS) ---
+
+function toMs(val: unknown): number {
+  if (!val) return 0;
+  if (val instanceof Date) return val.getTime();
+  if (typeof (val as { toMillis?: () => number }).toMillis === 'function') {
+    return (val as { toMillis: () => number }).toMillis();
+  }
+  return 0;
+}
+
+export function observeEmergencyReports(
+  user: UserAccount,
+  onData: (reports: EmergencyReport[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  const base = collection(db, 'emergency_reports');
+  let q: Query;
+
+  if (user.role === UserRole.FULL_CONTROL_ADMIN) {
+    q = base;
+  } else if (user.role === UserRole.FUNTUA_SUPER_ADMIN) {
+    q = query(base, where('lgaId', 'in', ['all', 'funtua']));
+  } else if (user.role === UserRole.DANDUME_SUPER_ADMIN) {
+    q = query(base, where('lgaId', 'in', ['all', 'dandume']));
+  } else if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
+    q = query(base, where('wardId', '==', user.assignedWardId));
+  } else {
+    q = query(base, where('reporterUid', '==', user.uid));
+  }
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<EmergencyReport, 'id'>) }))
+        .sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+      onData(items);
+    },
+    (error) => {
+      if (onError) onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  );
+}
+
+export async function submitEmergencyReport(
+  actor: UserAccount,
+  input: {
+    category: string;
+    description: string;
+    urgency: IncidentUrgency;
+    lgaId: LgaId | 'all';
+    wardId: string;
+    puId: string;
+    puCode: string;
+    puName: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    clientCreatedAtIso?: string;
+  },
+  existingClientSubmissionId?: string
+): Promise<string> {
+  const uid = requireAuthUid();
+  const cleanDesc = input.description.trim().slice(0, 1200);
+  if (cleanDesc.length < 5) {
+    throw new Error('Provide a brief emergency description (at least 5 characters).');
+  }
+
+  const clientSubmissionId = existingClientSubmissionId || generateClientSubmissionId('emg');
+  const docId = toValidDocId(clientSubmissionId);
+
+  const payload: Record<string, unknown> = {
+    category: input.category.slice(0, 100),
+    description: cleanDesc,
+    urgency: input.urgency,
+    status: 'SUBMITTED',
+    lgaId: input.lgaId,
+    wardId: (input.wardId || '').slice(0, 128),
+    puId: (input.puId || '').slice(0, 128),
+    puCode: (input.puCode || '').slice(0, 40),
+    puName: (input.puName || '').slice(0, 160),
+    reporterUid: uid,
+    reporterName: actor.displayName.slice(0, 120),
+    reporterPhone: (actor.phone || '').slice(0, 30),
+    assignedResponderUid: '',
+    assignedResponderName: '',
+    resolutionNotes: '',
+    clientSubmissionId: docId,
+    clientCreatedAtIso: (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof input.latitude === 'number' && typeof input.longitude === 'number') {
+    payload.latitude = input.latitude;
+    payload.longitude = input.longitude;
+  }
+
+  try {
+    await setDoc(doc(db, 'emergency_reports', docId), payload);
+    // Notify Situation Room & LGA admins immediately
+    await setDoc(doc(db, 'notifications', toValidDocId(`emg_notif_${docId}`)), {
+      title: `EMERGENCY ASSISTANCE [${input.urgency}]: ${input.category}`,
+      body: `${actor.displayName} (${input.puCode || input.lgaId}): ${cleanDesc.slice(0, 260)}`,
+      type: 'EMERGENCY_ASSISTANCE',
+      targetLgaId: input.lgaId,
+      targetWardId: input.wardId || '',
+      isCritical: input.urgency === IncidentUrgency.CRITICAL || input.urgency === IncidentUrgency.HIGH,
+      isTestData: false,
+      createdByUid: uid,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `emergency_reports/${docId}`);
+  }
+
+  await logEmergencyAudit(
+    actor,
+    'EMERGENCY_ASSISTANCE_SUBMITTED',
+    docId,
+    `Submitted ${input.urgency} emergency assistance request (${input.category}) for ${input.puCode || input.lgaId}.`
+  );
+
+  return docId;
+}
+
+export async function updateEmergencyReportStatus(
+  actor: UserAccount,
+  report: EmergencyReport,
+  updates: {
+    status: EmergencyReportStatus;
+    assignedResponderUid?: string;
+    assignedResponderName?: string;
+    resolutionNotes: string;
+  }
+): Promise<void> {
+  requireAuthUid();
+  if (!canManageEmergencyContacts(actor.role)) {
+    throw new Error('Only authorized administrators can assign responders or resolve emergency reports.');
+  }
+
+  try {
+    await updateDoc(doc(db, 'emergency_reports', report.id), {
+      status: updates.status,
+      assignedResponderUid: (updates.assignedResponderUid ?? report.assignedResponderUid).slice(0, 128),
+      assignedResponderName: (updates.assignedResponderName ?? report.assignedResponderName).slice(0, 120),
+      resolutionNotes: updates.resolutionNotes.trim().slice(0, 1200),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `emergency_reports/${report.id}`);
+  }
+
+  await logEmergencyAudit(
+    actor,
+    'EMERGENCY_ASSISTANCE_UPDATED',
+    report.id,
+    `Updated emergency report (${report.category}) to ${updates.status}. Responder=${updates.assignedResponderName || 'Unassigned'}.`
+  );
+}
+
+// --- SMART ESCALATION RULES (ADMIN CONFIGURABLE) ---
+
+export function observeEscalationRules(
+  user: UserAccount,
+  onData: (rules: EscalationRule[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe {
+  if (!canManageEmergencyContacts(user.role)) {
+    onData([]);
+    return () => {};
+  }
+  return onSnapshot(
+    collection(db, 'escalation_rules'),
+    (snap) => {
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<EscalationRule, 'id'>) }))
+        .sort((a, b) => a.ruleName.localeCompare(b.ruleName));
+      onData(items);
+    },
+    (error) => {
+      if (onError) onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  );
+}
+
+export async function saveEscalationRule(
+  actor: UserAccount,
+  input: Omit<EscalationRule, 'id' | 'updatedByUid' | 'updatedAt'>,
+  existingId?: string
+): Promise<string> {
+  const uid = requireAuthUid();
+  if (actor.role !== UserRole.FULL_CONTROL_ADMIN) {
+    throw new Error('Only Full Control Admin can configure alert escalation rules.');
+  }
+  const ref = existingId
+    ? doc(db, 'escalation_rules', existingId)
+    : doc(collection(db, 'escalation_rules'));
+
+  try {
+    await setDoc(ref, {
+      ruleName: input.ruleName.trim().slice(0, 120),
+      triggerType: input.triggerType,
+      priority: input.priority,
+      responsibleRole: input.responsibleRole,
+      escalateAfterMinutes: Math.max(5, Math.min(1440, Math.round(input.escalateAfterMinutes))),
+      recipientRole: input.recipientRole,
+      maxNotificationsPerHour: Math.max(1, Math.min(60, Math.round(input.maxNotificationsPerHour))),
+      enabled: Boolean(input.enabled),
+      updatedByUid: uid,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `escalation_rules/${ref.id}`);
+  }
+
+  await logEmergencyAudit(
+    actor,
+    'ESCALATION_RULE_SAVED',
+    ref.id,
+    `Saved escalation rule "${input.ruleName}" (${input.triggerType}, ${input.escalateAfterMinutes}m -> ${input.recipientRole}).`
+  );
+  return ref.id;
+}
+
+export async function deleteEscalationRule(actor: UserAccount, ruleId: string): Promise<void> {
+  requireAuthUid();
+  if (actor.role !== UserRole.FULL_CONTROL_ADMIN) {
+    throw new Error('Only Full Control Admin can delete escalation rules.');
+  }
+  try {
+    await deleteDoc(doc(db, 'escalation_rules', ruleId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `escalation_rules/${ruleId}`);
+  }
+}
+

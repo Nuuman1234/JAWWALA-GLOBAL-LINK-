@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react';
+import {
+  extractPartyLogoAssetId,
+  hasConfiguredPartyLogo,
+  resolvePartyLogoDisplayUrl,
+} from '../services/partyService';
 import { FIXED_PARTY_MAP, type PartyCode, type PartyConfig } from '../types/fdmis';
 
 interface PartyLogoProps {
@@ -22,25 +27,73 @@ export function PartyLogo({
   size = 'md',
   className = '',
 }: PartyLogoProps) {
-  const [imgError, setImgError] = useState(false);
+  const hasLogo = hasConfiguredPartyLogo(partyConfig);
   const logoUrl = partyConfig?.logoUrl || '';
+  const assetId = extractPartyLogoAssetId(partyConfig) || '';
+  const sha256Hash = partyConfig?.sha256Hash || '';
+  const storageMode = partyConfig?.storageMode || 'none';
+
+  const isDirectUrl =
+    hasLogo && (logoUrl.startsWith('https://') || logoUrl.startsWith('data:image/'));
+
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(isDirectUrl ? logoUrl : null);
+  const [imgError, setImgError] = useState(false);
+  const [retriedFromServer, setRetriedFromServer] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     setImgError(false);
-  }, [logoUrl]);
+    setRetriedFromServer(false);
+
+    if (!hasLogo || !partyConfig) {
+      setResolvedUrl(null);
+      return;
+    }
+
+    if (isDirectUrl) {
+      setResolvedUrl(logoUrl);
+      return;
+    }
+
+    void resolvePartyLogoDisplayUrl(partyConfig).then((url) => {
+      if (!cancelled) {
+        setResolvedUrl(url);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hasLogo, isDirectUrl, logoUrl, assetId, sha256Hash, storageMode, partyConfig]);
+
+  const handleImageError = () => {
+    if (!retriedFromServer && partyConfig && hasLogo && !isDirectUrl) {
+      setRetriedFromServer(true);
+      void resolvePartyLogoDisplayUrl(partyConfig, { forceServer: true }).then((freshUrl) => {
+        if (freshUrl) {
+          setResolvedUrl(freshUrl);
+          setImgError(false);
+        } else {
+          setImgError(true);
+        }
+      });
+      return;
+    }
+    setImgError(true);
+  };
 
   const meta = FIXED_PARTY_MAP[partyCode];
   const sizeClass = SIZE_CLASSES[size];
 
-  if (logoUrl && !imgError) {
+  if (resolvedUrl && !imgError) {
     return (
       <div
         className={`flex shrink-0 items-center justify-center overflow-hidden border border-slate-200 bg-white p-0.5 ${sizeClass} ${className}`}
       >
         <img
-          src={logoUrl}
+          src={resolvedUrl}
           alt={`${partyCode} — ${meta.name} logo`}
-          onError={() => setImgError(true)}
+          onError={handleImageError}
           className="h-full w-full object-contain"
         />
       </div>

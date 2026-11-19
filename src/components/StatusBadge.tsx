@@ -186,7 +186,7 @@ export function IncidentUrgencyBadge({ urgency }: { urgency: IncidentUrgency }) 
 
 export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
   const label = INCIDENT_STATUS_META[status]?.label || status;
-  if (status === IncidentStatus.ESCALATED) {
+  if (status === IncidentStatus.ESCALATED || status === IncidentStatus.REJECTED) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 whitespace-nowrap shrink-0">
         <AlertTriangle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
@@ -194,10 +194,30 @@ export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
       </span>
     );
   }
-  if (status === IncidentStatus.RESOLVED || status === IncidentStatus.CLOSED) {
+  if (
+    status === IncidentStatus.VERIFIED ||
+    status === IncidentStatus.RESOLVED ||
+    status === IncidentStatus.CLOSED
+  ) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 whitespace-nowrap shrink-0">
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+        <span>{label}</span>
+      </span>
+    );
+  }
+  if (status === IncidentStatus.UNDER_INVESTIGATION) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-900 whitespace-nowrap shrink-0">
+        <ShieldAlert className="h-3.5 w-3.5 text-indigo-700" aria-hidden="true" />
+        <span>{label}</span>
+      </span>
+    );
+  }
+  if (status === IncidentStatus.DRAFT || status === IncidentStatus.UNVERIFIED) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-700 whitespace-nowrap shrink-0">
+        <Clock className="h-3.5 w-3.5 text-slate-500" aria-hidden="true" />
         <span>{label}</span>
       </span>
     );
@@ -212,7 +232,7 @@ export function IncidentStatusBadge({ status }: { status: IncidentStatus }) {
 
 export function VerificationStatusBadge({ status }: { status: VerificationStatus }) {
   const label = VERIFICATION_STATUS_META[status]?.label || status;
-  if (status === VerificationStatus.VERIFIED) {
+  if (status === VerificationStatus.VERIFIED || status === VerificationStatus.CORRECTED) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 whitespace-nowrap shrink-0">
         <FileCheck2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
@@ -220,10 +240,14 @@ export function VerificationStatusBadge({ status }: { status: VerificationStatus
       </span>
     );
   }
-  if (status === VerificationStatus.REJECTED) {
+  if (status === VerificationStatus.REJECTED || status === VerificationStatus.DISCREPANCY_DETECTED) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 whitespace-nowrap shrink-0">
-        <XCircle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
+        {status === VerificationStatus.DISCREPANCY_DETECTED ? (
+          <AlertTriangle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
+        ) : (
+          <XCircle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
+        )}
         <span>{label}</span>
       </span>
     );

@@ -22,6 +22,7 @@ import { EmergencyContactsWidget } from '../components/EmergencyContactsWidget';
 import { EmptyState } from '../components/EmptyState';
 import { PartyLogo } from '../components/PartyLogo';
 import { ResultBarChart } from '../components/ResultBarChart';
+import { SituationMapPanel } from '../components/SituationMapPanel';
 import { WhatsAppGroupCard } from '../components/WhatsAppGroupCard';
 import {
   IncidentStatusBadge,
@@ -858,6 +859,18 @@ export function SituationRoomPage({
           </p>
         </div>
       </section>
+
+      {/* Module 1: Live Election Situation Map & Geographic Coverage */}
+      {pollingUnits.length > 0 ? (
+        <SituationMapPanel
+          wards={wards}
+          pollingUnits={pollingUnits}
+          checkIns={checkIns}
+          incidents={incidents}
+          results={results}
+          users={users}
+        />
+      ) : null}
 
       {/* Interactive Verified Result Bar Chart & Standings Table */}
       <ResultBarChart

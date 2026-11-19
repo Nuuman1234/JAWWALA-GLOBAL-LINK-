@@ -343,7 +343,9 @@ function computeStats(data: RoleHomeDataset, nowMs: number): ComputedRoleStats {
       : pollingUnits.find((p) => p.assignedAgentUid === user.uid)) || null;
 
   const pendingUsers = users.filter((u) => u.status === AccountStatus.PENDING_APPROVAL).length;
-  const configuredParties = Object.values(partyConfigs).filter(Boolean).length;
+  const configuredParties = Object.values(partyConfigs).filter(
+    (p) => Boolean(p && p.storageMode !== 'none' && p.logoUrl && !p.logoUrl.startsWith('blob:'))
+  ).length;
 
   return {
     totalWards,

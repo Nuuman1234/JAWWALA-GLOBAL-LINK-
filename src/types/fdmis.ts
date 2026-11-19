@@ -242,16 +242,30 @@ export const INCIDENT_URGENCY_META: Record<IncidentUrgency, { label: string }> =
 };
 
 export enum IncidentStatus {
+  DRAFT = 'DRAFT',
   NEW = 'NEW',
+  SUBMITTED = 'SUBMITTED',
+  PENDING_REVIEW = 'PENDING_REVIEW',
   UNDER_REVIEW = 'UNDER_REVIEW',
+  UNDER_INVESTIGATION = 'UNDER_INVESTIGATION',
+  VERIFIED = 'VERIFIED',
+  UNVERIFIED = 'UNVERIFIED',
+  REJECTED = 'REJECTED',
   ESCALATED = 'ESCALATED',
   RESOLVED = 'RESOLVED',
   CLOSED = 'CLOSED',
 }
 
 export const INCIDENT_STATUS_META: Record<IncidentStatus, { label: string }> = {
-  [IncidentStatus.NEW]: { label: 'New' },
+  [IncidentStatus.DRAFT]: { label: 'Draft' },
+  [IncidentStatus.NEW]: { label: 'New / Submitted' },
+  [IncidentStatus.SUBMITTED]: { label: 'Submitted' },
+  [IncidentStatus.PENDING_REVIEW]: { label: 'Pending Review' },
   [IncidentStatus.UNDER_REVIEW]: { label: 'Under Review' },
+  [IncidentStatus.UNDER_INVESTIGATION]: { label: 'Under Investigation' },
+  [IncidentStatus.VERIFIED]: { label: 'Verified' },
+  [IncidentStatus.UNVERIFIED]: { label: 'Unverified' },
+  [IncidentStatus.REJECTED]: { label: 'Rejected' },
   [IncidentStatus.ESCALATED]: { label: 'Escalated' },
   [IncidentStatus.RESOLVED]: { label: 'Resolved' },
   [IncidentStatus.CLOSED]: { label: 'Closed' },
@@ -259,17 +273,20 @@ export const INCIDENT_STATUS_META: Record<IncidentStatus, { label: string }> = {
 
 export function isIncidentActive(status: IncidentStatus): boolean {
   return (
-    status === IncidentStatus.NEW ||
-    status === IncidentStatus.UNDER_REVIEW ||
-    status === IncidentStatus.ESCALATED
+    status !== IncidentStatus.RESOLVED &&
+    status !== IncidentStatus.CLOSED &&
+    status !== IncidentStatus.REJECTED
   );
 }
 
 export enum VerificationStatus {
   DRAFT = 'DRAFT',
   SUBMITTED = 'SUBMITTED',
+  PENDING_VERIFICATION = 'PENDING_VERIFICATION',
   UNDER_REVIEW = 'UNDER_REVIEW',
+  DISCREPANCY_DETECTED = 'DISCREPANCY_DETECTED',
   VERIFIED = 'VERIFIED',
+  CORRECTED = 'CORRECTED',
   REJECTED = 'REJECTED',
   REQUIRES_CORRECTION = 'REQUIRES_CORRECTION',
 }
@@ -277,11 +294,24 @@ export enum VerificationStatus {
 export const VERIFICATION_STATUS_META: Record<VerificationStatus, { label: string }> = {
   [VerificationStatus.DRAFT]: { label: 'Draft' },
   [VerificationStatus.SUBMITTED]: { label: 'Submitted' },
+  [VerificationStatus.PENDING_VERIFICATION]: { label: 'Pending Verification' },
   [VerificationStatus.UNDER_REVIEW]: { label: 'Under Review' },
+  [VerificationStatus.DISCREPANCY_DETECTED]: { label: 'Discrepancy Detected' },
   [VerificationStatus.VERIFIED]: { label: 'FDMIS Verified' },
+  [VerificationStatus.CORRECTED]: { label: 'Corrected' },
   [VerificationStatus.REJECTED]: { label: 'Rejected' },
   [VerificationStatus.REQUIRES_CORRECTION]: { label: 'Correction Requested' },
 };
+
+export const ELECTION_CATEGORY_OPTIONS = [
+  'House of Representatives (Funtua/Dandume)',
+  'Presidential',
+  'Senatorial (Katsina South)',
+  'Governorship',
+  'State House of Assembly',
+] as const;
+
+export type ElectionCategory = (typeof ELECTION_CATEGORY_OPTIONS)[number];
 
 export const BVAS_STATUS_OPTIONS = [
   'Functional',
@@ -307,7 +337,8 @@ export type OfflineReportType =
   | 'NOTIFICATION_BROADCAST'
   | 'TASK_CREATE'
   | 'TASK_OFFICER_UPDATE'
-  | 'REPORT_ARCHIVE';
+  | 'REPORT_ARCHIVE'
+  | 'EMERGENCY_REPORT';
 
 export interface OfflinePruneReport {
   prunedQueueItems: number;
@@ -395,8 +426,13 @@ export interface BootstrapLock {
   createdAt?: FirestoreTime;
 }
 
+export const DEFAULT_OFFLINE_SESSION_MAX_DAYS = 14;
+
+export type SessionVerificationMode = 'online_verified' | 'offline_trusted' | 'revalidating';
+
 export interface GlobalSettings {
   inactivityTimeoutMinutes: number;
+  offlineSessionMaxDays?: number;
   mfaPrepared: boolean;
   publicSummaryEnabled: boolean;
   smsFallbackConfigured: boolean;
@@ -418,12 +454,22 @@ export interface UserPreferences {
   updatedAt?: FirestoreTime;
 }
 
+export type PartyLogoStorageMode =
+  | 'firebase_storage'
+  | 'firestore_asset_store'
+  | 'firestore_cloud'
+  | 'none';
+
 export interface PartyConfig {
   partyCode: PartyCode;
   partyName: string;
   logoUrl: string;
-  storageMode: 'firebase_storage' | 'firestore_cloud' | 'none';
+  storageMode: PartyLogoStorageMode;
+  storagePath?: string | null;
+  logoAssetId?: string | null;
   fileName?: string | null;
+  contentType?: string | null;
+  fileSizeBytes?: number | null;
   sha256Hash?: string | null;
   updatedByUid: string;
   updatedByName: string;
@@ -582,6 +628,22 @@ export interface AgentCheckIn {
   networkStatus: string;
   latitude?: number | null;
   longitude?: number | null;
+  gpsAccuracyMeters?: number | null;
+  deviceId?: string | null;
+  fieldStatus?: string | null;
+  photoBase64?: string | null;
+  photoFileName?: string | null;
+  locationExceptionFlag?: boolean;
+  locationExceptionDistanceMeters?: number | null;
+  exceptionReviewStatus?:
+    | 'NONE'
+    | 'PENDING_REVIEW'
+    | 'EXPLAINED'
+    | 'CONFIRMED_EXCEPTION'
+    | 'CLEARED'
+    | 'FOLLOW_UP_REQUESTED';
+  exceptionReviewNote?: string | null;
+  exceptionReviewedByUid?: string | null;
   clientSubmissionId: string;
   clientCreatedAtIso?: string;
   serverSyncedAt?: FirestoreTime;
@@ -603,8 +665,15 @@ export interface IncidentReport {
   puName: string;
   reporterUid: string;
   reporterName: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  gpsAccuracyMeters?: number | null;
   evidenceBase64?: string | null;
   evidenceFileName?: string | null;
+  evidenceSha256?: string | null;
+  witnessInfo?: string | null;
+  protectReporterIdentity?: boolean;
+  requestedInfoNote?: string | null;
   internalNotes: string;
   escalatedTo: string;
   reviewedByUid: string;
@@ -614,6 +683,21 @@ export interface IncidentReport {
   isTestData: boolean;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
+}
+
+export interface IncidentHistoryEntry {
+  id: string;
+  incidentId: string;
+  action: string;
+  previousStatus: string;
+  newStatus: string;
+  urgency: IncidentUrgency;
+  note: string;
+  escalatedTo: string;
+  actorUid: string;
+  actorName: string;
+  actorRole: string;
+  createdAt?: FirestoreTime;
 }
 
 export interface ResultSubmission {
@@ -626,6 +710,7 @@ export interface ResultSubmission {
   wardName: string;
   submittedByUid: string;
   submittedByName: string;
+  electionCategory?: string;
   apcVotes?: number;
   pdpVotes?: number;
   adcVotes?: number;
@@ -640,6 +725,10 @@ export interface ResultSubmission {
   submissionNotes: string;
   ec8aImageBase64?: string | null;
   ec8aFileName?: string | null;
+  discrepancyFlag?: boolean;
+  discrepancySummary?: string | null;
+  duplicateOfSubmissionId?: string | null;
+  ocrAssistedReviewNote?: string | null;
   verificationStatus: VerificationStatus;
   publiclyApproved: boolean;
   reviewNote: string;
@@ -897,21 +986,31 @@ export interface TaskUpdateEntry {
 
 export type AutomaticReportCategory =
   | 'DAILY_SITUATION'
-  | 'WARD_PERFORMANCE'
   | 'LGA_SUMMARY'
-  | 'ELECTION_INCIDENT'
+  | 'WARD_PERFORMANCE'
+  | 'PU_COVERAGE'
   | 'AGENT_ACTIVITY'
   | 'OFFICER_PERFORMANCE'
-  | 'TASK_COMPLETION';
+  | 'ELECTION_INCIDENT'
+  | 'TASK_COMPLETION'
+  | 'FIELD_CHECKIN'
+  | 'RESULTS_SUBMISSION_STATUS'
+  | 'DATA_SYNCHRONIZATION'
+  | 'OUTSTANDING_ACTIONS';
 
 export const AUTOMATIC_REPORT_LABELS: Record<AutomaticReportCategory, string> = {
   DAILY_SITUATION: 'Daily Situation Report',
+  LGA_SUMMARY: 'LGA Performance Report',
   WARD_PERFORMANCE: 'Ward Performance Report',
-  LGA_SUMMARY: 'LGA Summary Report',
-  ELECTION_INCIDENT: 'Election Incident Report',
-  AGENT_ACTIVITY: 'Agent Activity Report',
+  PU_COVERAGE: 'Polling Unit Coverage Report',
+  AGENT_ACTIVITY: 'Field Officer & Agent Activity Report',
   OFFICER_PERFORMANCE: 'Operations Officer Performance Report',
+  ELECTION_INCIDENT: 'Incident Report',
   TASK_COMPLETION: 'Task Completion Report',
+  FIELD_CHECKIN: 'Field Check-In Report',
+  RESULTS_SUBMISSION_STATUS: 'Results Submission Status Report',
+  DATA_SYNCHRONIZATION: 'Data Synchronization Report',
+  OUTSTANDING_ACTIONS: 'Outstanding Actions Report',
 };
 
 export interface GeneratedReportRecord {
@@ -952,6 +1051,98 @@ export interface AuditLog {
   createdAt?: FirestoreTime;
 }
 
+export interface DeletionTombstone {
+  id: string;
+  recordId: string;
+  collectionName: string;
+  deletedByUid: string;
+  deletedByEmail: string;
+  reason: string;
+  deletedAtIso: string;
+  createdAt?: FirestoreTime;
+}
+
+export interface SystemBackupRecord {
+  id: string;
+  backupType: 'SCHEDULED_AUTO' | 'MANUAL_ADMIN' | 'PRE_RESTORATION';
+  label: string;
+  encryptionAlgorithm: 'AES-GCM-256';
+  sha256Checksum: string;
+  sizeBytes: number;
+  recordCounts: Record<string, number>;
+  status: 'COMPLETED' | 'VERIFIED' | 'FAILED';
+  errorMessage?: string;
+  createdByUid: string;
+  createdByName: string;
+  createdAtIso: string;
+  createdAt?: FirestoreTime;
+}
+
+export interface EscalationRule {
+  id: string;
+  ruleName: string;
+  triggerType:
+    | 'MISSING_CHECKIN'
+    | 'CRITICAL_INCIDENT'
+    | 'OVERDUE_TASK'
+    | 'RESULT_DISCREPANCY'
+    | 'SYNC_FAILURE'
+    | 'LOW_WARD_COVERAGE'
+    | 'EMERGENCY_ASSISTANCE';
+  priority: IncidentUrgency;
+  responsibleRole: UserRole;
+  escalateAfterMinutes: number;
+  recipientRole: UserRole;
+  maxNotificationsPerHour: number;
+  enabled: boolean;
+  updatedByUid: string;
+  updatedAt?: FirestoreTime;
+}
+
+export const EMERGENCY_CATEGORIES = [
+  'Immediate Security Threat',
+  'Medical Emergency',
+  'Polling Material Obstruction',
+  'Officer / Agent Safety',
+  'Logistics / Evacuation Need',
+  'Communication Blackout',
+  'Other Urgent Assistance',
+] as const;
+
+export type EmergencyCategory = (typeof EMERGENCY_CATEGORIES)[number];
+
+export type EmergencyReportStatus =
+  | 'SUBMITTED'
+  | 'ACKNOWLEDGED'
+  | 'RESPONDER_ASSIGNED'
+  | 'RESOLVED'
+  | 'CLOSED';
+
+export interface EmergencyReport {
+  id: string;
+  category: string;
+  description: string;
+  urgency: IncidentUrgency;
+  status: EmergencyReportStatus;
+  lgaId: LgaId | 'all';
+  wardId: string;
+  puId: string;
+  puCode: string;
+  puName: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  reporterUid: string;
+  reporterName: string;
+  reporterPhone: string;
+  assignedResponderUid: string;
+  assignedResponderName: string;
+  resolutionNotes: string;
+  clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  createdAt?: FirestoreTime;
+  updatedAt?: FirestoreTime;
+}
+
 export interface OfflineQueuedItem {
   clientSubmissionId: string;
   ownerUid: string;
@@ -965,6 +1156,9 @@ export interface OfflineQueuedItem {
   payload: Record<string, unknown>;
   status: OfflineQueueStatus;
   retryCount?: number;
+  nextRetryAtIso?: string;
+  conflictState?: 'NONE' | 'CONFLICT_DETECTED' | 'RESOLVED';
+  conflictServerSummary?: string;
   errorMessage?: string;
   createdAtIso: string;
   updatedAtIso: string;

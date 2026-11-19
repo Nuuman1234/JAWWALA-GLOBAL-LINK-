@@ -31,6 +31,7 @@ import {
   type PublicVerifiedResult,
   type ReportAttachment,
   type ResultSubmission,
+  type SessionVerificationMode,
   type TimelineEvent,
   type UserAccount,
   type Ward,
@@ -64,6 +65,8 @@ interface RoleHomeDashboardPageProps {
   reportAttachments: ReportAttachment[];
   auditLogs: AuditLog[];
   isOnline: boolean;
+  sessionMode?: SessionVerificationMode;
+  lastServerVerifiedAtMs?: number | null;
   lastUpdatedAt: Date | null;
   pendingSyncCount: number;
   syncingCount: number;
@@ -75,11 +78,11 @@ interface RoleHomeDashboardPageProps {
 }
 
 const ICON_SURFACE_BY_TONE: Record<CardTone, string> = {
-  emerald: 'bg-emerald-50 text-[#0b3b24] ring-1 ring-inset ring-emerald-900/10',
-  amber: 'bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-900/10',
-  crimson: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-900/10',
-  sky: 'bg-sky-50 text-sky-800 ring-1 ring-inset ring-sky-900/10',
-  slate: 'bg-slate-100 text-slate-700 ring-1 ring-inset ring-slate-900/5',
+  emerald: 'bg-white text-[#0b3b24] ring-1 ring-inset ring-stone-200/80',
+  amber: 'bg-white text-amber-800 ring-1 ring-inset ring-stone-200/80',
+  crimson: 'bg-white text-red-700 ring-1 ring-inset ring-stone-200/80',
+  sky: 'bg-white text-sky-800 ring-1 ring-inset ring-stone-200/80',
+  slate: 'bg-white text-slate-700 ring-1 ring-inset ring-stone-200/80',
 };
 
 const STAT_TEXT_BY_TONE: Record<CardTone, string> = {
@@ -117,6 +120,8 @@ export function RoleHomeDashboardPage({
   reportAttachments,
   auditLogs,
   isOnline,
+  sessionMode = 'online_verified',
+  lastServerVerifiedAtMs = null,
   lastUpdatedAt,
   pendingSyncCount,
   syncingCount,
@@ -316,15 +321,20 @@ export function RoleHomeDashboardPage({
         {/* Connectivity & Synchronization Hairline Footer */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-slate-100 pt-3 text-xs">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {isOnline ? (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-800">
-                <Wifi className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
-                <span>Online</span>
-              </span>
-            ) : (
+            {!isOnline || sessionMode === 'offline_trusted' ? (
               <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800">
                 <WifiOff className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
-                <span>Offline Mode</span>
+                <span>Offline Mode · Local Trusted Session</span>
+              </span>
+            ) : sessionMode === 'revalidating' ? (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-sky-800">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
+                <span>Online · Revalidating Session</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-800">
+                <Wifi className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                <span>Online · Server Verified</span>
               </span>
             )}
             <span aria-hidden="true" className="text-slate-300">
@@ -342,9 +352,16 @@ export function RoleHomeDashboardPage({
             </span>
           </div>
 
-          {!isOnline ? (
+          {!isOnline || sessionMode === 'offline_trusted' ? (
             <span className="text-slate-500">
-              Showing cached records · Auto-sync resumes on reconnect
+              {lastServerVerifiedAtMs
+                ? `Last server check ${new Date(lastServerVerifiedAtMs).toLocaleString('en-NG', {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })} · Auto-revalidates on reconnect`
+                : 'Cached local session · Auto-revalidates on reconnect'}
             </span>
           ) : null}
         </div>
@@ -365,9 +382,9 @@ export function RoleHomeDashboardPage({
                     ? () => onNavigate(metric.targetSection!)
                     : undefined
                 }
-                className={`group flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3.5 text-left transition-all duration-150 sm:p-4 ${
+                className={`group flex flex-col justify-between rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] p-3.5 text-left transition-all duration-150 sm:p-4 ${
                   clickable
-                    ? 'hover:-translate-y-0.5 hover:border-[#0b3b24]/40 hover:shadow-sm active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24]'
+                    ? 'hover:border-[#0b3b24]/40 hover:bg-white active:scale-[0.98] active:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24]'
                     : ''
                 }`}
               >
@@ -396,7 +413,7 @@ export function RoleHomeDashboardPage({
         </div>
       </section>
 
-      {/* Responsive Clickable Module Cards Grid (2 cols mobile, 3 cols tablet, 4 cols desktop) */}
+      {/* Responsive Clickable Module Cards Grid (2 cols mobile, 3 cols tablet, 4-5 cols desktop) */}
       <section aria-label="Authorized Modules">
         <div className="mb-3.5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -437,7 +454,7 @@ export function RoleHomeDashboardPage({
         </div>
 
         {filteredCards.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white px-6 py-10 text-center">
+          <div className="rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] px-6 py-10 text-center">
             <p className="text-sm font-semibold text-slate-800">
               No module matches "{searchQuery}"
             </p>
@@ -447,13 +464,13 @@ export function RoleHomeDashboardPage({
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="mt-4 inline-flex min-h-[40px] items-center rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100"
+              className="mt-4 inline-flex min-h-[40px] items-center rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-stone-50"
             >
               Show All Modules
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4">
+          <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 2xl:grid-cols-5">
             {filteredCards.map((card) => {
               const Icon = card.icon;
               return (
@@ -461,17 +478,18 @@ export function RoleHomeDashboardPage({
                   key={card.key}
                   type="button"
                   onClick={() => onNavigate(card.sectionId)}
-                  className="group flex h-full min-h-[148px] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3.5 text-left transition-all duration-150 hover:-translate-y-0.5 hover:border-[#0b3b24]/45 hover:shadow-md active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24] focus-visible:ring-offset-2 sm:min-h-[164px] sm:p-4"
+                  className="group flex h-full min-h-[152px] flex-col justify-between rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] p-3.5 text-left shadow-none transition-all duration-150 hover:border-[#0b3b24]/40 hover:bg-white active:scale-[0.97] active:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24] focus-visible:ring-offset-2 sm:min-h-[168px] sm:p-4"
                 >
-                  <div className="space-y-2.5">
+                  <div className="space-y-3">
                     <div className="flex items-start justify-between gap-2">
                       <div
                         className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-transform duration-150 group-hover:scale-105 ${ICON_SURFACE_BY_TONE[card.tone]}`}
                       >
-                        <Icon className="h-5 w-5" aria-hidden="true" />
+                        <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
                       </div>
                       <ArrowUpRight
-                        className="h-4 w-4 shrink-0 text-slate-300 transition-transform duration-150 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[#0b3b24]"
+                        className="h-4 w-4 shrink-0 text-stone-400 transition-transform duration-150 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[#0b3b24]"
+                        strokeWidth={1.75}
                         aria-hidden="true"
                       />
                     </div>
@@ -480,13 +498,13 @@ export function RoleHomeDashboardPage({
                       <h4 className="font-display text-sm font-semibold leading-snug text-slate-900 group-hover:text-[#0b3b24] sm:text-[15px]">
                         {card.title}
                       </h4>
-                      <p className="line-clamp-2 text-[11px] leading-relaxed text-slate-500 sm:text-xs">
+                      <p className="line-clamp-2 text-[11px] leading-relaxed text-slate-600 sm:text-xs">
                         {card.description}
                       </p>
                     </div>
                   </div>
 
-                  <div className="mt-3 border-t border-slate-100 pt-2.5">
+                  <div className="mt-3 border-t border-stone-200/70 pt-2.5">
                     <p
                       className={`truncate font-mono text-[11px] font-semibold tabular-nums ${STAT_TEXT_BY_TONE[card.tone]}`}
                     >

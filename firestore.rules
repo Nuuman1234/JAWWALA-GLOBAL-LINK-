@@ -164,11 +164,34 @@ service cloud.firestore {
     }
 
     function isValidIncidentStatus(status) {
-      return status in ['NEW', 'UNDER_REVIEW', 'ESCALATED', 'RESOLVED', 'CLOSED'];
+      return status in [
+        'DRAFT',
+        'NEW',
+        'SUBMITTED',
+        'PENDING_REVIEW',
+        'UNDER_REVIEW',
+        'UNDER_INVESTIGATION',
+        'VERIFIED',
+        'UNVERIFIED',
+        'ESCALATED',
+        'RESOLVED',
+        'REJECTED',
+        'CLOSED'
+      ];
     }
 
     function isValidVerificationStatus(status) {
-      return status in ['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'REQUIRES_CORRECTION'];
+      return status in [
+        'DRAFT',
+        'SUBMITTED',
+        'PENDING_VERIFICATION',
+        'UNDER_REVIEW',
+        'VERIFIED',
+        'DISCREPANCY_DETECTED',
+        'CORRECTED',
+        'REJECTED',
+        'REQUIRES_CORRECTION'
+      ];
     }
 
     function isValidPartyVotesOptional(data) {
@@ -202,8 +225,9 @@ service cloud.firestore {
 
     function isValidGlobalSettings(data) {
       return data.keys().hasAll(['inactivityTimeoutMinutes', 'mfaPrepared', 'publicSummaryEnabled', 'smsFallbackConfigured', 'whatsappConfigured', 'emailConfigured', 'updatedByUid', 'updatedAt']) &&
-        data.keys().hasOnly(['inactivityTimeoutMinutes', 'mfaPrepared', 'publicSummaryEnabled', 'smsFallbackConfigured', 'whatsappConfigured', 'emailConfigured', 'whatsappGroupName', 'whatsappGroupUrl', 'whatsappGroupEnabled', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['inactivityTimeoutMinutes', 'offlineSessionMaxDays', 'mfaPrepared', 'publicSummaryEnabled', 'smsFallbackConfigured', 'whatsappConfigured', 'emailConfigured', 'whatsappGroupName', 'whatsappGroupUrl', 'whatsappGroupEnabled', 'updatedByUid', 'updatedAt']) &&
         data.inactivityTimeoutMinutes is int && data.inactivityTimeoutMinutes >= 5 && data.inactivityTimeoutMinutes <= 480 &&
+        (!('offlineSessionMaxDays' in data) || (data.offlineSessionMaxDays is int && data.offlineSessionMaxDays >= 1 && data.offlineSessionMaxDays <= 30)) &&
         data.mfaPrepared is bool &&
         data.publicSummaryEnabled is bool &&
         data.smsFallbackConfigured is bool &&
@@ -331,19 +355,42 @@ service cloud.firestore {
     function isValidPartyConfig(data, partyId) {
       return partyId in ['APC', 'PDP', 'ADC', 'OTHERS'] &&
         data.keys().hasAll(['partyCode', 'partyName', 'logoUrl', 'storageMode', 'updatedByUid', 'updatedByName', 'updatedAt']) &&
-        data.keys().hasOnly(['partyCode', 'partyName', 'logoUrl', 'storageMode', 'fileName', 'sha256Hash', 'updatedByUid', 'updatedByName', 'updatedAt']) &&
+        data.keys().hasOnly(['partyCode', 'partyName', 'logoUrl', 'storageMode', 'storagePath', 'logoAssetId', 'fileName', 'contentType', 'fileSizeBytes', 'sha256Hash', 'updatedByUid', 'updatedByName', 'updatedAt']) &&
         data.partyCode == partyId &&
         ((partyId == 'APC' && data.partyName == 'All Progressives Congress') ||
          (partyId == 'PDP' && data.partyName == 'Peoples Democratic Party') ||
          (partyId == 'ADC' && data.partyName == 'African Democratic Congress') ||
          (partyId == 'OTHERS' && data.partyName == 'Other Political Parties')) &&
         data.logoUrl is string && data.logoUrl.size() <= 350000 &&
-        data.storageMode in ['firebase_storage', 'firestore_cloud', 'none'] &&
+        !data.logoUrl.matches('^blob:.*') &&
+        data.storageMode in ['firebase_storage', 'firestore_asset_store', 'firestore_cloud', 'none'] &&
+        (!('storagePath' in data) || data.storagePath == null || (data.storagePath is string && data.storagePath.size() <= 240)) &&
+        (!('logoAssetId' in data) || data.logoAssetId == null || (data.logoAssetId is string && data.logoAssetId.size() <= 128 && (data.logoAssetId == '' || isValidId(data.logoAssetId)))) &&
         (!('fileName' in data) || data.fileName == null || (data.fileName is string && data.fileName.size() <= 120)) &&
+        (!('contentType' in data) || data.contentType == null || (data.contentType is string && data.contentType in ['', 'image/png', 'image/jpeg', 'image/webp'])) &&
+        (!('fileSizeBytes' in data) || data.fileSizeBytes == null || (data.fileSizeBytes is int && data.fileSizeBytes >= 0 && data.fileSizeBytes <= 5242880)) &&
         (!('sha256Hash' in data) || data.sha256Hash == null || (data.sha256Hash is string && data.sha256Hash.size() <= 64)) &&
         data.updatedByUid is string && data.updatedByUid.size() <= 128 &&
         data.updatedByName is string && data.updatedByName.size() <= 120 &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPartyLogoAsset(data, assetId) {
+      return isValidId(assetId) &&
+        data.keys().hasAll(['assetId', 'partyCode', 'fileName', 'contentType', 'fileSizeBytes', 'width', 'height', 'sha256Hash', 'binaryData', 'uploadedByUid', 'uploadedByName', 'createdAt']) &&
+        data.keys().hasOnly(['assetId', 'partyCode', 'fileName', 'contentType', 'fileSizeBytes', 'width', 'height', 'sha256Hash', 'binaryData', 'uploadedByUid', 'uploadedByName', 'createdAt']) &&
+        data.assetId == assetId &&
+        data.partyCode in ['APC', 'PDP', 'ADC', 'OTHERS'] &&
+        data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 120 &&
+        data.contentType in ['image/png', 'image/jpeg', 'image/webp'] &&
+        data.fileSizeBytes is int && data.fileSizeBytes > 0 && data.fileSizeBytes <= 750000 &&
+        data.width is int && data.width >= 1 && data.width <= 2048 &&
+        data.height is int && data.height >= 1 && data.height <= 2048 &&
+        data.sha256Hash is string && data.sha256Hash.size() == 64 &&
+        data.binaryData is bytes && data.binaryData.size() > 0 && data.binaryData.size() <= 750000 &&
+        data.uploadedByUid is string && data.uploadedByUid == request.auth.uid && data.uploadedByUid.size() <= 128 &&
+        data.uploadedByName is string && data.uploadedByName.size() <= 120 &&
+        data.createdAt is timestamp && data.createdAt == request.time;
     }
 
     function isValidWard(data) {
@@ -420,7 +467,14 @@ service cloud.firestore {
 
     function isValidCheckIn(data) {
       return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'clientSubmissionId', 'isTestData', 'createdAt']) &&
-        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'latitude', 'longitude', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt']) &&
+        data.keys().hasOnly([
+          'puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName',
+          'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus',
+          'latitude', 'longitude', 'gpsAccuracyMeters', 'deviceId', 'fieldStatus',
+          'photoBase64', 'photoFileName', 'locationExceptionFlag', 'locationExceptionDistanceMeters',
+          'exceptionReviewStatus', 'exceptionReviewNote', 'exceptionReviewedByUid',
+          'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt'
+        ]) &&
         data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
         data.puCode is string && data.puCode.size() <= 40 &&
         data.puName is string && data.puName.size() <= 160 &&
@@ -434,6 +488,16 @@ service cloud.firestore {
         data.networkStatus is string && data.networkStatus.size() <= 64 &&
         (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
         (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+        (!('gpsAccuracyMeters' in data) || data.gpsAccuracyMeters == null || (data.gpsAccuracyMeters is number && data.gpsAccuracyMeters >= 0 && data.gpsAccuracyMeters <= 100000)) &&
+        (!('deviceId' in data) || data.deviceId == null || (data.deviceId is string && data.deviceId.size() <= 120)) &&
+        (!('fieldStatus' in data) || data.fieldStatus == null || (data.fieldStatus is string && data.fieldStatus.size() <= 80)) &&
+        (!('photoBase64' in data) || data.photoBase64 == null || (data.photoBase64 is string && data.photoBase64.size() <= 350000)) &&
+        (!('photoFileName' in data) || data.photoFileName == null || (data.photoFileName is string && data.photoFileName.size() <= 120)) &&
+        (!('locationExceptionFlag' in data) || data.locationExceptionFlag is bool) &&
+        (!('locationExceptionDistanceMeters' in data) || data.locationExceptionDistanceMeters == null || (data.locationExceptionDistanceMeters is number && data.locationExceptionDistanceMeters >= 0)) &&
+        (!('exceptionReviewStatus' in data) || data.exceptionReviewStatus == null || data.exceptionReviewStatus in ['NONE', 'PENDING_REVIEW', 'EXPLAINED', 'CONFIRMED_EXCEPTION', 'CLEARED', 'FOLLOW_UP_REQUESTED']) &&
+        (!('exceptionReviewNote' in data) || data.exceptionReviewNote == null || (data.exceptionReviewNote is string && data.exceptionReviewNote.size() <= 500)) &&
+        (!('exceptionReviewedByUid' in data) || data.exceptionReviewedByUid == null || (data.exceptionReviewedByUid is string && data.exceptionReviewedByUid.size() <= 128)) &&
         data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
         (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
         (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
@@ -443,7 +507,14 @@ service cloud.firestore {
 
     function isValidIncident(data) {
       return data.keys().hasAll(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'evidenceBase64', 'evidenceFileName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName',
+          'reporterUid', 'reporterName', 'latitude', 'longitude', 'gpsAccuracyMeters',
+          'evidenceBase64', 'evidenceFileName', 'evidenceSha256', 'witnessInfo',
+          'protectReporterIdentity', 'requestedInfoNote',
+          'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId',
+          'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt'
+        ]) &&
         data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
         data.category is string && data.category.size() <= 100 &&
         data.description is string && data.description.size() >= 5 && data.description.size() <= 2000 &&
@@ -456,8 +527,15 @@ service cloud.firestore {
         data.puName is string && data.puName.size() <= 160 &&
         data.reporterUid is string && data.reporterUid.size() <= 128 &&
         data.reporterName is string && data.reporterName.size() <= 120 &&
+        (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+        (!('gpsAccuracyMeters' in data) || data.gpsAccuracyMeters == null || (data.gpsAccuracyMeters is number && data.gpsAccuracyMeters >= 0 && data.gpsAccuracyMeters <= 100000)) &&
         (!('evidenceBase64' in data) || data.evidenceBase64 == null || (data.evidenceBase64 is string && data.evidenceBase64.size() <= 350000)) &&
         (!('evidenceFileName' in data) || data.evidenceFileName == null || (data.evidenceFileName is string && data.evidenceFileName.size() <= 120)) &&
+        (!('evidenceSha256' in data) || data.evidenceSha256 == null || (data.evidenceSha256 is string && data.evidenceSha256.size() <= 64)) &&
+        (!('witnessInfo' in data) || data.witnessInfo == null || (data.witnessInfo is string && data.witnessInfo.size() <= 300)) &&
+        (!('protectReporterIdentity' in data) || data.protectReporterIdentity is bool) &&
+        (!('requestedInfoNote' in data) || data.requestedInfoNote == null || (data.requestedInfoNote is string && data.requestedInfoNote.size() <= 600)) &&
         data.internalNotes is string && data.internalNotes.size() <= 1500 &&
         data.escalatedTo is string && data.escalatedTo.size() <= 120 &&
         data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
@@ -469,9 +547,34 @@ service cloud.firestore {
         data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidIncidentHistory(data) {
+      return data.keys().hasAll(['action', 'previousStatus', 'newStatus', 'urgency', 'note', 'actorUid', 'actorName', 'createdAt']) &&
+        data.keys().hasOnly(['incidentId', 'action', 'previousStatus', 'newStatus', 'urgency', 'note', 'escalatedTo', 'actorUid', 'actorName', 'actorRole', 'createdAt']) &&
+        (!('incidentId' in data) || (data.incidentId is string && data.incidentId.size() <= 128)) &&
+        data.action is string && data.action.size() <= 64 &&
+        data.previousStatus is string && data.previousStatus.size() <= 40 &&
+        data.newStatus is string && data.newStatus.size() <= 40 &&
+        isValidUrgency(data.urgency) &&
+        data.note is string && data.note.size() <= 1000 &&
+        (!('escalatedTo' in data) || (data.escalatedTo is string && data.escalatedTo.size() <= 120)) &&
+        data.actorUid is string && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() <= 120 &&
+        (!('actorRole' in data) || (data.actorRole is string && data.actorRole.size() <= 40)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     function isValidResultSubmission(data) {
       return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'version', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'version', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly([
+          'puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName',
+          'electionCategory', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes',
+          'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast',
+          'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName',
+          'discrepancyFlag', 'discrepancySummary', 'duplicateOfSubmissionId', 'ocrAssistedReviewNote',
+          'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName',
+          'reviewedAt', 'version', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt',
+          'isTestData', 'createdAt', 'updatedAt'
+        ]) &&
         data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
         data.puCode is string && data.puCode.size() <= 40 &&
         data.puName is string && data.puName.size() <= 160 &&
@@ -480,6 +583,7 @@ service cloud.firestore {
         data.wardName is string && data.wardName.size() <= 120 &&
         data.submittedByUid is string && data.submittedByUid.size() <= 128 &&
         data.submittedByName is string && data.submittedByName.size() <= 120 &&
+        (!('electionCategory' in data) || data.electionCategory == null || (data.electionCategory is string && data.electionCategory.size() <= 64)) &&
         isValidPartyVotesOptional(data) &&
         data.registeredVoters is int && data.registeredVoters >= 0 && data.registeredVoters <= 50000 &&
         data.accreditedVoters is int && data.accreditedVoters >= 0 && data.accreditedVoters <= 50000 &&
@@ -492,6 +596,10 @@ service cloud.firestore {
         data.submissionNotes is string && data.submissionNotes.size() <= 1000 &&
         (!('ec8aImageBase64' in data) || data.ec8aImageBase64 == null || (data.ec8aImageBase64 is string && data.ec8aImageBase64.size() <= 350000)) &&
         (!('ec8aFileName' in data) || data.ec8aFileName == null || (data.ec8aFileName is string && data.ec8aFileName.size() <= 120)) &&
+        (!('discrepancyFlag' in data) || data.discrepancyFlag is bool) &&
+        (!('discrepancySummary' in data) || data.discrepancySummary == null || (data.discrepancySummary is string && data.discrepancySummary.size() <= 400)) &&
+        (!('duplicateOfSubmissionId' in data) || data.duplicateOfSubmissionId == null || (data.duplicateOfSubmissionId is string && data.duplicateOfSubmissionId.size() <= 128)) &&
+        (!('ocrAssistedReviewNote' in data) || data.ocrAssistedReviewNote == null || (data.ocrAssistedReviewNote is string && data.ocrAssistedReviewNote.size() <= 400)) &&
         isValidVerificationStatus(data.verificationStatus) &&
         data.publiclyApproved is bool &&
         data.reviewNote is string && data.reviewNote.size() <= 1000 &&
@@ -580,7 +688,7 @@ service cloud.firestore {
         data.keys().hasOnly(['attachmentId', 'reportId', 'reportType', 'ownerUid', 'lgaId', 'wardId', 'puId', 'fileName', 'sha256Hash', 'sizeBytes', 'base64Data', 'createdAt']) &&
         data.attachmentId is string && data.attachmentId.size() >= 1 && data.attachmentId.size() <= 128 &&
         data.reportId is string && data.reportId.size() >= 1 && data.reportId.size() <= 128 &&
-        data.reportType is string && data.reportType in ['CHECK_IN', 'STATUS_UPDATE', 'INCIDENT_REPORT', 'RESULT_SUBMISSION'] &&
+        data.reportType is string && data.reportType in ['CHECK_IN', 'CHECK_IN_PHOTO', 'STATUS_UPDATE', 'INCIDENT_REPORT', 'RESULT_SUBMISSION'] &&
         data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
         isValidLgaId(data.lgaId) &&
         data.wardId is string && data.wardId.size() <= 128 &&
@@ -791,10 +899,15 @@ service cloud.firestore {
           'DAILY_SITUATION',
           'WARD_PERFORMANCE',
           'LGA_SUMMARY',
+          'PU_COVERAGE',
           'ELECTION_INCIDENT',
           'AGENT_ACTIVITY',
           'OFFICER_PERFORMANCE',
-          'TASK_COMPLETION'
+          'TASK_COMPLETION',
+          'FIELD_CHECKIN',
+          'RESULTS_SUBMISSION_STATUS',
+          'DATA_SYNCHRONIZATION',
+          'OUTSTANDING_ACTIONS'
         ] &&
         data.reportTitle is string && data.reportTitle.size() >= 3 && data.reportTitle.size() <= 180 &&
         data.reportingPeriodStartIso is string && data.reportingPeriodStartIso.size() <= 40 &&
@@ -816,6 +929,76 @@ service cloud.firestore {
         (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
         (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
         data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidDeletionTombstone(data) {
+      return data.keys().hasAll(['recordId', 'collectionName', 'deletedByUid', 'deletedByEmail', 'reason', 'deletedAtIso', 'createdAt']) &&
+        data.keys().hasOnly(['recordId', 'collectionName', 'deletedByUid', 'deletedByEmail', 'reason', 'deletedAtIso', 'createdAt']) &&
+        data.recordId is string && data.recordId.size() >= 1 && data.recordId.size() <= 128 &&
+        data.collectionName is string && data.collectionName.size() >= 1 && data.collectionName.size() <= 64 &&
+        data.deletedByUid is string && data.deletedByUid.size() >= 1 && data.deletedByUid.size() <= 128 &&
+        data.deletedByEmail is string && data.deletedByEmail.size() <= 200 &&
+        data.reason is string && data.reason.size() <= 240 &&
+        data.deletedAtIso is string && data.deletedAtIso.size() <= 64 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidSystemBackup(data) {
+      return data.keys().hasAll(['backupType', 'label', 'encryptionAlgorithm', 'sha256Checksum', 'sizeBytes', 'recordCounts', 'status', 'createdByUid', 'createdByName', 'createdAtIso', 'createdAt']) &&
+        data.keys().hasOnly(['backupType', 'label', 'encryptionAlgorithm', 'sha256Checksum', 'sizeBytes', 'recordCounts', 'status', 'errorMessage', 'createdByUid', 'createdByName', 'createdAtIso', 'createdAt']) &&
+        data.backupType in ['SCHEDULED_AUTO', 'MANUAL_ADMIN', 'PRE_RESTORATION'] &&
+        data.label is string && data.label.size() >= 1 && data.label.size() <= 140 &&
+        data.encryptionAlgorithm == 'AES-GCM-256' &&
+        data.sha256Checksum is string && data.sha256Checksum.size() == 64 &&
+        data.sizeBytes is int && data.sizeBytes >= 0 &&
+        data.recordCounts is map &&
+        data.status in ['COMPLETED', 'VERIFIED', 'FAILED'] &&
+        (!('errorMessage' in data) || data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() <= 400)) &&
+        data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+        data.createdByName is string && data.createdByName.size() >= 1 && data.createdByName.size() <= 120 &&
+        data.createdAtIso is string && data.createdAtIso.size() <= 64 &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidEscalationRule(data) {
+      return data.keys().hasAll(['ruleName', 'triggerType', 'priority', 'responsibleRole', 'escalateAfterMinutes', 'recipientRole', 'maxNotificationsPerHour', 'enabled', 'updatedByUid', 'updatedAt']) &&
+        data.keys().hasOnly(['ruleName', 'triggerType', 'priority', 'responsibleRole', 'escalateAfterMinutes', 'recipientRole', 'maxNotificationsPerHour', 'enabled', 'updatedByUid', 'updatedAt']) &&
+        data.ruleName is string && data.ruleName.size() >= 2 && data.ruleName.size() <= 120 &&
+        data.triggerType in ['MISSING_CHECKIN', 'CRITICAL_INCIDENT', 'OVERDUE_TASK', 'RESULT_DISCREPANCY', 'SYNC_FAILURE', 'LOW_WARD_COVERAGE', 'EMERGENCY_ASSISTANCE'] &&
+        isValidUrgency(data.priority) &&
+        isValidRole(data.responsibleRole) &&
+        data.escalateAfterMinutes is int && data.escalateAfterMinutes >= 5 && data.escalateAfterMinutes <= 1440 &&
+        isValidRole(data.recipientRole) &&
+        data.maxNotificationsPerHour is int && data.maxNotificationsPerHour >= 1 && data.maxNotificationsPerHour <= 60 &&
+        data.enabled is bool &&
+        data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128 &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidEmergencyReport(data) {
+      return data.keys().hasAll(['category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'reporterPhone', 'assignedResponderUid', 'assignedResponderName', 'resolutionNotes', 'clientSubmissionId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'latitude', 'longitude', 'reporterUid', 'reporterName', 'reporterPhone', 'assignedResponderUid', 'assignedResponderName', 'resolutionNotes', 'clientSubmissionId', 'clientCreatedAtIso', 'createdAt', 'updatedAt']) &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 100 &&
+        data.description is string && data.description.size() >= 5 && data.description.size() <= 1200 &&
+        isValidUrgency(data.urgency) &&
+        data.status in ['SUBMITTED', 'ACKNOWLEDGED', 'RESPONDER_ASSIGNED', 'RESOLVED', 'CLOSED'] &&
+        data.lgaId in ['all', 'funtua', 'dandume'] &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.puCode is string && data.puCode.size() <= 40 &&
+        data.puName is string && data.puName.size() <= 160 &&
+        (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
+        data.reporterUid is string && data.reporterUid.size() >= 1 && data.reporterUid.size() <= 128 &&
+        data.reporterName is string && data.reporterName.size() >= 1 && data.reporterName.size() <= 120 &&
+        data.reporterPhone is string && data.reporterPhone.size() <= 30 &&
+        data.assignedResponderUid is string && data.assignedResponderUid.size() <= 128 &&
+        data.assignedResponderName is string && data.assignedResponderName.size() <= 120 &&
+        data.resolutionNotes is string && data.resolutionNotes.size() <= 1200 &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() >= 1 && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidAuditLog(data) {
@@ -1048,12 +1231,24 @@ service cloud.firestore {
 
     // --- 3C. FIXED 4 POLITICAL PARTIES (APC, PDP, ADC, OTHERS) ---
     match /party_configs/{partyId} {
-      allow get, list: if hasActiveUser();
+      allow get: if isValidId(partyId) && (isFullControlAdmin() || hasActiveUser());
+      allow list: if isFullControlAdmin() || hasActiveUser();
       allow create, update: if isFullControlAdmin() &&
         isValidPartyConfig(incoming(), partyId) &&
         incoming().updatedByUid == request.auth.uid &&
         incoming().updatedAt == request.time;
       allow delete: if false;
+    }
+
+    // --- 3D. PERSISTENT PARTY LOGO BINARY ASSET STORE ---
+    match /party_logo_assets/{assetId} {
+      allow get: if isValidId(assetId) && (isFullControlAdmin() || hasActiveUser());
+      allow list: if isFullControlAdmin();
+      allow create: if isFullControlAdmin() &&
+        isValidId(assetId) &&
+        isValidPartyLogoAsset(incoming(), assetId);
+      allow update: if false;
+      allow delete: if isFullControlAdmin() && isValidId(assetId);
     }
 
     // --- 4. WARDS (Controlled Master Dataset) ---
@@ -1187,7 +1382,18 @@ service cloud.firestore {
           isFullControlAdmin() ||
           canReadInArea(incoming().lgaId, incoming().wardId, incoming().puId, incoming().agentUid)
         );
-      allow update: if false;
+      allow update: if isVerifiedUser() && isValidId(checkInId) &&
+        isValidCheckIn(incoming()) &&
+        incoming().agentUid == existing().agentUid &&
+        incoming().puId == existing().puId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['exceptionReviewStatus', 'exceptionReviewNote', 'exceptionReviewedByUid']) &&
+        incoming().exceptionReviewedByUid == request.auth.uid && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(existing().lgaId) ||
+          isWardCoordFor(existing().wardId) ||
+          isOpsOfficerFor(existing().wardId)
+        );
       allow delete: if isFullControlAdmin() && isValidId(checkInId);
     }
 
@@ -1205,7 +1411,7 @@ service cloud.firestore {
       allow create: if isVerifiedUser() && isValidId(incidentId) &&
         isValidIncident(incoming()) &&
         incoming().reporterUid == request.auth.uid &&
-        incoming().status == 'NEW' &&
+        incoming().status in ['NEW', 'SUBMITTED'] &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time && (
           isFullControlAdmin() ||
@@ -1218,11 +1424,31 @@ service cloud.firestore {
         incoming().updatedAt == request.time && (
           isFullControlAdmin() ||
           (isLgaAdminFor(existing().lgaId) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt'])) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'requestedInfoNote', 'reviewedByUid', 'updatedAt'])) ||
           ((isWardCoordFor(existing().wardId) || isOpsOfficerFor(existing().wardId)) &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt']))
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'requestedInfoNote', 'reviewedByUid', 'updatedAt']))
         );
       allow delete: if isFullControlAdmin() && isValidId(incidentId);
+
+      match /history/{historyId} {
+        allow get, list: if isVerifiedUser() && isValidId(incidentId) && (
+          isFullControlAdmin() ||
+          canReadInArea(
+            get(/databases/$(database)/documents/incidents/$(incidentId)).data.lgaId,
+            get(/databases/$(database)/documents/incidents/$(incidentId)).data.wardId,
+            get(/databases/$(database)/documents/incidents/$(incidentId)).data.puId,
+            get(/databases/$(database)/documents/incidents/$(incidentId)).data.reporterUid
+          )
+        );
+        allow create: if isVerifiedUser() && isValidId(incidentId) && isValidId(historyId) &&
+          isValidIncidentHistory(incoming()) &&
+          incoming().actorUid == request.auth.uid &&
+          incoming().createdAt == request.time && (
+            isFullControlAdmin() || hasActiveUser()
+          );
+        allow update: if false;
+        allow delete: if isFullControlAdmin() && isValidId(incidentId) && isValidId(historyId);
+      }
     }
 
     // --- 8. RESULT SUBMISSIONS & IMMUTABLE HISTORY ---
@@ -1240,7 +1466,7 @@ service cloud.firestore {
         isValidResultSubmission(incoming()) &&
         incoming().submittedByUid == request.auth.uid &&
         incoming().publiclyApproved == false &&
-        incoming().verificationStatus in ['DRAFT', 'SUBMITTED'] &&
+        incoming().verificationStatus in ['DRAFT', 'SUBMITTED', 'DISCREPANCY_DETECTED'] &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time &&
         exists(/databases/$(database)/documents/polling_units/$(incoming().puId)) && (
@@ -1259,18 +1485,24 @@ service cloud.firestore {
         (incoming().verificationStatus != 'VERIFIED' || existing().submittedByUid != request.auth.uid) && (
           isFullControlAdmin() ||
           ((isLgaAdminFor(existing().lgaId) || isVerificationOfficerFor(existing().lgaId, existing().wardId)) &&
-            existing().verificationStatus in ['SUBMITTED', 'UNDER_REVIEW', 'REQUIRES_CORRECTION'] &&
-            incoming().verificationStatus in ['UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'REQUIRES_CORRECTION'] &&
-            (!(incoming().verificationStatus in ['REJECTED', 'REQUIRES_CORRECTION']) || incoming().reviewNote.size() >= 3) &&
+            existing().verificationStatus in ['SUBMITTED', 'PENDING_VERIFICATION', 'UNDER_REVIEW', 'REQUIRES_CORRECTION', 'DISCREPANCY_DETECTED'] &&
+            incoming().verificationStatus in ['UNDER_REVIEW', 'VERIFIED', 'REJECTED', 'REQUIRES_CORRECTION', 'DISCREPANCY_DETECTED', 'CORRECTED'] &&
+            (!(incoming().verificationStatus in ['REJECTED', 'REQUIRES_CORRECTION', 'DISCREPANCY_DETECTED']) || incoming().reviewNote.size() >= 3) &&
             incoming().publiclyApproved == existing().publiclyApproved &&
             incoming().diff(existing()).affectedKeys().hasOnly(['verificationStatus', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'updatedAt'])) ||
           (hasActiveUser() &&
             existing().submittedByUid == request.auth.uid &&
-            existing().verificationStatus in ['DRAFT', 'REQUIRES_CORRECTION'] &&
-            incoming().verificationStatus in ['DRAFT', 'SUBMITTED'] &&
+            existing().verificationStatus in ['DRAFT', 'REQUIRES_CORRECTION', 'DISCREPANCY_DETECTED'] &&
+            incoming().verificationStatus in ['DRAFT', 'SUBMITTED', 'DISCREPANCY_DETECTED'] &&
             incoming().publiclyApproved == false &&
             incoming().version >= existing().version &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'version', 'updatedAt']))
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'electionCategory', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes',
+              'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast',
+              'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName',
+              'discrepancyFlag', 'discrepancySummary', 'duplicateOfSubmissionId', 'ocrAssistedReviewNote',
+              'verificationStatus', 'version', 'updatedAt'
+            ]))
         );
       allow delete: if isFullControlAdmin() && isValidId(resultId);
 
@@ -1638,6 +1870,80 @@ service cloud.firestore {
           (isLgaAdminFor(existing().lgaId) && incoming().lgaId == existing().lgaId && incoming().generatedByUid == request.auth.uid)
         );
       allow delete: if isFullControlAdmin() && isValidId(reportId);
+    }
+
+    // --- 11F. STRUCTURED EMERGENCY ASSISTANCE REPORTS ---
+    match /emergency_reports/{reportId} {
+      allow get: if isVerifiedUser() && isValidId(reportId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && hasActiveUser() && (
+          existing().reporterUid == request.auth.uid ||
+          (callerDoc().role == 'FUNTUA_SUPER_ADMIN' && existing().lgaId in ['all', 'funtua']) ||
+          (callerDoc().role == 'DANDUME_SUPER_ADMIN' && existing().lgaId in ['all', 'dandume']) ||
+          (callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId)
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        (hasActiveUser() && (
+          existing().reporterUid == request.auth.uid ||
+          (callerDoc().role == 'FUNTUA_SUPER_ADMIN' && existing().lgaId in ['all', 'funtua']) ||
+          (callerDoc().role == 'DANDUME_SUPER_ADMIN' && existing().lgaId in ['all', 'dandume']) ||
+          (callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId)
+        ))
+      );
+      allow create: if isVerifiedUser() && isValidId(reportId) &&
+        hasActiveUser() &&
+        isValidEmergencyReport(incoming()) &&
+        incoming().reporterUid == request.auth.uid &&
+        incoming().status == 'SUBMITTED' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() && isValidId(reportId) &&
+        isValidEmergencyReport(incoming()) &&
+        incoming().reporterUid == existing().reporterUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().lgaId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedResponderUid', 'assignedResponderName', 'resolutionNotes', 'updatedAt']))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(reportId);
+    }
+
+    // --- 11G. SMART NOTIFICATION ESCALATION RULES ---
+    match /escalation_rules/{ruleId} {
+      allow get, list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        isLgaAdminFor('funtua') ||
+        isLgaAdminFor('dandume')
+      );
+      allow create, update: if isFullControlAdmin() && isValidId(ruleId) &&
+        isValidEscalationRule(incoming()) &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time;
+      allow delete: if isFullControlAdmin() && isValidId(ruleId);
+    }
+
+    // --- 11H. SERVER-AUTHORITATIVE PERMANENT DELETION TOMBSTONES ---
+    match /deletion_tombstones/{recordId} {
+      allow get, list: if hasActiveUser();
+      allow create, update: if isFullControlAdmin() && isValidId(recordId) &&
+        isValidDeletionTombstone(incoming()) &&
+        incoming().deletedByUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow delete: if isFullControlAdmin() && isValidId(recordId);
+    }
+
+    // --- 11I. ENCRYPTED SYSTEM BACKUP LEDGER (FULL CONTROL ADMIN ONLY) ---
+    match /system_backups/{backupId} {
+      allow get, list: if isFullControlAdmin();
+      allow create, update: if isFullControlAdmin() && isValidId(backupId) &&
+        isValidSystemBackup(incoming()) &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time;
+      allow delete: if isFullControlAdmin() && isValidId(backupId);
     }
 
     // --- 12. IMMUTABLE AUDIT LOGS (ADMIN ONLY READ) ---

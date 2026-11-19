@@ -2,10 +2,14 @@ import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from '
 import {
   AlertOctagon,
   AlertTriangle,
+  Compass,
   FileImage,
+  History,
+  Lock,
   Plus,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   X,
 } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
@@ -21,8 +25,10 @@ import {
   IncidentStatus,
   IncidentUrgency,
   LGA_DEFINITIONS,
+  UserRole,
   canReviewIncidents,
   formatFirestoreTime,
+  type IncidentHistoryEntry,
   type IncidentReport,
   type OfflineQueuedItem,
   type PollingUnit,
@@ -36,6 +42,7 @@ import {
   saveDraft,
 } from '../services/offlineQueue';
 import {
+  fetchIncidentHistory,
   submitIncidentReport,
   updateIncidentWorkflow,
 } from '../services/operationsService';
@@ -71,6 +78,10 @@ export function IncidentsPage({
   const [category, setCategory] = useState<string>(INCIDENT_CATEGORIES[0]);
   const [urgency, setUrgency] = useState<IncidentUrgency>(IncidentUrgency.MEDIUM);
   const [description, setDescription] = useState('');
+  const [witnessInfo, setWitnessInfo] = useState('');
+  const [protectReporterIdentity, setProtectReporterIdentity] = useState(false);
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; accuracy: number | null } | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<string | null>(null);
   const [evidenceBase64, setEvidenceBase64] = useState<string | null>(null);
   const [evidenceFileName, setEvidenceFileName] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -80,9 +91,12 @@ export function IncidentsPage({
   const [search, setSearch] = useState('');
 
   const [selectedIncident, setSelectedIncident] = useState<IncidentReport | null>(null);
+  const [incidentHistory, setIncidentHistory] = useState<IncidentHistoryEntry[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [reviewStatus, setReviewStatus] = useState<IncidentStatus>(IncidentStatus.UNDER_REVIEW);
   const [reviewUrgency, setReviewUrgency] = useState<IncidentUrgency>(IncidentUrgency.MEDIUM);
   const [reviewNotes, setReviewNotes] = useState('');
+  const [requestedInfoNote, setRequestedInfoNote] = useState('');
   const [escalatedTo, setEscalatedTo] = useState('');
   const [savingReview, setSavingReview] = useState(false);
 
@@ -133,6 +147,32 @@ export function IncidentsPage({
     }
   };
 
+  const handleCaptureGps = () => {
+    if (!navigator.geolocation) {
+      setGpsStatus('Geolocation unavailable on this device.');
+      return;
+    }
+    setGpsStatus('Capturing incident GPS location...');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const acc = Number.isFinite(pos.coords.accuracy) ? Math.round(pos.coords.accuracy) : null;
+        setGpsCoords({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+          accuracy: acc,
+        });
+        setGpsStatus(
+          `GPS attached: ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}${acc !== null ? ` (±${acc}m)` : ''}`
+        );
+      },
+      () => {
+        setGpsCoords(null);
+        setGpsStatus('GPS permission declined; submission remains enabled.');
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+    );
+  };
+
   const handleSubmitIncident = async (e: FormEvent) => {
     e.preventDefault();
     const pu = pollingUnits.find((p) => p.id === puId);
@@ -151,6 +191,11 @@ export function IncidentsPage({
       urgency,
       evidenceBase64,
       evidenceFileName,
+      latitude: gpsCoords ? gpsCoords.lat : null,
+      longitude: gpsCoords ? gpsCoords.lng : null,
+      gpsAccuracyMeters: gpsCoords ? gpsCoords.accuracy : null,
+      witnessInfo: witnessInfo.trim(),
+      protectReporterIdentity,
       isTestData: false,
     };
 
@@ -170,6 +215,10 @@ export function IncidentsPage({
       await clearDraft(`incident_${user.uid}`);
       setTitle('');
       setDescription('');
+      setWitnessInfo('');
+      setProtectReporterIdentity(false);
+      setGpsCoords(null);
+      setGpsStatus(null);
       setEvidenceBase64(null);
       setEvidenceFileName(null);
       setShowForm(false);
@@ -186,12 +235,16 @@ export function IncidentsPage({
       await clearDraft(`incident_${user.uid}`);
       setTitle('');
       setDescription('');
+      setWitnessInfo('');
+      setProtectReporterIdentity(false);
+      setGpsCoords(null);
+      setGpsStatus(null);
       setEvidenceBase64(null);
       setEvidenceFileName(null);
       setShowForm(false);
       setFeedback({
         type: 'ok',
-        text: `Incident report submitted to Situation Room for ${pu.puCode}.`,
+        text: `Incident report submitted to Situation Room for ${pu.puCode} with immutable audit trail.`,
       });
     } catch (err) {
       await enqueueOfflineSubmission({
@@ -220,8 +273,24 @@ export function IncidentsPage({
     setReviewStatus(inc.status);
     setReviewUrgency(inc.urgency);
     setReviewNotes(inc.internalNotes || '');
+    setRequestedInfoNote(inc.requestedInfoNote || '');
     setEscalatedTo(inc.escalatedTo || '');
+    setIncidentHistory([]);
+    if (isOnline) {
+      setLoadingHistory(true);
+      void fetchIncidentHistory(inc.id)
+        .then((rows) => setIncidentHistory(rows))
+        .catch(() => setIncidentHistory([]))
+        .finally(() => setLoadingHistory(false));
+    }
   };
+
+  const relatedPuIncidents = useMemo(() => {
+    if (!selectedIncident) return [];
+    return incidents.filter(
+      (i) => i.id !== selectedIncident.id && (i.puId === selectedIncident.puId || i.wardId === selectedIncident.wardId)
+    );
+  }, [incidents, selectedIncident]);
 
   const handleSaveReview = async (e: FormEvent) => {
     e.preventDefault();
@@ -234,10 +303,12 @@ export function IncidentsPage({
         urgency: reviewUrgency,
         internalNotes: reviewNotes,
         escalatedTo,
+        requestedInfoNote,
+        reviewReason: reviewNotes,
       });
       setFeedback({
         type: 'ok',
-        text: `Incident "${selectedIncident.title}" updated to ${INCIDENT_STATUS_META[reviewStatus].label}.`,
+        text: `Incident "${selectedIncident.title}" updated to ${INCIDENT_STATUS_META[reviewStatus].label} (recorded in immutable history).`,
       });
       setSelectedIncident(null);
     } catch (err) {
@@ -438,9 +509,49 @@ export function IncidentsPage({
               />
             </div>
 
+            <div>
+              <label htmlFor="inc-witness" className="block text-xs font-medium text-slate-700">
+                Witness Information (Optional)
+              </label>
+              <input
+                id="inc-witness"
+                type="text"
+                maxLength={300}
+                value={witnessInfo}
+                onChange={(e) => setWitnessInfo(e.target.value)}
+                placeholder="Witness names or roles if applicable"
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+              />
+            </div>
+
+            <div className="flex flex-col justify-end gap-2">
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                <span className="text-slate-700 truncate">
+                  {gpsStatus || 'Optional GPS location tag'}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCaptureGps}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap"
+                >
+                  <Compass className="h-3.5 w-3.5" />
+                  <span>Tag GPS</span>
+                </button>
+              </div>
+              <label className="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={protectReporterIdentity}
+                  onChange={(e) => setProtectReporterIdentity(e.target.checked)}
+                  className="rounded border-slate-300 text-emerald-700 focus:ring-emerald-600"
+                />
+                <span>Restrict reporter identity in general summaries (visible to authorized reviewers only)</span>
+              </label>
+            </div>
+
             <div className="sm:col-span-2">
               <label htmlFor="inc-evidence" className="block text-xs font-medium text-slate-700">
-                Optional Evidence Photo / Document (Compressed automatically)
+                Optional Evidence Photo / Document (Compressed &amp; SHA-256 hashed automatically)
               </label>
               <div className="mt-1.5 flex flex-wrap items-center gap-3">
                 <input
@@ -591,8 +702,14 @@ export function IncidentsPage({
                   </h3>
                   <p className="mt-1 text-sm text-slate-700">{inc.description}</p>
                   <p className="mt-2 text-xs text-slate-500">
-                    {inc.puName} · Reported by {inc.reporterName}
+                    {inc.puName} · Reported by{' '}
+                    {inc.protectReporterIdentity &&
+                    user.role !== UserRole.FULL_CONTROL_ADMIN &&
+                    inc.reporterUid !== user.uid
+                      ? 'Protected Reporter'
+                      : inc.reporterName}
                     {inc.escalatedTo ? ` · Escalated to: ${inc.escalatedTo}` : ''}
+                    {inc.evidenceSha256 ? ` · Integrity Hash: ${inc.evidenceSha256.slice(0, 10)}…` : ''}
                   </p>
                 </div>
 
@@ -643,13 +760,46 @@ export function IncidentsPage({
                 {selectedIncident.serverSyncedAt ? (
                   <span>· Server Synced: {formatFirestoreTime(selectedIncident.serverSyncedAt)}</span>
                 ) : null}
+                {typeof selectedIncident.latitude === 'number' &&
+                typeof selectedIncident.longitude === 'number' ? (
+                  <span>
+                    · GPS: {selectedIncident.latitude.toFixed(5)}, {selectedIncident.longitude.toFixed(5)}
+                    {typeof selectedIncident.gpsAccuracyMeters === 'number'
+                      ? ` (±${selectedIncident.gpsAccuracyMeters}m)`
+                      : ''}
+                  </span>
+                ) : null}
               </div>
+
               <p>{selectedIncident.description}</p>
+
+              {selectedIncident.witnessInfo ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                  <span className="font-semibold text-slate-700">Witness Details: </span>
+                  <span className="text-slate-600">{selectedIncident.witnessInfo}</span>
+                </div>
+              ) : null}
+
+              {selectedIncident.protectReporterIdentity ? (
+                <div className="inline-flex items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-800">
+                  <Lock className="h-3.5 w-3.5" />
+                  <span>Reporter identity privacy protection enabled</span>
+                </div>
+              ) : null}
+
               {selectedIncident.evidenceBase64 ? (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-medium text-slate-600">
-                    Attached Evidence: {selectedIncident.evidenceFileName || 'evidence'}
-                  </p>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-medium text-slate-700">
+                      Attached Evidence: {selectedIncident.evidenceFileName || 'evidence'}
+                    </span>
+                    {selectedIncident.evidenceSha256 ? (
+                      <span className="inline-flex items-center gap-1 font-mono text-[10px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded">
+                        <ShieldCheck className="h-3 w-3" />
+                        SHA-256: {selectedIncident.evidenceSha256.slice(0, 16)}…
+                      </span>
+                    ) : null}
+                  </div>
                   {selectedIncident.evidenceBase64.startsWith('data:image/') ? (
                     <img
                       src={selectedIncident.evidenceBase64}
@@ -667,6 +817,57 @@ export function IncidentsPage({
                   )}
                 </div>
               ) : null}
+
+              {/* Multi-Report Comparison at Same Polling Unit / Ward */}
+              {relatedPuIncidents.length > 0 ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 space-y-1.5">
+                  <p className="text-xs font-bold text-amber-950">
+                    Corroboration Check: {relatedPuIncidents.length} other incident report(s) in same PU/Ward
+                  </p>
+                  <div className="space-y-1 max-h-28 overflow-y-auto">
+                    {relatedPuIncidents.slice(0, 5).map((rel) => (
+                      <div key={rel.id} className="text-[11px] text-amber-900 flex items-center justify-between gap-2">
+                        <span className="truncate">
+                          <strong>{rel.puCode}</strong> · {rel.title} ({rel.category})
+                        </span>
+                        <span className="font-mono shrink-0">{rel.status}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Immutable Incident Verification History */}
+              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                  <History className="h-3.5 w-3.5 text-slate-500" />
+                  <span>Immutable Incident Verification History</span>
+                </div>
+                {loadingHistory ? (
+                  <p className="text-xs text-slate-500">Loading audit history...</p>
+                ) : incidentHistory.length === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    No prior workflow transitions recorded yet (original submission logged).
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {incidentHistory.map((h) => (
+                      <div key={h.id} className="border-t border-slate-100 pt-1.5 text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-slate-800">
+                            {h.previousStatus} → {h.newStatus}
+                          </span>
+                          <span className="font-mono text-slate-500">
+                            {formatFirestoreTime(h.createdAt)}
+                          </span>
+                        </div>
+                        <p className="text-slate-600">{h.note}</p>
+                        <p className="text-slate-400">Reviewer: {h.actorName}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {canReview ? (
@@ -724,15 +925,33 @@ export function IncidentsPage({
                 </div>
 
                 <div>
+                  <label htmlFor="rev-req-info" className="block text-xs font-medium text-slate-700">
+                    Request Additional Information from Reporter (Optional)
+                  </label>
+                  <input
+                    id="rev-req-info"
+                    type="text"
+                    maxLength={600}
+                    value={requestedInfoNote}
+                    onChange={(e) => setRequestedInfoNote(e.target.value)}
+                    placeholder="Specify follow-up evidence or clarification needed..."
+                    className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                  />
+                </div>
+
+                <div>
                   <label htmlFor="rev-notes" className="block text-xs font-medium text-slate-700">
-                    Internal Review Notes (Hidden from Public)
+                    Verification Decision Reason &amp; Internal Notes * (Logged to Immutable History)
                   </label>
                   <textarea
                     id="rev-notes"
                     rows={3}
+                    required
+                    minLength={3}
                     maxLength={1500}
                     value={reviewNotes}
                     onChange={(e) => setReviewNotes(e.target.value)}
+                    placeholder="Explain verification outcome, corroboration findings, or escalation decision..."
                     className="mt-1 w-full rounded-lg border border-slate-300 p-3 text-sm"
                   />
                 </div>
@@ -747,7 +966,7 @@ export function IncidentsPage({
                   </button>
                   <button
                     type="submit"
-                    disabled={savingReview}
+                    disabled={savingReview || reviewNotes.trim().length < 3}
                     className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
                   >
                     {savingReview ? 'Saving...' : 'Update Incident Workflow'}

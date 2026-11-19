@@ -22,12 +22,16 @@ import {
   MIN_OPERATIONS_OFFICERS_PER_WARD,
   USER_ROLE_META,
   UserRole,
+  VerificationStatus,
   canManageOperationsOfficers,
   formatFirestoreTime,
   type AgentCheckIn,
   type IncidentReport,
   type LgaId,
   type OperationalNote,
+  type OperationalTask,
+  type PollingUnit,
+  type ResultSubmission,
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
@@ -47,6 +51,9 @@ interface OperationsOfficersPageProps {
   currentUser: UserAccount;
   users: UserAccount[];
   wards: Ward[];
+  pollingUnits?: PollingUnit[];
+  results?: ResultSubmission[];
+  tasks?: OperationalTask[];
   checkIns: AgentCheckIn[];
   incidents: IncidentReport[];
   notes: OperationalNote[];
@@ -84,6 +91,8 @@ export function OperationsOfficersPage({
   currentUser,
   users,
   wards,
+  pollingUnits = [],
+  results = [],
   checkIns,
   incidents,
   notes,
@@ -170,13 +179,64 @@ export function OperationsOfficersPage({
     const compliantWards = wardCoverage.filter((w) => w.isCompliant).length;
     const understaffedWards = wardCoverage.length - compliantWards;
     const remainingVacancies = wardCoverage.reduce((acc, w) => acc + w.vacancyCount, 0);
+
+    // Module 9: Strict separation between Staffing Target vs Live Attendance & PU Reporting
+    const assignedPuCount = pollingUnits.filter((p) => Boolean(p.assignedAgentUid)).length;
+    const unassignedPuCount = Math.max(0, pollingUnits.length - assignedPuCount);
+    const checkedInPuIds = new Set(checkIns.map((c) => c.puId).filter(Boolean));
+    const checkedInOfficerUids = new Set(checkIns.map((c) => c.agentUid).filter(Boolean));
+    const activeOpsOfficers = users.filter(
+      (u) =>
+        u.role === UserRole.OPERATIONS_OFFICER &&
+        u.status === AccountStatus.ACTIVE &&
+        !u.sessionRevoked
+    );
+    const checkedInOpsCount = activeOpsOfficers.filter((u) => checkedInOfficerUids.has(u.uid)).length;
+    const notCheckedInOpsCount = Math.max(0, activeOpsOfficers.length - checkedInOpsCount);
+    const verifiedPuIds = new Set(
+      results
+        .filter((r) => r.verificationStatus === VerificationStatus.VERIFIED)
+        .map((r) => r.puId)
+    );
+
     return {
       totalActive,
       compliantWards,
       understaffedWards,
       remainingVacancies,
+      totalPus: pollingUnits.length,
+      assignedPuCount,
+      unassignedPuCount,
+      checkedInPuCount: checkedInPuIds.size,
+      checkedInOpsCount,
+      notCheckedInOpsCount,
+      verifiedPuCount: verifiedPuIds.size,
+      reportingPct:
+        pollingUnits.length > 0 ? Math.round((verifiedPuIds.size / pollingUnits.length) * 100) : 0,
     };
-  }, [wardCoverage]);
+  }, [wardCoverage, pollingUnits, checkIns, users, results]);
+
+  const wardLiveStats = useMemo(() => {
+    const map = new Map<
+      string,
+      { puTotal: number; puAssigned: number; puCheckedIn: number; puVerified: number }
+    >();
+    const checkedInPuIds = new Set(checkIns.map((c) => c.puId));
+    const verifiedPuIds = new Set(
+      results
+        .filter((r) => r.verificationStatus === VerificationStatus.VERIFIED)
+        .map((r) => r.puId)
+    );
+    pollingUnits.forEach((pu) => {
+      const cur = map.get(pu.wardId) || { puTotal: 0, puAssigned: 0, puCheckedIn: 0, puVerified: 0 };
+      cur.puTotal += 1;
+      if (pu.assignedAgentUid) cur.puAssigned += 1;
+      if (checkedInPuIds.has(pu.id)) cur.puCheckedIn += 1;
+      if (verifiedPuIds.has(pu.id)) cur.puVerified += 1;
+      map.set(pu.wardId, cur);
+    });
+    return map;
+  }, [pollingUnits, checkIns, results]);
 
   const eligibleUsersForPromotion = useMemo(() => {
     return users
@@ -394,31 +454,48 @@ export function OperationsOfficersPage({
         ) : null}
       </div>
 
-      {/* Metrics Strip */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">Active Operations Officers</p>
-          <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
-            {metrics.totalActive}
-          </p>
-        </div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-          <p className="text-xs font-medium text-emerald-900">Compliant Wards (&ge; 5)</p>
-          <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-900">
-            {metrics.compliantWards} / {wardCoverage.length || 22}
-          </p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-          <p className="text-xs font-medium text-amber-900">Wards Below Minimum (&lt; 5)</p>
-          <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-amber-900">
-            {metrics.understaffedWards}
-          </p>
-        </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <p className="text-xs font-medium text-slate-500">Minimum Slots Remaining</p>
-          <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
-            {metrics.remainingVacancies}
-          </p>
+      {/* Module 9: Ward Staffing Target vs Live Attendance & PU Coverage Strip */}
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium text-slate-500">Staffing · Active Ops Officers</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
+              {metrics.totalActive}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Minimum slots remaining: {metrics.remainingVacancies}
+            </p>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+            <p className="text-xs font-medium text-emerald-900">Staffing · Compliant Wards (&ge; 5)</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-900">
+              {metrics.compliantWards} / {wardCoverage.length || 22}
+            </p>
+            <p className="mt-0.5 text-[11px] text-emerald-900/80">
+              Understaffed (&lt; 5): {metrics.understaffedWards} ward(s)
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium text-slate-500">Live Attendance · Checked-In Officers</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-[#0b3b24]">
+              {metrics.checkedInOpsCount} / {metrics.totalActive}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Not yet checked in: {metrics.notCheckedInOpsCount}
+            </p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <p className="text-xs font-medium text-slate-500">Polling Unit Coverage ({metrics.totalPus})</p>
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
+              {metrics.assignedPuCount}{' '}
+              <span className="text-xs font-normal text-slate-500">
+                assigned · {metrics.unassignedPuCount} unassigned
+              </span>
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-500">
+              Checked-in PUs: {metrics.checkedInPuCount} · Verified Results: {metrics.verifiedPuCount} ({metrics.reportingPct}%)
+            </p>
+          </div>
         </div>
       </div>
 
@@ -529,6 +606,20 @@ export function OperationsOfficersPage({
                     : `${item.vacancyCount} vacancy slot${item.vacancyCount === 1 ? '' : 's'} remaining to reach 5.`}
                   {item.suspendedCount > 0 ? ` (${item.suspendedCount} suspended)` : ''}
                 </p>
+
+                {(() => {
+                  const st = wardLiveStats.get(item.wardId);
+                  if (!st || st.puTotal === 0) return null;
+                  const pct = Math.round((st.puVerified / st.puTotal) * 100);
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px] text-slate-500 tabular-nums">
+                      <span>PUs: {st.puTotal}</span>
+                      <span>· Agents: {st.puAssigned}</span>
+                      <span>· Checked-in: {st.puCheckedIn}</span>
+                      <span>· Verified: {pct}%</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {canManage ? (

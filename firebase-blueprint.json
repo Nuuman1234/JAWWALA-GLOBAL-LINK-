@@ -19,6 +19,7 @@
       "type": "object",
       "properties": {
         "inactivityTimeoutMinutes": { "type": "integer", "description": "Auto-logout timeout in minutes." },
+        "offlineSessionMaxDays": { "type": "integer", "description": "Maximum days a previously server-verified trusted device may open offline before requiring fresh online re-authentication (1-30)." },
         "mfaPrepared": { "type": "boolean", "description": "MFA readiness flag." },
         "publicSummaryEnabled": { "type": "boolean", "description": "Whether approved public summaries are visible." },
         "smsFallbackConfigured": { "type": "boolean", "description": "Whether external SMS/USSD provider credentials are configured." },
@@ -172,20 +173,44 @@
     },
     "PartyConfig": {
       "title": "PartyConfig",
-      "description": "Fixed political party record storing uploaded cloud logo for APC, PDP, ADC, or OTHERS.",
+      "description": "Fixed political party record storing permanent cloud logo storage reference for APC, PDP, ADC, or OTHERS.",
       "type": "object",
       "properties": {
         "partyCode": { "type": "string", "enum": ["APC", "PDP", "ADC", "OTHERS"] },
         "partyName": { "type": "string" },
-        "logoUrl": { "type": "string", "description": "Cloud Storage download URL or compressed base64 data URL." },
-        "storageMode": { "type": "string", "enum": ["firebase_storage", "firestore_cloud", "none"] },
+        "logoUrl": { "type": "string", "description": "Permanent Cloud Storage HTTPS URL, canonical fdmis-asset:// reference, or legacy cloud record." },
+        "storageMode": { "type": "string", "enum": ["firebase_storage", "firestore_asset_store", "firestore_cloud", "none"] },
+        "storagePath": { "type": "string", "description": "Canonical persistent storage path for the party logo asset." },
+        "logoAssetId": { "type": "string", "description": "Unique immutable asset document ID linked to party_logo_assets." },
         "fileName": { "type": "string" },
+        "contentType": { "type": "string", "enum": ["", "image/png", "image/jpeg", "image/webp"] },
+        "fileSizeBytes": { "type": "integer" },
         "sha256Hash": { "type": "string" },
         "updatedByUid": { "type": "string" },
         "updatedByName": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["partyCode", "partyName", "logoUrl", "storageMode", "updatedByUid", "updatedByName", "updatedAt"]
+    },
+    "PartyLogoAsset": {
+      "title": "PartyLogoAsset",
+      "description": "Dedicated persistent binary media object storing validated PNG, JPEG, or WebP party logo files.",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "partyCode": { "type": "string", "enum": ["APC", "PDP", "ADC", "OTHERS"] },
+        "fileName": { "type": "string" },
+        "contentType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/webp"] },
+        "fileSizeBytes": { "type": "integer" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "sha256Hash": { "type": "string" },
+        "binaryData": { "type": "string", "format": "binary", "description": "Native Firestore Bytes binary image payload." },
+        "uploadedByUid": { "type": "string" },
+        "uploadedByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["assetId", "partyCode", "fileName", "contentType", "fileSizeBytes", "width", "height", "sha256Hash", "binaryData", "uploadedByUid", "uploadedByName", "createdAt"]
     },
     "Ward": {
       "title": "Ward",
@@ -292,6 +317,16 @@
         "networkStatus": { "type": "string", "description": "Optional connectivity status." },
         "latitude": { "type": "number", "description": "Optional coarse latitude if permitted." },
         "longitude": { "type": "number", "description": "Optional coarse longitude if permitted." },
+        "gpsAccuracyMeters": { "type": "integer", "description": "Optional GPS accuracy radius in meters." },
+        "deviceId": { "type": "string", "description": "Anonymous device reference ID." },
+        "fieldStatus": { "type": "string", "description": "Field operational status at check-in." },
+        "photoBase64": { "type": "string", "description": "Optional compressed check-in photo preview." },
+        "photoFileName": { "type": "string", "description": "Optional check-in photo filename." },
+        "locationExceptionFlag": { "type": "boolean", "description": "True when GPS reading differs significantly from verified PU coordinates." },
+        "locationExceptionDistanceMeters": { "type": "number", "description": "Measured distance in meters when locationExceptionFlag is true." },
+        "exceptionReviewStatus": { "type": "string", "enum": ["NONE", "PENDING_REVIEW", "EXPLAINED", "CONFIRMED_EXCEPTION", "CLEARED", "FOLLOW_UP_REQUESTED"] },
+        "exceptionReviewNote": { "type": "string" },
+        "exceptionReviewedByUid": { "type": "string" },
         "clientSubmissionId": { "type": "string", "description": "Idempotency key for offline sync deduplication." },
         "clientCreatedAtIso": { "type": "string", "description": "Original client-side ISO timestamp." },
         "serverSyncedAt": { "type": "string", "format": "date-time", "description": "Server sync timestamp." },
@@ -309,7 +344,7 @@
         "category": { "type": "string" },
         "description": { "type": "string" },
         "urgency": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
-        "status": { "type": "string", "enum": ["NEW", "UNDER_REVIEW", "ESCALATED", "RESOLVED", "CLOSED"] },
+        "status": { "type": "string", "enum": ["DRAFT", "NEW", "SUBMITTED", "PENDING_REVIEW", "UNDER_REVIEW", "UNDER_INVESTIGATION", "VERIFIED", "UNVERIFIED", "ESCALATED", "RESOLVED", "REJECTED", "CLOSED"] },
         "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
         "wardId": { "type": "string" },
         "puId": { "type": "string" },
@@ -317,8 +352,15 @@
         "puName": { "type": "string" },
         "reporterUid": { "type": "string" },
         "reporterName": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "gpsAccuracyMeters": { "type": "integer" },
         "evidenceBase64": { "type": "string", "description": "Optional compressed JPEG evidence preview." },
         "evidenceFileName": { "type": "string" },
+        "evidenceSha256": { "type": "string" },
+        "witnessInfo": { "type": "string" },
+        "protectReporterIdentity": { "type": "boolean" },
+        "requestedInfoNote": { "type": "string" },
         "internalNotes": { "type": "string" },
         "escalatedTo": { "type": "string" },
         "reviewedByUid": { "type": "string" },
@@ -330,6 +372,22 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "category", "description", "urgency", "status", "lgaId", "wardId", "puId", "puCode", "puName", "reporterUid", "reporterName", "internalNotes", "escalatedTo", "reviewedByUid", "clientSubmissionId", "isTestData", "createdAt", "updatedAt"]
+    },
+    "IncidentHistoryEntry": {
+      "title": "IncidentHistoryEntry",
+      "description": "Immutable review and status transition trail for an incident report.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "previousStatus": { "type": "string" },
+        "newStatus": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "note": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "previousStatus", "newStatus", "urgency", "note", "actorUid", "actorName", "createdAt"]
     },
     "ResultSubmission": {
       "title": "ResultSubmission",
@@ -344,6 +402,7 @@
         "wardName": { "type": "string" },
         "submittedByUid": { "type": "string" },
         "submittedByName": { "type": "string" },
+        "electionCategory": { "type": "string" },
         "apcVotes": { "type": "integer" },
         "pdpVotes": { "type": "integer" },
         "adcVotes": { "type": "integer" },
@@ -358,7 +417,11 @@
         "submissionNotes": { "type": "string" },
         "ec8aImageBase64": { "type": "string" },
         "ec8aFileName": { "type": "string" },
-        "verificationStatus": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "UNDER_REVIEW", "VERIFIED", "REJECTED", "REQUIRES_CORRECTION"] },
+        "discrepancyFlag": { "type": "boolean" },
+        "discrepancySummary": { "type": "string" },
+        "duplicateOfSubmissionId": { "type": "string" },
+        "ocrAssistedReviewNote": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["DRAFT", "SUBMITTED", "PENDING_VERIFICATION", "UNDER_REVIEW", "VERIFIED", "DISCREPANCY_DETECTED", "CORRECTED", "REJECTED", "REQUIRES_CORRECTION"] },
         "publiclyApproved": { "type": "boolean" },
         "reviewNote": { "type": "string" },
         "reviewedByUid": { "type": "string" },
@@ -460,7 +523,7 @@
       "properties": {
         "attachmentId": { "type": "string" },
         "reportId": { "type": "string" },
-        "reportType": { "type": "string", "enum": ["CHECK_IN", "STATUS_UPDATE", "INCIDENT_REPORT", "RESULT_SUBMISSION"] },
+        "reportType": { "type": "string", "enum": ["CHECK_IN", "CHECK_IN_PHOTO", "STATUS_UPDATE", "INCIDENT_REPORT", "RESULT_SUBMISSION"] },
         "ownerUid": { "type": "string" },
         "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
         "wardId": { "type": "string" },
@@ -696,7 +759,7 @@
       "properties": {
         "reportCategory": {
           "type": "string",
-          "enum": ["DAILY_SITUATION", "WARD_PERFORMANCE", "LGA_SUMMARY", "ELECTION_INCIDENT", "AGENT_ACTIVITY", "OFFICER_PERFORMANCE", "TASK_COMPLETION"]
+          "enum": ["DAILY_SITUATION", "WARD_PERFORMANCE", "LGA_SUMMARY", "PU_COVERAGE", "ELECTION_INCIDENT", "AGENT_ACTIVITY", "OFFICER_PERFORMANCE", "TASK_COMPLETION", "FIELD_CHECKIN", "RESULTS_SUBMISSION_STATUS", "DATA_SYNCHRONIZATION", "OUTSTANDING_ACTIONS"]
         },
         "reportTitle": { "type": "string", "minLength": 3, "maxLength": 180 },
         "reportingPeriodStartIso": { "type": "string", "maxLength": 40 },
@@ -757,6 +820,88 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["actorUid", "actorName", "actorEmail", "actorRole", "action", "affectedEntity", "affectedId", "details", "createdAt"]
+    },
+    "DeletionTombstone": {
+      "title": "DeletionTombstone",
+      "description": "Server-authoritative permanent deletion tombstone preventing deleted records from returning via offline sync or backups.",
+      "type": "object",
+      "properties": {
+        "recordId": { "type": "string", "maxLength": 128 },
+        "collectionName": { "type": "string", "maxLength": 64 },
+        "deletedByUid": { "type": "string", "maxLength": 128 },
+        "deletedByEmail": { "type": "string", "maxLength": 200 },
+        "reason": { "type": "string", "maxLength": 240 },
+        "deletedAtIso": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recordId", "collectionName", "deletedByUid", "deletedByEmail", "reason", "deletedAtIso", "createdAt"]
+    },
+    "SystemBackupRecord": {
+      "title": "SystemBackupRecord",
+      "description": "Metadata and SHA-256 verification ledger for AES-GCM-256 encrypted FDMIS system backups.",
+      "type": "object",
+      "properties": {
+        "backupType": { "type": "string", "enum": ["SCHEDULED_AUTO", "MANUAL_ADMIN", "PRE_RESTORATION"] },
+        "label": { "type": "string", "maxLength": 140 },
+        "encryptionAlgorithm": { "type": "string", "enum": ["AES-GCM-256"] },
+        "sha256Checksum": { "type": "string", "maxLength": 64 },
+        "sizeBytes": { "type": "integer" },
+        "recordCounts": { "type": "object" },
+        "status": { "type": "string", "enum": ["COMPLETED", "VERIFIED", "FAILED"] },
+        "errorMessage": { "type": "string", "maxLength": 400 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "createdAtIso": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["backupType", "label", "encryptionAlgorithm", "sha256Checksum", "sizeBytes", "recordCounts", "status", "createdByUid", "createdByName", "createdAtIso", "createdAt"]
+    },
+    "EscalationRule": {
+      "title": "EscalationRule",
+      "description": "Full Control Admin configurable alert escalation rule.",
+      "type": "object",
+      "properties": {
+        "ruleName": { "type": "string", "maxLength": 120 },
+        "triggerType": { "type": "string", "enum": ["MISSING_CHECKIN", "CRITICAL_INCIDENT", "OVERDUE_TASK", "RESULT_DISCREPANCY", "SYNC_FAILURE", "LOW_WARD_COVERAGE", "EMERGENCY_ASSISTANCE"] },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "responsibleRole": { "type": "string" },
+        "escalateAfterMinutes": { "type": "integer" },
+        "recipientRole": { "type": "string" },
+        "maxNotificationsPerHour": { "type": "integer" },
+        "enabled": { "type": "boolean" },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["ruleName", "triggerType", "priority", "responsibleRole", "escalateAfterMinutes", "recipientRole", "maxNotificationsPerHour", "enabled", "updatedByUid", "updatedAt"]
+    },
+    "EmergencyReport": {
+      "title": "EmergencyReport",
+      "description": "Structured urgent emergency assistance request separate from formal election incidents.",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "minLength": 5, "maxLength": 1200 },
+        "urgency": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "status": { "type": "string", "enum": ["SUBMITTED", "ACKNOWLEDGED", "RESPONDER_ASSIGNED", "RESOLVED", "CLOSED"] },
+        "lgaId": { "type": "string", "enum": ["all", "funtua", "dandume"] },
+        "wardId": { "type": "string", "maxLength": 128 },
+        "puId": { "type": "string", "maxLength": 128 },
+        "puCode": { "type": "string", "maxLength": 40 },
+        "puName": { "type": "string", "maxLength": 160 },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "reporterUid": { "type": "string", "maxLength": 128 },
+        "reporterName": { "type": "string", "maxLength": 120 },
+        "reporterPhone": { "type": "string", "maxLength": 30 },
+        "assignedResponderUid": { "type": "string", "maxLength": 128 },
+        "assignedResponderName": { "type": "string", "maxLength": 120 },
+        "resolutionNotes": { "type": "string", "maxLength": 1200 },
+        "clientSubmissionId": { "type": "string", "maxLength": 128 },
+        "clientCreatedAtIso": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["category", "description", "urgency", "status", "lgaId", "wardId", "puId", "puCode", "puName", "reporterUid", "reporterName", "reporterPhone", "assignedResponderUid", "assignedResponderName", "resolutionNotes", "clientSubmissionId", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -794,7 +939,11 @@
     },
     "/party_configs/{partyId}": {
       "schema": { "$ref": "#/entities/PartyConfig" },
-      "description": "Fixed 4 political party configurations and uploaded cloud logos (APC, PDP, ADC, OTHERS)."
+      "description": "Fixed 4 political party configurations and persistent cloud logo references (APC, PDP, ADC, OTHERS)."
+    },
+    "/party_logo_assets/{assetId}": {
+      "schema": { "$ref": "#/entities/PartyLogoAsset" },
+      "description": "Persistent binary media objects for uploaded political party logos linked from party_configs."
     },
     "/wards/{wardId}": {
       "schema": { "$ref": "#/entities/Ward" },
@@ -819,6 +968,10 @@
     "/incidents/{incidentId}": {
       "schema": { "$ref": "#/entities/IncidentReport" },
       "description": "Field incident reports and alert workflow."
+    },
+    "/incidents/{incidentId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/IncidentHistoryEntry" },
+      "description": "Immutable incident review and escalation history."
     },
     "/result_submissions/{resultId}": {
       "schema": { "$ref": "#/entities/ResultSubmission" },
@@ -856,6 +1009,14 @@
       "schema": { "$ref": "#/entities/EmergencyContact" },
       "description": "Emergency assistance contact numbers for authenticated field and situation room staff."
     },
+    "/emergency_reports/{reportId}": {
+      "schema": { "$ref": "#/entities/EmergencyReport" },
+      "description": "Structured emergency assistance requests separate from formal election incidents."
+    },
+    "/escalation_rules/{ruleId}": {
+      "schema": { "$ref": "#/entities/EscalationRule" },
+      "description": "Admin-configurable smart notification escalation rules."
+    },
     "/operational_notes/{noteId}": {
       "schema": { "$ref": "#/entities/OperationalNote" },
       "description": "Operational notes and short field messages with offline sync deduplication."
@@ -871,6 +1032,14 @@
     "/generated_reports/{reportId}": {
       "schema": { "$ref": "#/entities/GeneratedReport" },
       "description": "Archived automatic daily and on-demand FDMIS analytical report snapshots."
+    },
+    "/deletion_tombstones/{recordId}": {
+      "schema": { "$ref": "#/entities/DeletionTombstone" },
+      "description": "Server-authoritative permanent deletion tombstones preventing resurrection of deleted records."
+    },
+    "/system_backups/{backupId}": {
+      "schema": { "$ref": "#/entities/SystemBackupRecord" },
+      "description": "Encrypted backup metadata and checksum verification ledger."
     },
     "/audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },

@@ -34,6 +34,7 @@ import {
   type AgentCheckIn,
   type AggregatedResult,
   type ApprovedPuResult,
+  type IncidentHistoryEntry,
   type IncidentReport,
   type LgaId,
   type NotificationItem,
@@ -49,8 +50,10 @@ import {
   type Ward,
 } from '../types/fdmis';
 import {
+  analyzeResultDiscrepancies,
   applyAggregationDelta,
   computeAggregationDelta,
+  computeHaversineDistanceMeters,
   validateResultFigures,
 } from '../utils/aggregationEngine';
 import { toValidDocId } from './officialDirectory';
@@ -58,7 +61,9 @@ import {
   deleteQueueItem,
   generateClientSubmissionId,
   getDeletedTombstones,
+  getOrCreateDeviceRefId,
   getQueuedItems,
+  mergeServerTombstones,
   saveLocalNote,
   updateQueueItemStatus,
 } from './offlineQueue';
@@ -72,6 +77,8 @@ import {
   type OfficerTaskUpdateInput,
 } from './taskService';
 import { archiveGeneratedReport } from './reportArchiveService';
+import { fetchServerTombstoneIdSet } from './dataManagementService';
+import { submitEmergencyReport } from './emergencyService';
 import type {
   AnalyticsReportFilters,
   CompiledAutomaticReport,
@@ -540,6 +547,23 @@ export async function fetchResultHistory(resultId: string): Promise<ResultHistor
   }
 }
 
+export async function fetchIncidentHistory(incidentId: string): Promise<IncidentHistoryEntry[]> {
+  try {
+    const snap = await getDocs(
+      query(
+        collection(db, 'incidents', incidentId, 'history'),
+        orderBy('createdAt', 'desc')
+      )
+    );
+    return snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<IncidentHistoryEntry, 'id'>),
+    }));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, `incidents/${incidentId}/history`);
+  }
+}
+
 export async function submitCheckIn(
   actor: UserAccount,
   pu: PollingUnit,
@@ -550,6 +574,11 @@ export async function submitCheckIn(
     networkStatus: string;
     latitude?: number | null;
     longitude?: number | null;
+    gpsAccuracyMeters?: number | null;
+    deviceId?: string;
+    fieldStatus?: string;
+    photoBase64?: string | null;
+    photoFileName?: string | null;
     isTestData?: boolean;
     clientCreatedAtIso?: string;
   },
@@ -571,6 +600,29 @@ export async function submitCheckIn(
   }
 
   const clientCreatedAtIso = (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64);
+  const deviceId = (input.deviceId || getOrCreateDeviceRefId()).slice(0, 80);
+
+  let locationExceptionFlag = false;
+  let locationExceptionDistanceMeters: number | null = null;
+
+  if (
+    typeof input.latitude === 'number' &&
+    typeof input.longitude === 'number' &&
+    pu.coordinatesVerified &&
+    typeof pu.latitude === 'number' &&
+    typeof pu.longitude === 'number'
+  ) {
+    const distance = computeHaversineDistanceMeters(
+      input.latitude,
+      input.longitude,
+      pu.latitude,
+      pu.longitude
+    );
+    if (distance > 1000) {
+      locationExceptionFlag = true;
+      locationExceptionDistanceMeters = distance;
+    }
+  }
 
   const payload: Record<string, unknown> = {
     puId: pu.id,
@@ -584,6 +636,9 @@ export async function submitCheckIn(
     comments: input.comments.trim().slice(0, 500),
     batteryPercent: Math.max(-1, Math.min(100, Math.round(input.batteryPercent))),
     networkStatus: input.networkStatus.trim().slice(0, 64),
+    deviceId,
+    fieldStatus: (input.fieldStatus || 'ON_SITE_ACTIVE').trim().slice(0, 64),
+    locationExceptionFlag,
     clientSubmissionId: docId,
     clientCreatedAtIso,
     serverSyncedAt: serverTimestamp(),
@@ -594,11 +649,45 @@ export async function submitCheckIn(
     payload.latitude = input.latitude;
     payload.longitude = input.longitude;
   }
+  if (typeof input.gpsAccuracyMeters === 'number' && Number.isFinite(input.gpsAccuracyMeters)) {
+    payload.gpsAccuracyMeters = Math.max(0, Math.round(input.gpsAccuracyMeters));
+  }
+  if (locationExceptionFlag && typeof locationExceptionDistanceMeters === 'number') {
+    payload.locationExceptionDistanceMeters = locationExceptionDistanceMeters;
+    payload.exceptionReviewStatus = 'PENDING_REVIEW';
+  }
+  if (input.photoBase64) {
+    payload.photoBase64 = input.photoBase64;
+    payload.photoFileName = (input.photoFileName || 'checkin_photo.jpg').slice(0, 120);
+  }
 
   try {
     await setDoc(ref, payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, `check_ins/${docId}`);
+  }
+
+  if (input.photoBase64) {
+    const attachmentId = toValidDocId(`chk_att_${docId}`);
+    const sha256Hash = await computeEvidenceSha256(input.photoBase64);
+    try {
+      await setDoc(doc(db, 'report_attachments', attachmentId), {
+        attachmentId,
+        reportId: docId,
+        reportType: 'CHECK_IN_PHOTO',
+        ownerUid: uid,
+        lgaId: pu.lgaId,
+        wardId: pu.wardId,
+        puId: pu.id,
+        fileName: (input.photoFileName || 'checkin_photo.jpg').slice(0, 120),
+        sha256Hash,
+        sizeBytes: input.photoBase64.length,
+        base64Data: input.photoBase64,
+        createdAt: serverTimestamp(),
+      });
+    } catch {
+      // Supplementary mirror
+    }
   }
 
   if (
@@ -617,8 +706,8 @@ export async function submitCheckIn(
 
   await addTimelineEvent(actor, {
     eventType: 'AGENT_CHECK_IN',
-    title: `Agent Checked In at ${pu.puCode}`,
-    description: `${actor.displayName} confirmed presence at ${pu.name} (${input.arrivalTimeText}). ${input.comments}`.trim(),
+    title: `Field Check-In at ${pu.puCode}`,
+    description: `${actor.displayName} confirmed presence at ${pu.name} (${input.arrivalTimeText}).${locationExceptionFlag && locationExceptionDistanceMeters ? ` Location review flag: GPS reading ${locationExceptionDistanceMeters}m from verified PU point.` : ''} ${input.comments}`.trim(),
     lgaId: pu.lgaId,
     wardId: pu.wardId,
     puId: pu.id,
@@ -627,9 +716,13 @@ export async function submitCheckIn(
   });
 
   await addNotification(actor, {
-    title: `Agent Check-In: ${pu.puCode}`,
-    body: `${actor.displayName} checked in at ${pu.name} (${pu.wardName}).`,
-    type: 'AGENT_CHECK_IN',
+    title: locationExceptionFlag
+      ? `Check-In Location Review Needed: ${pu.puCode}`
+      : `Agent Check-In: ${pu.puCode}`,
+    body: locationExceptionFlag && locationExceptionDistanceMeters
+      ? `${actor.displayName} checked in at ${pu.name} (${pu.wardName}). GPS reading differed by ${locationExceptionDistanceMeters}m from verified PU coordinates — flagged for administrative review.`
+      : `${actor.displayName} checked in at ${pu.name} (${pu.wardName}).`,
+    type: locationExceptionFlag ? 'CHECKIN_LOCATION_EXCEPTION' : 'AGENT_CHECK_IN',
     targetLgaId: pu.lgaId,
     targetWardId: pu.wardId,
     isCritical: false,
@@ -641,10 +734,42 @@ export async function submitCheckIn(
     'AGENT_CHECK_IN_SUBMITTED',
     'check_ins',
     docId,
-    `Agent checked in at ${pu.puCode} (${pu.name}) at ${input.arrivalTimeText}.`
+    `Field check-in at ${pu.puCode} (${pu.name}) at ${input.arrivalTimeText}.${locationExceptionFlag ? ` Distance flag=${locationExceptionDistanceMeters}m (pending review).` : ''}`
   );
 
   return docId;
+}
+
+export async function reviewCheckInException(
+  actor: UserAccount,
+  checkIn: AgentCheckIn,
+  decision: 'EXPLAINED' | 'CONFIRMED_EXCEPTION',
+  note: string
+): Promise<void> {
+  const uid = requireAuthUid();
+  if (!canReviewIncidents(actor.role)) {
+    throw new Error('Only authorized administrators or coordinators can review location exceptions.');
+  }
+  const cleanNote = note.trim().slice(0, 500);
+  if (cleanNote.length < 3) {
+    throw new Error('Enter a brief administrative review note (at least 3 characters).');
+  }
+  try {
+    await updateDoc(doc(db, 'check_ins', checkIn.id), {
+      exceptionReviewStatus: decision,
+      exceptionReviewNote: cleanNote,
+      exceptionReviewedByUid: uid,
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `check_ins/${checkIn.id}`);
+  }
+  await logAudit(
+    actor,
+    'CHECKIN_LOCATION_EXCEPTION_REVIEWED',
+    'check_ins',
+    checkIn.id,
+    `Reviewed check-in location exception for ${checkIn.puCode} (${checkIn.agentName}): ${decision}. Note: ${cleanNote}`
+  );
 }
 
 export async function updatePollingUnitStatus(
@@ -697,6 +822,11 @@ export async function submitIncidentReport(
     urgency: IncidentUrgency;
     evidenceBase64?: string | null;
     evidenceFileName?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    gpsAccuracyMeters?: number | null;
+    witnessInfo?: string;
+    protectReporterIdentity?: boolean;
     isTestData?: boolean;
     clientCreatedAtIso?: string;
   },
@@ -722,6 +852,10 @@ export async function submitIncidentReport(
   }
 
   const clientCreatedAtIso = (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64);
+  let evidenceSha256 = '';
+  if (input.evidenceBase64) {
+    evidenceSha256 = await computeEvidenceSha256(input.evidenceBase64);
+  }
 
   const payload: Record<string, unknown> = {
     title: cleanTitle,
@@ -739,6 +873,9 @@ export async function submitIncidentReport(
     internalNotes: '',
     escalatedTo: '',
     reviewedByUid: '',
+    witnessInfo: (input.witnessInfo || '').trim().slice(0, 300),
+    protectReporterIdentity: Boolean(input.protectReporterIdentity),
+    requestedInfoNote: '',
     clientSubmissionId: docId,
     clientCreatedAtIso,
     serverSyncedAt: serverTimestamp(),
@@ -747,9 +884,17 @@ export async function submitIncidentReport(
     updatedAt: serverTimestamp(),
   };
 
+  if (typeof input.latitude === 'number' && typeof input.longitude === 'number') {
+    payload.latitude = input.latitude;
+    payload.longitude = input.longitude;
+  }
+  if (typeof input.gpsAccuracyMeters === 'number' && Number.isFinite(input.gpsAccuracyMeters)) {
+    payload.gpsAccuracyMeters = Math.max(0, Math.round(input.gpsAccuracyMeters));
+  }
   if (input.evidenceBase64) {
     payload.evidenceBase64 = input.evidenceBase64;
     payload.evidenceFileName = (input.evidenceFileName || 'evidence.jpg').slice(0, 120);
+    payload.evidenceSha256 = evidenceSha256;
   }
 
   try {
@@ -758,9 +903,24 @@ export async function submitIncidentReport(
     handleFirestoreError(error, OperationType.CREATE, `incidents/${docId}`);
   }
 
+  // Immutable initial incident history entry
+  try {
+    await setDoc(doc(collection(db, 'incidents', docId, 'history')), {
+      action: 'INCIDENT_SUBMITTED',
+      previousStatus: 'NONE',
+      newStatus: IncidentStatus.NEW,
+      urgency: input.urgency,
+      note: cleanDesc.slice(0, 600),
+      actorUid: uid,
+      actorName: actor.displayName.slice(0, 120),
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-fatal history write
+  }
+
   if (input.evidenceBase64) {
     const attachmentId = toValidDocId(`att_${docId}`);
-    const sha256Hash = await computeEvidenceSha256(input.evidenceBase64);
     try {
       await setDoc(doc(db, 'report_attachments', attachmentId), {
         attachmentId,
@@ -771,7 +931,7 @@ export async function submitIncidentReport(
         wardId: pu.wardId,
         puId: pu.id,
         fileName: (input.evidenceFileName || 'evidence.jpg').slice(0, 120),
-        sha256Hash,
+        sha256Hash: evidenceSha256,
         sizeBytes: input.evidenceBase64.length,
         base64Data: input.evidenceBase64,
         createdAt: serverTimestamp(),
@@ -821,7 +981,7 @@ export async function submitIncidentReport(
     'INCIDENT_REPORT_SUBMITTED',
     'incidents',
     docId,
-    `Submitted ${input.urgency} incident "${cleanTitle}" for ${pu.puCode}.`
+    `Submitted ${input.urgency} incident "${cleanTitle}" for ${pu.puCode}${evidenceSha256 ? ` (SHA256=${evidenceSha256.slice(0, 12)}…)` : ''}.`
   );
 
   return docId;
@@ -835,11 +995,18 @@ export async function updateIncidentWorkflow(
     urgency: IncidentUrgency;
     internalNotes: string;
     escalatedTo: string;
+    requestedInfoNote?: string;
+    reviewReason?: string;
   }
 ): Promise<void> {
   const uid = requireAuthUid();
   if (!canReviewIncidents(actor.role)) {
     throw new Error('You do not have permission to review or escalate incidents.');
+  }
+
+  const effectiveNote = (updates.reviewReason || updates.internalNotes || '').trim().slice(0, 1500);
+  if (effectiveNote.length < 3) {
+    throw new Error('Provide a review note or decision reason (at least 3 characters) for the audit trail.');
   }
 
   try {
@@ -848,11 +1015,27 @@ export async function updateIncidentWorkflow(
       urgency: updates.urgency,
       internalNotes: updates.internalNotes.trim().slice(0, 1500),
       escalatedTo: updates.escalatedTo.trim().slice(0, 120),
+      requestedInfoNote: (updates.requestedInfoNote ?? incident.requestedInfoNote ?? '').trim().slice(0, 600),
       reviewedByUid: uid,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `incidents/${incident.id}`);
+  }
+
+  try {
+    await setDoc(doc(collection(db, 'incidents', incident.id, 'history')), {
+      action: `STATUS_${updates.status}`,
+      previousStatus: incident.status,
+      newStatus: updates.status,
+      urgency: updates.urgency,
+      note: effectiveNote.slice(0, 1000),
+      actorUid: uid,
+      actorName: actor.displayName.slice(0, 120),
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-fatal history write
   }
 
   await addTimelineEvent(actor, {
@@ -870,7 +1053,7 @@ export async function updateIncidentWorkflow(
     'INCIDENT_WORKFLOW_UPDATED',
     'incidents',
     incident.id,
-    `Incident "${incident.title}" transitioned ${incident.status} -> ${updates.status} (${updates.urgency}).`
+    `Incident "${incident.title}" transitioned ${incident.status} -> ${updates.status} (${updates.urgency}). Reason: ${effectiveNote.slice(0, 240)}`
   );
 }
 
@@ -892,12 +1075,15 @@ export async function submitPollingUnitResult(
     submissionNotes: string;
     ec8aImageBase64?: string | null;
     ec8aFileName?: string | null;
+    electionCategory?: string;
+    ocrAssistedReviewNote?: string;
     asDraft?: boolean;
     isTestData?: boolean;
     clientCreatedAtIso?: string;
   },
   existingResult?: ResultSubmission | null,
-  existingClientSubmissionId?: string
+  existingClientSubmissionId?: string,
+  allSubmissionsForDuplicateCheck?: ResultSubmission[]
 ): Promise<string> {
   const uid = requireAuthUid();
 
@@ -938,9 +1124,33 @@ export async function submitPollingUnitResult(
     throw new Error(validation.errors[0]);
   }
 
+  const discrepancyCheck = analyzeResultDiscrepancies(
+    {
+      id: existingResult?.id,
+      puId: pu.id,
+      apcVotes: apc,
+      pdpVotes: pdp,
+      adcVotes: adc,
+      othersVotes: others,
+      registeredVoters: reg,
+      accreditedVoters: acc,
+      validVotes: valid,
+      rejectedVotes: rej,
+      totalVotesCast: totalCast,
+      ec8aImageBase64: input.ec8aImageBase64 ?? existingResult?.ec8aImageBase64,
+    },
+    allSubmissionsForDuplicateCheck || []
+  );
+
+  const electionCategory = (input.electionCategory || existingResult?.electionCategory || 'HOUSE_OF_REPS')
+    .trim()
+    .slice(0, 64);
+
   const targetStatus = input.asDraft
     ? VerificationStatus.DRAFT
-    : VerificationStatus.SUBMITTED;
+    : discrepancyCheck.hasDiscrepancy
+      ? VerificationStatus.DISCREPANCY_DETECTED
+      : VerificationStatus.SUBMITTED;
 
   if (existingResult) {
     if (existingResult.verificationStatus === VerificationStatus.VERIFIED) {
@@ -957,6 +1167,7 @@ export async function submitPollingUnitResult(
     if (
       existingResult.verificationStatus !== VerificationStatus.DRAFT &&
       existingResult.verificationStatus !== VerificationStatus.REQUIRES_CORRECTION &&
+      existingResult.verificationStatus !== VerificationStatus.DISCREPANCY_DETECTED &&
       actor.role !== UserRole.FULL_CONTROL_ADMIN
     ) {
       throw new Error('Submitted results cannot be silently overwritten unless returned for correction.');
@@ -976,10 +1187,17 @@ export async function submitPollingUnitResult(
       bvasStatus: input.bvasStatus.slice(0, 80),
       bvasNotes: input.bvasNotes.trim().slice(0, 1000),
       submissionNotes: input.submissionNotes.trim().slice(0, 1000),
+      electionCategory,
+      discrepancyFlag: discrepancyCheck.hasDiscrepancy,
+      discrepancySummary: discrepancyCheck.summary.slice(0, 400),
+      duplicateOfSubmissionId: discrepancyCheck.duplicateOfSubmissionId.slice(0, 128),
       verificationStatus: targetStatus,
       version: nextVersion,
       updatedAt: serverTimestamp(),
     };
+    if (input.ocrAssistedReviewNote !== undefined) {
+      updatePayload.ocrAssistedReviewNote = input.ocrAssistedReviewNote.trim().slice(0, 400);
+    }
     if (input.ec8aImageBase64) {
       updatePayload.ec8aImageBase64 = input.ec8aImageBase64;
       updatePayload.ec8aFileName = (input.ec8aFileName || 'ec8a.jpg').slice(0, 120);
@@ -1092,6 +1310,11 @@ export async function submitPollingUnitResult(
     bvasStatus: input.bvasStatus.slice(0, 80),
     bvasNotes: input.bvasNotes.trim().slice(0, 1000),
     submissionNotes: input.submissionNotes.trim().slice(0, 1000),
+    electionCategory,
+    discrepancyFlag: discrepancyCheck.hasDiscrepancy,
+    discrepancySummary: discrepancyCheck.summary.slice(0, 400),
+    duplicateOfSubmissionId: discrepancyCheck.duplicateOfSubmissionId.slice(0, 128),
+    ocrAssistedReviewNote: (input.ocrAssistedReviewNote || '').trim().slice(0, 400),
     verificationStatus: targetStatus,
     publiclyApproved: false,
     reviewNote: '',
@@ -1352,7 +1575,8 @@ export async function reviewResultSubmission(
       const shouldRecomputeAgg =
         decision === VerificationStatus.VERIFIED ||
         ((decision === VerificationStatus.REJECTED ||
-          decision === VerificationStatus.REQUIRES_CORRECTION) &&
+          decision === VerificationStatus.REQUIRES_CORRECTION ||
+          decision === VerificationStatus.DISCREPANCY_DETECTED) &&
           prevApproved !== null &&
           prevApproved.sourceSubmissionId === submission.id);
 
@@ -1364,6 +1588,15 @@ export async function reviewResultSubmission(
         reviewedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+      if (decision === VerificationStatus.DISCREPANCY_DETECTED) {
+        updateFields.discrepancyFlag = true;
+        updateFields.discrepancySummary = cleanNote.slice(0, 400);
+      } else if (
+        decision === VerificationStatus.VERIFIED ||
+        decision === VerificationStatus.CORRECTED
+      ) {
+        updateFields.discrepancyFlag = false;
+      }
       if (canApprovePublicResults(actor.role)) {
         updateFields.publiclyApproved = allowPublic;
       }
@@ -1661,22 +1894,49 @@ export async function syncSingleQueuedItem(
   actor: UserAccount,
   item: OfflineQueuedItem,
   pollingUnits: PollingUnit[],
-  existingResults: ResultSubmission[]
+  existingResults: ResultSubmission[],
+  options?: { serverTombstones?: Set<string>; force?: boolean }
 ): Promise<boolean> {
   if (!navigator.onLine) return false;
 
-  const tombstones = await getDeletedTombstones();
+  // Respect exponential backoff unless forced manually
+  if (
+    !options?.force &&
+    item.status === 'SYNC_FAILED' &&
+    item.nextRetryAtIso &&
+    Date.parse(item.nextRetryAtIso) > Date.now()
+  ) {
+    return false;
+  }
+
+  // Never auto-retry unresolved conflicts unless explicitly forced by user
+  if (!options?.force && item.conflictState === 'CONFLICT_DETECTED') {
+    return false;
+  }
+
+  const localTombstones = await getDeletedTombstones();
+  const serverTombstones = options?.serverTombstones ?? (await fetchServerTombstoneIdSet());
+  if (serverTombstones.size > 0) {
+    await mergeServerTombstones(Array.from(serverTombstones)).catch(() => {});
+  }
+
+  const isTombstoned = (id: string) =>
+    Boolean(id) && (localTombstones.has(id) || serverTombstones.has(id));
+
   const targetResultId =
     typeof item.payload?.targetResultId === 'string' ? item.payload.targetResultId : '';
   const clientNoteId =
     typeof item.payload?.clientNoteId === 'string' ? item.payload.clientNoteId : '';
+  const taskIdRef = typeof item.payload?.taskId === 'string' ? item.payload.taskId : '';
 
   if (
     item.reportType !== 'NOTE_DELETE' &&
-    (tombstones.has(item.clientSubmissionId) ||
-      (targetResultId && tombstones.has(targetResultId)) ||
-      (clientNoteId && tombstones.has(clientNoteId)))
+    (isTombstoned(item.clientSubmissionId) ||
+      isTombstoned(targetResultId) ||
+      isTombstoned(clientNoteId) ||
+      isTombstoned(taskIdRef))
   ) {
+    // Authoritatively deleted on server or locally: drop permanently so deleted data never returns
     await deleteQueueItem(item.clientSubmissionId);
     return true;
   }
@@ -1684,6 +1944,30 @@ export async function syncSingleQueuedItem(
   await updateQueueItemStatus(item.clientSubmissionId, 'SYNCING');
 
   try {
+    if (item.reportType === 'EMERGENCY_REPORT') {
+      await submitEmergencyReport(
+        actor,
+        {
+          category: String(item.payload.category || 'Urgent Field Support'),
+          description: String(item.payload.description || ''),
+          urgency: (item.payload.urgency as IncidentUrgency) || IncidentUrgency.HIGH,
+          lgaId: (item.payload.lgaId as LgaId | 'all') || item.lgaId || 'all',
+          wardId: String(item.payload.wardId || item.wardId || ''),
+          puId: String(item.payload.puId || item.puId || ''),
+          puCode: String(item.payload.puCode || item.puCode || ''),
+          puName: String(item.payload.puName || item.puName || ''),
+          latitude:
+            typeof item.payload.latitude === 'number' ? item.payload.latitude : null,
+          longitude:
+            typeof item.payload.longitude === 'number' ? item.payload.longitude : null,
+          clientCreatedAtIso: item.createdAtIso,
+        },
+        item.clientSubmissionId
+      );
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
     if (item.reportType === 'NOTE_UPSERT') {
       const noteObj: OperationalNote = {
         id: clientNoteId || item.clientSubmissionId,
@@ -1795,7 +2079,11 @@ export async function syncSingleQueuedItem(
         await updateQueueItemStatus(
           item.clientSubmissionId,
           'SYNC_FAILED',
-          'Task record no longer exists on the server.'
+          'Task record no longer exists on the server.',
+          {
+            state: 'CONFLICT_DETECTED',
+            serverSummary: 'Server task was deleted or archived before offline update synced.',
+          }
         );
         return false;
       }
@@ -1896,6 +2184,20 @@ export async function syncSingleQueuedItem(
           : undefined) ||
         existingResults.find((r) => r.puId === pu.id) ||
         null;
+
+      if (prev && prev.verificationStatus === VerificationStatus.VERIFIED && !options?.force) {
+        await updateQueueItemStatus(
+          item.clientSubmissionId,
+          'SYNC_FAILED',
+          'Server already has an FDMIS Verified result for this polling unit.',
+          {
+            state: 'CONFLICT_DETECTED',
+            serverSummary: `Server holds VERIFIED result v${prev.version} (APC ${prev.apcVotes}, PDP ${prev.pdpVotes}, ADC ${prev.adcVotes}, Others ${prev.othersVotes}).`,
+          }
+        );
+        return false;
+      }
+
       await submitPollingUnitResult(
         actor,
         pu,
@@ -1904,17 +2206,28 @@ export async function syncSingleQueuedItem(
           clientCreatedAtIso: item.createdAtIso,
         },
         prev,
-        item.clientSubmissionId
+        item.clientSubmissionId,
+        existingResults
       );
     }
 
     await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
     return true;
   } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unable to synchronize submission.';
+    const isConflict =
+      msg.includes('already FDMIS Verified') ||
+      msg.includes('silently overwritten');
     await updateQueueItemStatus(
       item.clientSubmissionId,
       'SYNC_FAILED',
-      err instanceof Error ? err.message : 'Unable to synchronize submission.'
+      msg,
+      isConflict
+        ? {
+            state: 'CONFLICT_DETECTED',
+            serverSummary: msg,
+          }
+        : undefined
     );
     return false;
   }
@@ -1923,7 +2236,8 @@ export async function syncSingleQueuedItem(
 export async function flushOfflineQueue(
   actor: UserAccount,
   pollingUnits: PollingUnit[],
-  existingResults: ResultSubmission[]
+  existingResults: ResultSubmission[],
+  options?: { force?: boolean }
 ): Promise<{ syncedCount: number; failedCount: number }> {
   if (!navigator.onLine) {
     return { syncedCount: 0, failedCount: 0 };
@@ -1934,6 +2248,11 @@ export async function flushOfflineQueue(
   }
 
   activeQueueFlushPromise = (async () => {
+    const serverTombstones = await fetchServerTombstoneIdSet();
+    if (serverTombstones.size > 0) {
+      await mergeServerTombstones(Array.from(serverTombstones)).catch(() => {});
+    }
+
     const items: OfflineQueuedItem[] = await getQueuedItems(actor.uid);
     const pending = items
       .filter(
@@ -1949,7 +2268,13 @@ export async function flushOfflineQueue(
     let failedCount = 0;
 
     for (const item of pending) {
-      const ok = await syncSingleQueuedItem(actor, item, pollingUnits, existingResults);
+      const ok = await syncSingleQueuedItem(
+        actor,
+        item,
+        pollingUnits,
+        existingResults,
+        { serverTombstones, force: options?.force }
+      );
       if (ok) syncedCount += 1;
       else failedCount += 1;
     }

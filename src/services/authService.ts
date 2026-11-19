@@ -1,22 +1,27 @@
 import { deleteApp, initializeApp } from 'firebase/app';
 import {
   EmailAuthProvider,
+  confirmPasswordReset,
   createUserWithEmailAndPassword,
   deleteUser,
   getAuth,
+  linkWithCredential,
   reauthenticateWithCredential,
+  reauthenticateWithPopup,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   updatePassword,
+  verifyPasswordResetCode,
   type User as FirebaseUser,
 } from 'firebase/auth';
 import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -28,6 +33,7 @@ import { auth, db, firebaseConfig, googleProvider } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import {
   AccountStatus,
+  DEFAULT_OFFLINE_SESSION_MAX_DAYS,
   DEFAULT_WHATSAPP_GROUP_NAME,
   DEFAULT_WHATSAPP_GROUP_URL,
   UserRole,
@@ -66,6 +72,11 @@ import {
   updatePendingOfflineRegistrationStatus,
   wrapAndStoreOfflinePassword,
 } from './offlineQueue';
+import {
+  clearTrustedDeviceSession,
+  establishTrustedDeviceSession,
+  verifyTrustedDeviceSession,
+} from './trustedDeviceSession';
 import { getEffectiveLocationCatalog } from './directoryService';
 import {
   buildBundledLocationCatalog,
@@ -275,32 +286,54 @@ export async function signOutSession(actor?: UserAccount | null, reason = 'USER_
       // Best-effort audit log before sign out
     }
   }
-  await signOut(auth);
+  try {
+    await signOut(auth);
+  } catch {
+    // Allow local credential wipe even when offline
+  }
+  await clearTrustedDeviceSession();
   clearCachedSession(actor?.uid);
+  clearCachedSession();
   await purgeAllUserSnapshots(actor?.uid);
   clearLocalSessionTokens();
 }
 
 export async function checkUserAndBootstrapState(
-  firebaseUser: FirebaseUser
+  firebaseUser: FirebaseUser,
+  options?: { maxOfflineDays?: number; forceServer?: boolean }
 ): Promise<ProfileCheckResult> {
   const userPath = `users/${firebaseUser.uid}`;
   const userRef = doc(db, 'users', firebaseUser.uid);
+  const providerIds = firebaseUser.providerData.map((p) => p.providerId);
+  const maxOfflineDays = options?.maxOfflineDays ?? DEFAULT_OFFLINE_SESSION_MAX_DAYS;
+
+  // When offline, immediately verify the cryptographically sealed trusted-device session
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    const trusted = await verifyTrustedDeviceSession(firebaseUser.uid);
+    if (trusted.valid) {
+      return {
+        account: trusted.payload.account,
+        needsBootstrap: false,
+        needsRegistration: false,
+        offlineRestored: true,
+      };
+    }
+    throw new Error(
+      trusted.reason === 'EXPIRED'
+        ? 'Your offline trusted session has expired. Connect to the internet to sign in and re-verify your account.'
+        : 'Internet connection required for first-time server authentication on this device.'
+    );
+  }
 
   let userSnap;
   try {
-    userSnap = await getDoc(userRef);
+    userSnap = options?.forceServer ? await getDocFromServer(userRef) : await getDoc(userRef);
   } catch (error) {
     if (isOfflineOrNetworkError(error)) {
-      const cached = loadCachedSession(firebaseUser.uid);
-      if (
-        cached &&
-        cached.status === AccountStatus.ACTIVE &&
-        !cached.sessionRevoked &&
-        cached.role !== UserRole.PENDING
-      ) {
+      const trusted = await verifyTrustedDeviceSession(firebaseUser.uid);
+      if (trusted.valid) {
         return {
-          account: cached,
+          account: trusted.payload.account,
           needsBootstrap: false,
           needsRegistration: false,
           offlineRestored: true,
@@ -312,11 +345,18 @@ export async function checkUserAndBootstrapState(
 
   if (userSnap.exists()) {
     const account = userSnap.data() as UserAccount;
+    const fromCacheOnly = userSnap.metadata?.fromCache === true;
     if (account.status === AccountStatus.ACTIVE && !account.sessionRevoked) {
       saveCachedSession(account);
       void recordLocalPhoneEmailMapping(account.phone, account.email);
 
-      if (typeof navigator === 'undefined' || navigator.onLine) {
+      if (!fromCacheOnly && (typeof navigator === 'undefined' || navigator.onLine)) {
+        // Seal trusted device session ONLY after genuine online server verification
+        await establishTrustedDeviceSession(account, {
+          providerIds,
+          maxOfflineDays,
+        });
+
         try {
           await updateDoc(userRef, {
             lastLoginAt: serverTimestamp(),
@@ -344,12 +384,14 @@ export async function checkUserAndBootstrapState(
         }
       }
     } else if (account.status === AccountStatus.SUSPENDED || account.sessionRevoked) {
+      await clearTrustedDeviceSession(account.uid);
       clearCachedSession(account.uid);
     }
     return {
       account,
       needsBootstrap: false,
       needsRegistration: false,
+      offlineRestored: fromCacheOnly,
     };
   }
 
@@ -360,14 +402,10 @@ export async function checkUserAndBootstrapState(
     bootstrapExists = bootstrapSnap.exists();
   } catch (error) {
     if (isOfflineOrNetworkError(error)) {
-      const cached = loadCachedSession(firebaseUser.uid);
-      if (
-        cached &&
-        cached.status === AccountStatus.ACTIVE &&
-        !cached.sessionRevoked
-      ) {
+      const trusted = await verifyTrustedDeviceSession(firebaseUser.uid);
+      if (trusted.valid) {
         return {
-          account: cached,
+          account: trusted.payload.account,
           needsBootstrap: false,
           needsRegistration: false,
           offlineRestored: true,
@@ -390,6 +428,113 @@ export async function checkUserAndBootstrapState(
     needsBootstrap: false,
     needsRegistration: true,
   };
+}
+
+export type ServerRevalidationResult =
+  | { status: 'VERIFIED'; account: UserAccount; verifiedAtMs: number }
+  | { status: 'REVOKED'; account: UserAccount | null; reason: string }
+  | { status: 'REAUTH_REQUIRED'; reason: string }
+  | { status: 'OFFLINE' };
+
+/**
+ * Revalidates a locally restored trusted session against the live FDMIS server when connectivity returns.
+ * Refreshes Firebase Auth tokens, checks server-side account suspension/revocation, and updates cached permissions.
+ */
+export async function revalidateTrustedSessionWithServer(
+  uid: string,
+  maxOfflineDays = DEFAULT_OFFLINE_SESSION_MAX_DAYS
+): Promise<ServerRevalidationResult> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return { status: 'OFFLINE' };
+  }
+
+  const fbUser = auth.currentUser;
+  if (!fbUser || fbUser.uid !== uid) {
+    return {
+      status: 'REAUTH_REQUIRED',
+      reason: 'Internet connectivity returned. Please sign in online to refresh your server session.',
+    };
+  }
+
+  try {
+    await fbUser.getIdToken(true);
+  } catch (err) {
+    if (isOfflineOrNetworkError(err)) {
+      return { status: 'OFFLINE' };
+    }
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code || '')
+        : '';
+    if (
+      code === 'auth/user-disabled' ||
+      code === 'auth/user-token-expired' ||
+      code === 'auth/invalid-user-token'
+    ) {
+      await clearTrustedDeviceSession(uid);
+      clearCachedSession(uid);
+      return {
+        status: 'REVOKED',
+        account: null,
+        reason: 'Your authentication session was revoked or disabled on the server. Please sign in again or contact an administrator.',
+      };
+    }
+  }
+
+  try {
+    const snap = await getDocFromServer(doc(db, 'users', uid));
+    if (!snap.exists()) {
+      await clearTrustedDeviceSession(uid);
+      clearCachedSession(uid);
+      return {
+        status: 'REVOKED',
+        account: null,
+        reason: 'Your operator profile is no longer active on the FDMIS server.',
+      };
+    }
+
+    const freshAccount = snap.data() as UserAccount;
+    if (
+      freshAccount.status !== AccountStatus.ACTIVE ||
+      freshAccount.sessionRevoked ||
+      freshAccount.role === UserRole.PENDING
+    ) {
+      await clearTrustedDeviceSession(uid);
+      clearCachedSession(uid);
+      await purgeAllUserSnapshots(uid);
+      const reason =
+        freshAccount.revokedReason ||
+        (freshAccount.status === AccountStatus.SUSPENDED
+          ? 'Your account has been suspended by an administrator.'
+          : 'Your session was revoked by an administrator.');
+      return {
+        status: 'REVOKED',
+        account: freshAccount,
+        reason,
+      };
+    }
+
+    const nowMs = Date.now();
+    saveCachedSession(freshAccount);
+    await establishTrustedDeviceSession(freshAccount, {
+      providerIds: fbUser.providerData.map((p) => p.providerId),
+      maxOfflineDays,
+      nowMs,
+    });
+    return {
+      status: 'VERIFIED',
+      account: freshAccount,
+      verifiedAtMs: nowMs,
+    };
+  } catch (error) {
+    if (isOfflineOrNetworkError(error)) {
+      return { status: 'OFFLINE' };
+    }
+    return {
+      status: 'REAUTH_REQUIRED',
+      reason: 'Unable to re-verify your server session. Please sign in online.',
+    };
+  }
 }
 
 export async function initializeFullControlAdmin(
@@ -1202,26 +1347,122 @@ export async function signInWithPhoneAndPassword(
   }
 }
 
+export const NEUTRAL_PASSWORD_RESET_MESSAGE =
+  'If an FDMIS account is registered with that email address, a secure single-use password reset link has been sent. Please check your inbox and spam folder. Reset links expire automatically for your security.';
+
 export async function sendEmailPasswordReset(emailInput: string): Promise<string> {
   const emailCheck = validateEmailAddress(emailInput);
   if (!emailCheck.valid) {
     throw new Error(emailCheck.error || 'Enter a valid registered email address.');
   }
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
-    throw new Error('Internet connection required to send a password reset email.');
+    throw new Error('Internet connection required to request a password reset link.');
   }
+  const actionUrl =
+    typeof window !== 'undefined' && /^https?:\/\//.test(window.location.origin)
+      ? window.location.origin
+      : undefined;
+
   try {
-    await sendPasswordResetEmail(auth, emailCheck.normalized);
-    return emailCheck.normalized;
+    await sendPasswordResetEmail(
+      auth,
+      emailCheck.normalized,
+      actionUrl ? { url: actionUrl, handleCodeInApp: false } : undefined
+    );
+    return NEUTRAL_PASSWORD_RESET_MESSAGE;
   } catch (error) {
     const code =
       typeof error === 'object' && error !== null && 'code' in error
         ? String((error as { code?: unknown }).code || '')
         : '';
-    if (code === 'auth/user-not-found') {
-      throw new Error('No registered FDMIS email account matches that address.');
+    // Anti-enumeration: never disclose whether an email address exists in the database
+    if (code === 'auth/user-not-found' || code === 'auth/invalid-continue-uri' || code === 'auth/unauthorized-continue-uri') {
+      if (code === 'auth/invalid-continue-uri' || code === 'auth/unauthorized-continue-uri') {
+        try {
+          await sendPasswordResetEmail(auth, emailCheck.normalized);
+        } catch (retryErr) {
+          const retryCode =
+            typeof retryErr === 'object' && retryErr !== null && 'code' in retryErr
+              ? String((retryErr as { code?: unknown }).code || '')
+              : '';
+          if (retryCode !== 'auth/user-not-found') {
+            throw mapFirebaseAuthError(retryErr, 'Unable to process password reset request.');
+          }
+        }
+      }
+      return NEUTRAL_PASSWORD_RESET_MESSAGE;
     }
-    throw mapFirebaseAuthError(error, 'Unable to dispatch password reset email.');
+    throw mapFirebaseAuthError(error, 'Unable to process password reset request.');
+  }
+}
+
+export async function verifyEmailPasswordResetCode(oobCode: string): Promise<string> {
+  const cleanCode = oobCode.trim();
+  if (!cleanCode) {
+    throw new Error('Invalid password reset link or verification code.');
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Internet connection required to verify a password reset code.');
+  }
+  try {
+    return await verifyPasswordResetCode(auth, cleanCode);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    if (code === 'auth/expired-action-code') {
+      throw new Error(
+        'This password reset link or code has expired. Please request a new password reset link.'
+      );
+    }
+    if (code === 'auth/invalid-action-code') {
+      throw new Error(
+        'This password reset link or code is invalid or has already been used. Request a fresh reset link.'
+      );
+    }
+    throw mapFirebaseAuthError(error, 'Unable to validate password reset code.');
+  }
+}
+
+export async function completeEmailPasswordReset(
+  oobCode: string,
+  newPassword: string,
+  confirmPassword: string
+): Promise<string> {
+  const cleanCode = oobCode.trim();
+  if (!cleanCode) {
+    throw new Error('Invalid password reset link or verification code.');
+  }
+  const issue = validatePasswordStrength(newPassword);
+  if (issue) throw new Error(issue);
+  if (newPassword !== confirmPassword) {
+    throw new Error('New Password and Confirm New Password do not match.');
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Internet connection required to complete password reset.');
+  }
+
+  const verifiedEmail = await verifyEmailPasswordResetCode(cleanCode);
+  try {
+    await confirmPasswordReset(auth, cleanCode, newPassword);
+    return verifiedEmail;
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    if (code === 'auth/expired-action-code') {
+      throw new Error(
+        'This password reset link has expired before completion. Please request a new reset link.'
+      );
+    }
+    if (code === 'auth/invalid-action-code') {
+      throw new Error(
+        'This password reset link is invalid or has already been used. Please request a new reset link.'
+      );
+    }
+    throw mapFirebaseAuthError(error, 'Unable to complete password reset.');
   }
 }
 
@@ -1742,17 +1983,27 @@ export async function saveUserPreferences(
   }
 }
 
-export function getAuthProviderSummary(): {
+export function getAuthProviderSummary(fallbackAccount?: UserAccount | null): {
   hasPasswordProvider: boolean;
+  hasGoogleProvider: boolean;
   providerIds: string[];
   email: string;
 } {
   const fbUser = auth.currentUser;
   const providers = fbUser?.providerData.map((p) => p.providerId) || [];
+  const hasPasswordProvider =
+    providers.includes('password') ||
+    (!fbUser &&
+      (fallbackAccount?.authMethod === 'EMAIL_PASSWORD' ||
+        fallbackAccount?.authMethod === 'PHONE_PASSWORD'));
+  const hasGoogleProvider =
+    providers.includes('google.com') || (!fbUser && fallbackAccount?.authMethod === 'GOOGLE');
+
   return {
-    hasPasswordProvider: providers.includes('password'),
+    hasPasswordProvider,
+    hasGoogleProvider,
     providerIds: providers,
-    email: fbUser?.email || '',
+    email: fbUser?.email || fallbackAccount?.email || '',
   };
 }
 
@@ -1760,23 +2011,49 @@ export async function changeAccountPassword(
   currentPassword: string,
   newPassword: string
 ): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Online server verification is required to change your password.');
+  }
   const fbUser = auth.currentUser;
   if (!fbUser || !fbUser.email) {
-    throw new Error('Authenticated session required.');
+    throw new Error('An active online authenticated session is required to change your password.');
   }
   const summary = getAuthProviderSummary();
   if (!summary.hasPasswordProvider) {
     throw new Error(
-      'This account authenticates via Google Single Sign-On. Password management and 2FA are controlled directly in your Google Account security settings.'
+      'Your account currently uses Google Sign-In only. Use "Set Up Account Password" below to link a password securely.'
     );
+  }
+  if (!currentPassword) {
+    throw new Error('Enter your current password to verify your identity.');
   }
   const issue = validatePasswordStrength(newPassword);
   if (issue) {
     throw new Error(issue);
   }
-  const credential = EmailAuthProvider.credential(fbUser.email, currentPassword);
-  await reauthenticateWithCredential(fbUser, credential);
-  await updatePassword(fbUser, newPassword);
+  if (currentPassword === newPassword) {
+    throw new Error('New password must be different from your current password.');
+  }
+
+  try {
+    const credential = EmailAuthProvider.credential(fbUser.email, currentPassword);
+    await reauthenticateWithCredential(fbUser, credential);
+    await updatePassword(fbUser, newPassword);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+      throw new Error('Current password is incorrect.');
+    }
+    if (code === 'auth/requires-recent-login') {
+      throw new Error(
+        'For security, please sign out and sign in again before changing your password.'
+      );
+    }
+    throw mapFirebaseAuthError(error, 'Unable to update account password.');
+  }
 
   const hashed = await hashSecretPBKDF2(newPassword);
   const credRef = doc(db, 'user_credentials', fbUser.uid);
@@ -1820,6 +2097,80 @@ export async function changeAccountPassword(
   }
 }
 
+/**
+ * Securely sets up a local password for a Google-only user by freshly verifying their
+ * Google identity and linking an Email/Password credential without affecting Google Sign-In.
+ */
+export async function setupPasswordForGoogleAccount(
+  newPassword: string,
+  confirmPassword: string
+): Promise<void> {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Online server verification is required to set up an account password.');
+  }
+  const fbUser = auth.currentUser;
+  if (!fbUser || !fbUser.email) {
+    throw new Error('An active online Google session is required to set up a password.');
+  }
+  const summary = getAuthProviderSummary();
+  if (summary.hasPasswordProvider) {
+    throw new Error('This account already has a password configured. Use Change Password instead.');
+  }
+  const issue = validatePasswordStrength(newPassword);
+  if (issue) {
+    throw new Error(issue);
+  }
+  if (newPassword !== confirmPassword) {
+    throw new Error('New Password and Confirm New Password do not match.');
+  }
+
+  try {
+    await reauthenticateWithPopup(fbUser, googleProvider);
+    const credential = EmailAuthProvider.credential(fbUser.email, newPassword);
+    await linkWithCredential(fbUser, credential);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new Error('Google identity confirmation was cancelled. Please try again to complete password setup.');
+    }
+    if (code === 'auth/provider-already-linked' || code === 'auth/credential-already-in-use') {
+      throw new Error('A password sign-in method is already linked to this email address.');
+    }
+    if (code === 'auth/requires-recent-login') {
+      throw new Error('Please sign in again with Google to verify your identity before setting a password.');
+    }
+    throw mapFirebaseAuthError(error, 'Unable to link a password to your Google account.');
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', fbUser.uid), {
+      lastPasswordChangedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking timestamp update
+  }
+
+  try {
+    await setDoc(doc(collection(db, 'audit_logs')), {
+      actorUid: fbUser.uid,
+      actorName: fbUser.displayName || fbUser.email || 'Operator',
+      actorEmail: fbUser.email || '',
+      actorRole: 'SELF',
+      action: 'PASSWORD_LINKED_TO_GOOGLE',
+      affectedEntity: 'users',
+      affectedId: fbUser.uid,
+      details: 'Google-authenticated operator confirmed identity and securely linked a local password.',
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking audit log
+  }
+}
+
 export async function updateUserBatteryStatus(
   user: UserAccount,
   level: number | null,
@@ -1859,7 +2210,8 @@ export async function updateUserBatteryStatus(
 export function subscribeToUserAccount(
   uid: string,
   onData: (account: UserAccount | null) => void,
-  onError: (err: Error) => void
+  onError: (err: Error) => void,
+  maxOfflineDays = DEFAULT_OFFLINE_SESSION_MAX_DAYS
 ): Unsubscribe {
   const path = `users/${uid}`;
   return onSnapshot(
@@ -1867,23 +2219,34 @@ export function subscribeToUserAccount(
     (snapshot) => {
       if (snapshot.exists()) {
         const account = snapshot.data() as UserAccount;
+        const fromCacheOnly = snapshot.metadata?.fromCache === true;
         if (account.status === AccountStatus.ACTIVE && !account.sessionRevoked) {
           saveCachedSession(account);
+          if (!fromCacheOnly && (typeof navigator === 'undefined' || navigator.onLine)) {
+            void establishTrustedDeviceSession(account, {
+              providerIds: auth.currentUser?.providerData.map((p) => p.providerId) || [],
+              maxOfflineDays,
+            });
+          }
         } else {
+          void clearTrustedDeviceSession(uid);
           clearCachedSession(uid);
         }
         onData(account);
       } else {
+        void clearTrustedDeviceSession(uid);
+        clearCachedSession(uid);
         onData(null);
       }
     },
     (error) => {
       if (isOfflineOrNetworkError(error)) {
-        const cached = loadCachedSession(uid);
-        if (cached) {
-          onData(cached);
-          return;
-        }
+        void verifyTrustedDeviceSession(uid).then((trusted) => {
+          if (trusted.valid) {
+            onData(trusted.payload.account);
+          }
+        });
+        return;
       }
       try {
         handleFirestoreError(error, OperationType.GET, path);

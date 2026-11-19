@@ -37,7 +37,7 @@ import { formatAccountIdentifier } from '../utils/phoneAuth';
 import { AccountStatusBadge, RoleBadge } from './StatusBadge';
 
 type WelcomeMode = 'signin' | 'signup' | 'forgot';
-type ForgotSubMode = 'email_reset' | 'request' | 'complete';
+type ForgotSubMode = 'email_reset' | 'email_confirm' | 'request' | 'complete';
 
 interface AuthGateProps {
   firebaseUser: FirebaseUser | null;
@@ -45,6 +45,7 @@ interface AuthGateProps {
   needsBootstrap: boolean;
   needsRegistration: boolean;
   loading: boolean;
+  sessionCheckHint?: string;
   authError: string | null;
   connectionStatus: 'checking' | 'connected' | 'offline';
   isOnline: boolean;
@@ -65,6 +66,12 @@ interface AuthGateProps {
   }) => Promise<PhoneRegistrationResult>;
   onGoogleSignIn: () => Promise<void>;
   onSendEmailPasswordReset: (email: string) => Promise<string>;
+  onVerifyEmailResetCode?: (oobCode: string) => Promise<string>;
+  onCompleteEmailReset?: (
+    oobCode: string,
+    newPassword: string,
+    confirmPassword: string
+  ) => Promise<string>;
   onSubmitPasswordResetRequest: (input: {
     phone: string;
     fullName: string;
@@ -101,6 +108,7 @@ export function AuthGate({
   needsBootstrap,
   needsRegistration,
   loading,
+  sessionCheckHint,
   authError,
   connectionStatus,
   isOnline,
@@ -114,6 +122,8 @@ export function AuthGate({
   onEmailPhoneRegister,
   onGoogleSignIn,
   onSendEmailPasswordReset,
+  onVerifyEmailResetCode,
+  onCompleteEmailReset,
   onSubmitPasswordResetRequest,
   onCompleteApprovedPasswordReset,
   onSyncPendingOfflineRegistration,
@@ -144,6 +154,12 @@ export function AuthGate({
 
   // Forgot password state
   const [forgotEmail, setForgotEmail] = useState('');
+  const [emailResetCode, setEmailResetCode] = useState('');
+  const [verifiedResetEmail, setVerifiedResetEmail] = useState<string | null>(null);
+  const [verifyingResetCode, setVerifyingResetCode] = useState(false);
+  const [emailResetNewPassword, setEmailResetNewPassword] = useState('');
+  const [emailResetConfirmPassword, setEmailResetConfirmPassword] = useState('');
+  const [showEmailResetPass, setShowEmailResetPass] = useState(false);
   const [forgotPhone, setForgotPhone] = useState('');
   const [forgotName, setForgotName] = useState('');
   const [forgotLgaId, setForgotLgaId] = useState('');
@@ -170,6 +186,38 @@ export function AuthGate({
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [localInfo, setLocalInfo] = useState<string | null>(null);
+
+  // Detect Firebase single-use password reset links (?mode=resetPassword&oobCode=...) on load
+  useEffect(() => {
+    if (typeof window === 'undefined' || !onVerifyEmailResetCode) return;
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get('mode');
+    const oobCode = params.get('oobCode');
+    if (mode === 'resetPassword' && oobCode && oobCode.trim()) {
+      const cleanCode = oobCode.trim();
+      setWelcomeMode('forgot');
+      setForgotSubMode('email_confirm');
+      setEmailResetCode(cleanCode);
+      setLocalError(null);
+      setLocalInfo(null);
+      setVerifyingResetCode(true);
+      void onVerifyEmailResetCode(cleanCode)
+        .then((email) => {
+          setVerifiedResetEmail(email);
+        })
+        .catch((err) => {
+          setVerifiedResetEmail(null);
+          setLocalError(
+            err instanceof Error
+              ? err.message
+              : 'This password reset link is invalid or has expired. Please request a fresh reset link.'
+          );
+        })
+        .finally(() => {
+          setVerifyingResetCode(false);
+        });
+    }
+  }, [onVerifyEmailResetCode]);
 
   useEffect(() => {
     if (firebaseUser?.displayName && !displayName) {
@@ -302,13 +350,67 @@ export function AuthGate({
     setLocalInfo(null);
     setSubmitting(true);
     try {
-      const sentEmail = await onSendEmailPasswordReset(forgotEmail);
+      const neutralMessage = await onSendEmailPasswordReset(forgotEmail);
+      setLocalInfo(neutralMessage);
+    } catch (err) {
+      setLocalError(
+        err instanceof Error ? err.message : 'Unable to process password reset request.'
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleVerifyEmailResetCode = async () => {
+    if (!onVerifyEmailResetCode) return;
+    setLocalError(null);
+    setLocalInfo(null);
+    setVerifyingResetCode(true);
+    try {
+      const email = await onVerifyEmailResetCode(emailResetCode);
+      setVerifiedResetEmail(email);
+      setLocalInfo(`Reset code verified for ${email}. Set your new password below.`);
+    } catch (err) {
+      setVerifiedResetEmail(null);
+      setLocalError(
+        err instanceof Error
+          ? err.message
+          : 'This password reset code is invalid or expired. Request a new reset link.'
+      );
+    } finally {
+      setVerifyingResetCode(false);
+    }
+  };
+
+  const handleCompleteEmailResetSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!onCompleteEmailReset) return;
+    setLocalError(null);
+    setLocalInfo(null);
+    setSubmitting(true);
+    try {
+      const completedEmail = await onCompleteEmailReset(
+        emailResetCode,
+        emailResetNewPassword,
+        emailResetConfirmPassword
+      );
+      setEmailResetCode('');
+      setVerifiedResetEmail(null);
+      setEmailResetNewPassword('');
+      setEmailResetConfirmPassword('');
+      try {
+        window.history.replaceState({}, '', window.location.pathname || '/');
+      } catch {
+        // Ignore history restriction
+      }
+      setSignInIdentifier(completedEmail);
+      setWelcomeMode('signin');
       setLocalInfo(
-        `Password reset email sent to ${sentEmail}. Check your inbox (and spam folder) and follow the secure link to set a new password.`
+        'Your password has been reset successfully. Sign in below with your new password.'
       );
     } catch (err) {
       setLocalError(
-        err instanceof Error ? err.message : 'Unable to send password reset email.'
+        err instanceof Error ? err.message : 'Unable to complete password reset.'
       );
     } finally {
       setSubmitting(false);
@@ -530,15 +632,18 @@ export function AuthGate({
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#0b3b24] text-white">
             <Shield className="h-6 w-6" aria-hidden="true" />
           </div>
-          <h1 className="text-lg font-semibold text-slate-900">
+          <h1 className="font-display text-lg font-semibold text-slate-900">
             Verifying Situation Room Session
           </h1>
           <p className="mt-1.5 text-sm text-slate-600">
-            Checking authentication credentials, role permissions, and session availability.
+            {sessionCheckHint ||
+              (isOnline
+                ? 'Checking authentication credentials, role permissions, and session availability.'
+                : 'Checking encrypted local trusted session for offline access.')}
           </p>
         </div>
       </div>
@@ -594,15 +699,6 @@ export function AuthGate({
                   verification, incident escalation, and audited result management across Funtua and
                   Dandume LGAs.
                 </p>
-
-                <div className="mt-6 space-y-2.5 rounded-lg border border-white/15 bg-white/5 p-4 text-xs leading-relaxed text-emerald-50/90">
-                  <p className="font-semibold text-white">Dual Authentication &amp; Role Security</p>
-                  <p>
-                    Existing verified operators sign in with Email, Phone &amp; Password, or Google.
-                    New accounts receive automatic standard access scoped to their selected Polling
-                    Unit—elevated roles require administrator assignment.
-                  </p>
-                </div>
               </div>
 
               <div className="mt-8 grid grid-cols-1 gap-4 border-t border-white/15 pt-6 sm:grid-cols-2 lg:grid-cols-1">
@@ -621,7 +717,7 @@ export function AuthGate({
               </div>
             </div>
 
-            {/* Right Dual Authentication Column */}
+            {/* Right Authentication Panel */}
             <div className="rounded-xl border border-slate-200 bg-white p-6 sm:p-7 lg:col-span-7">
               {/* Tab Switcher */}
               <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-slate-100 p-1">
@@ -663,9 +759,10 @@ export function AuthGate({
                 <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
                   <span>
-                    Device is currently offline. Previously authenticated operators remain active
-                    offline; new registrations entered offline are securely queued locally and
-                    require server verification when connectivity returns.
+                    Device is currently offline. First-time sign-in on a new or logged-out device
+                    requires an internet connection to authenticate with the FDMIS server.
+                    Previously authenticated devices open offline automatically; new registrations
+                    entered offline are queued locally for server sync.
                   </span>
                 </div>
               ) : null}
@@ -1138,8 +1235,9 @@ export function AuthGate({
                   {forgotSubMode === 'email_reset' ? (
                     <form onSubmit={handleSendEmailResetSubmit} className="mt-4 space-y-3.5">
                       <p className="text-xs leading-relaxed text-slate-600">
-                        Enter the verified Email Address linked to your FDMIS account to receive a
-                        secure Firebase password reset link directly in your inbox.
+                        Enter your registered email address to request a single-use, time-limited
+                        password reset link. For your security, FDMIS does not reveal whether an
+                        email address is registered.
                       </p>
                       <div>
                         <label htmlFor="fg-email" className="block text-xs font-medium text-slate-700">
@@ -1149,6 +1247,7 @@ export function AuthGate({
                           id="fg-email"
                           type="email"
                           required
+                          autoComplete="email"
                           value={forgotEmail}
                           onChange={(e) => setForgotEmail(e.target.value)}
                           placeholder="name@example.com"
@@ -1162,12 +1261,153 @@ export function AuthGate({
                       >
                         <span>
                           {submitting
-                            ? 'Sending Reset Email...'
+                            ? 'Sending Reset Instructions...'
                             : !isOnline
-                              ? 'Internet Required to Send Email'
-                              : 'Send Password Reset Email'}
+                              ? 'Internet Required to Request Reset'
+                              : 'Send Password Reset Link'}
                         </span>
                       </button>
+                      {onCompleteEmailReset ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForgotSubMode('email_confirm');
+                            setLocalError(null);
+                            setLocalInfo(null);
+                          }}
+                          className="block w-full text-center text-xs font-medium text-[#0b3b24] hover:underline"
+                        >
+                          Already have a reset link or verification code? Complete reset here
+                        </button>
+                      ) : null}
+                    </form>
+                  ) : forgotSubMode === 'email_confirm' ? (
+                    <form onSubmit={handleCompleteEmailResetSubmit} className="mt-4 space-y-3.5">
+                      <p className="text-xs leading-relaxed text-slate-600">
+                        Complete your single-use email password reset. Expired or previously used
+                        codes are rejected automatically.
+                      </p>
+
+                      {verifyingResetCode ? (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                          Verifying password reset link with server...
+                        </div>
+                      ) : verifiedResetEmail ? (
+                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-950">
+                          Verified single-use reset link for{' '}
+                          <strong className="font-semibold">{verifiedResetEmail}</strong>.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <label
+                            htmlFor="fg-oob-code"
+                            className="block text-xs font-medium text-slate-700"
+                          >
+                            Reset Verification Code (oobCode) *
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              id="fg-oob-code"
+                              type="text"
+                              required
+                              value={emailResetCode}
+                              onChange={(e) => setEmailResetCode(e.target.value)}
+                              placeholder="Paste reset code from email link"
+                              className="min-h-[42px] flex-1 rounded-lg border border-slate-300 px-3 font-mono text-xs"
+                            />
+                            <button
+                              type="button"
+                              disabled={!emailResetCode.trim() || verifyingResetCode || !isOnline}
+                              onClick={() => void handleVerifyEmailResetCode()}
+                              className="min-h-[42px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              Verify
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {verifiedResetEmail ? (
+                        <>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                              <label
+                                htmlFor="fg-email-new-pass"
+                                className="block text-xs font-medium text-slate-700"
+                              >
+                                New Password *
+                              </label>
+                              <div className="relative mt-1">
+                                <input
+                                  id="fg-email-new-pass"
+                                  type={showEmailResetPass ? 'text' : 'password'}
+                                  required
+                                  minLength={8}
+                                  maxLength={128}
+                                  autoComplete="new-password"
+                                  value={emailResetNewPassword}
+                                  onChange={(e) => setEmailResetNewPassword(e.target.value)}
+                                  placeholder="Min 8 chars, letters & numbers"
+                                  className="min-h-[42px] w-full rounded-lg border border-slate-300 px-3 pr-10 text-sm"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEmailResetPass((v) => !v)}
+                                  aria-label={showEmailResetPass ? 'Hide password' : 'Show password'}
+                                  className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-slate-500"
+                                >
+                                  {showEmailResetPass ? (
+                                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                                  ) : (
+                                    <Eye className="h-4 w-4" aria-hidden="true" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                            <div>
+                              <label
+                                htmlFor="fg-email-conf-pass"
+                                className="block text-xs font-medium text-slate-700"
+                              >
+                                Confirm New Password *
+                              </label>
+                              <input
+                                id="fg-email-conf-pass"
+                                type={showEmailResetPass ? 'text' : 'password'}
+                                required
+                                minLength={8}
+                                maxLength={128}
+                                autoComplete="new-password"
+                                value={emailResetConfirmPassword}
+                                onChange={(e) => setEmailResetConfirmPassword(e.target.value)}
+                                placeholder="Re-enter new password"
+                                className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          <button
+                            type="submit"
+                            disabled={submitting || !isOnline}
+                            className="inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                          >
+                            <span>
+                              {submitting ? 'Updating Password...' : 'Confirm & Save New Password'}
+                            </span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setForgotSubMode('email_reset');
+                            setLocalError(null);
+                          }}
+                          className="inline-flex min-h-[42px] w-full items-center justify-center rounded-lg border border-slate-300 bg-white px-4 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                        >
+                          Request a Fresh Password Reset Link
+                        </button>
+                      )}
                     </form>
                   ) : forgotSubMode === 'request' ? (
                     <form onSubmit={handleForgotSubmitRequest} className="mt-4 space-y-3.5">

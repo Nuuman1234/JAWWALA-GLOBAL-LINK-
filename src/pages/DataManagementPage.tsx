@@ -16,6 +16,8 @@ import {
   X,
 } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
+import { BackupRecoveryPanel, DataIntegrityPanel } from '../components/BackupRecoveryPanel';
+import { SyncHealthPanel } from '../components/SyncHealthPanel';
 import {
   deleteSelectedTestData,
   type TestDeletionResult,
@@ -37,13 +39,18 @@ import {
   isIncidentActive,
   type AgentCheckIn,
   type ApprovedPuResult,
+  type DeletionTombstone,
+  type GeneratedReportRecord,
   type IncidentReport,
   type LgaId,
   type NotificationItem,
+  type OfflineQueuedItem,
   type OperationalNote,
+  type OperationalTask,
   type PollingUnit,
   type ReportAttachment,
   type ResultSubmission,
+  type SystemBackupRecord,
   type TimelineEvent,
   type UserAccount,
 } from '../types/fdmis';
@@ -59,6 +66,17 @@ interface DataManagementPageProps {
   timelineEvents: TimelineEvent[];
   reportAttachments: ReportAttachment[];
   notes?: OperationalNote[];
+  tasks?: OperationalTask[];
+  generatedReports?: GeneratedReportRecord[];
+  systemBackups?: SystemBackupRecord[];
+  deletionTombstones?: DeletionTombstone[];
+  queuedItems?: OfflineQueuedItem[];
+  isOnline?: boolean;
+  isSyncing?: boolean;
+  lastSyncedAtIso?: string | null;
+  onManualSync?: (force?: boolean) => Promise<void> | void;
+  onRetryQueueItem?: (item: OfflineQueuedItem, force?: boolean) => Promise<void> | void;
+  onRefreshQueue?: () => Promise<void> | void;
 }
 
 type CategoryKey =
@@ -93,9 +111,21 @@ export function DataManagementPage({
   timelineEvents,
   reportAttachments,
   notes = [],
+  systemBackups = [],
+  deletionTombstones = [],
+  queuedItems = [],
+  isOnline = true,
+  isSyncing = false,
+  lastSyncedAtIso = null,
+  onManualSync,
+  onRetryQueueItem,
+  onRefreshQueue,
 }: DataManagementPageProps) {
   const authorized = canManageTestData(user.role);
 
+  const [workspaceTab, setWorkspaceTab] = useState<
+    'DELETION_CSV' | 'INTEGRITY' | 'BACKUP_RECOVERY' | 'SYNC_HEALTH'
+  >('DELETION_CSV');
   const [viewMode, setViewMode] = useState<'MARKED_TEST' | 'MANUAL_SELECTION'>('MARKED_TEST');
   const [activeCategory, setActiveCategory] = useState<CategoryKey>('results');
   const [lgaFilter, setLgaFilter] = useState<'all' | LgaId>('all');
@@ -761,6 +791,76 @@ export function DataManagementPage({
 
   return (
     <div className="space-y-5">
+      {/* Workspace Mode Tabs */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+        {(
+          [
+            { id: 'DELETION_CSV', label: 'Permanent Deletion & CSV' },
+            {
+              id: 'INTEGRITY',
+              label: `Data Integrity & Tombstones (${deletionTombstones.length})`,
+            },
+            {
+              id: 'BACKUP_RECOVERY',
+              label: `Encrypted Backup & Recovery (${systemBackups.length})`,
+            },
+            {
+              id: 'SYNC_HEALTH',
+              label: `Offline Sync Health (${queuedItems.filter((q) => q.status !== 'SYNCED').length})`,
+            },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setWorkspaceTab(tab.id)}
+            className={`min-h-[40px] rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap ${
+              workspaceTab === tab.id
+                ? 'bg-[#0b3b24] text-white'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {workspaceTab === 'INTEGRITY' ? (
+        <DataIntegrityPanel
+          user={user}
+          results={results}
+          approvedPuResults={approvedPuResults}
+          incidents={incidents}
+          checkIns={checkIns}
+          attachments={reportAttachments}
+          pollingUnits={pollingUnits}
+          deletionTombstones={deletionTombstones}
+        />
+      ) : null}
+
+      {workspaceTab === 'BACKUP_RECOVERY' ? (
+        <BackupRecoveryPanel
+          user={user}
+          systemBackups={systemBackups}
+          deletionTombstones={deletionTombstones}
+        />
+      ) : null}
+
+      {workspaceTab === 'SYNC_HEALTH' ? (
+        <SyncHealthPanel
+          isOnline={isOnline}
+          isSyncing={isSyncing}
+          lastSyncedAtIso={lastSyncedAtIso}
+          queuedItems={queuedItems}
+          serverTombstoneCount={deletionTombstones.length}
+          onManualSync={onManualSync || (() => {})}
+          onRetryItem={onRetryQueueItem || (() => {})}
+          onRefreshQueue={onRefreshQueue}
+        />
+      ) : null}
+
+      {workspaceTab === 'DELETION_CSV' ? (
+        <div className="space-y-5">
       {/* Preservation & Integrity Banner */}
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-5 space-y-3">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
@@ -770,12 +870,13 @@ export function DataManagementPage({
             </div>
             <div>
               <h2 className="font-display text-base font-semibold text-slate-900">
-                Data Management &amp; Test Data Deletion
+                Data Management &amp; Permanent Deletion
               </h2>
               <p className="mt-0.5 text-xs text-slate-700">
                 Safely inspect and permanently delete explicitly marked test records or individually selected
-                entries along with their timestamps, attachments, and cached device copies. Polling unit
-                directories, wards, user accounts, roles, system settings, and audit logs remain preserved.
+                entries along with their timestamps, attachments, server deletion tombstones, and cached
+                device copies. Polling unit directories, wards, user accounts, roles, system settings, and
+                audit logs remain preserved.
               </p>
             </div>
           </div>
@@ -797,9 +898,9 @@ export function DataManagementPage({
         <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-xs text-slate-700">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
           <span>
-            <strong>Zero Auto-Classification Guarantee:</strong> Existing records are never
-            automatically classified as test data. Permanent deletion applies strictly to flagged
-            test records or rows you explicitly select below.
+            <strong>Zero Resurrection Guarantee ({deletionTombstones.length} Active Tombstones):</strong>{' '}
+            Existing records are never auto-classified as test data. Permanently deleted records write
+            server-authoritative tombstones that block re-sync from offline devices and backup files.
           </span>
         </div>
       </div>
@@ -1633,6 +1734,8 @@ export function DataManagementPage({
           </div>
         )}
       </div>
+        </div>
+      ) : null}
 
       {/* Confirmation Modal Showing Exact Affected Records */}
       {confirmModalMode ? (

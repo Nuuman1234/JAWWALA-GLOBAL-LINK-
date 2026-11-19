@@ -19,8 +19,10 @@ import {
 } from 'lucide-react';
 import {
   AUTOMATIC_REPORT_LABELS,
+  INCIDENT_CATEGORIES,
   LGA_DEFINITIONS,
   UserRole,
+  VerificationStatus,
   formatFirestoreTime,
   type AgentCheckIn,
   type ApprovedPuResult,
@@ -39,16 +41,18 @@ import {
 import {
   buildAutomaticReportData,
   computeAnalyticsDashboardMetrics,
+  type AnalyticsDashboardMetrics,
   type AnalyticsReportFilters,
+  type CompiledAutomaticReport,
 } from '../utils/analyticsReportsEngine';
-import {
-  exportReportToExcel,
-  exportReportToPdf,
-} from '../utils/reportDocumentExport';
+import { exportReportToExcel } from '../utils/reportDocumentExport';
 import {
   archiveGeneratedReport,
+  compileReportOffMainThread,
+  computeMetricsOffMainThread,
   deleteArchivedReport,
   enqueueReportArchiveOffline,
+  generateLargeReportPdfAsync,
 } from '../services/reportArchiveService';
 import { OfflineSyncBadge } from '../components/StatusBadge';
 
@@ -73,12 +77,17 @@ interface AnalyticsReportsPageProps {
 
 const REPORT_CATEGORIES: AutomaticReportCategory[] = [
   'DAILY_SITUATION',
-  'WARD_PERFORMANCE',
   'LGA_SUMMARY',
-  'ELECTION_INCIDENT',
+  'WARD_PERFORMANCE',
+  'PU_COVERAGE',
   'AGENT_ACTIVITY',
   'OFFICER_PERFORMANCE',
+  'ELECTION_INCIDENT',
   'TASK_COMPLETION',
+  'FIELD_CHECKIN',
+  'RESULTS_SUBMISSION_STATUS',
+  'DATA_SYNCHRONIZATION',
+  'OUTSTANDING_ACTIONS',
 ];
 
 function isoDateDaysAgo(daysAgo: number): string {
@@ -124,12 +133,24 @@ export function AnalyticsReportsPage({
   const [wardId, setWardId] = useState<'all' | string>(lockedWard);
   const [puId, setPuId] = useState<'all' | string>('all');
   const [officerUid, setOfficerUid] = useState<'all' | string>('all');
+  const [incidentCategory, setIncidentCategory] = useState<'all' | string>('all');
+  const [submissionStatus, setSubmissionStatus] = useState<'all' | string>('all');
 
   const [archiving, setArchiving] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [pdfProgressPercent, setPdfProgressPercent] = useState<number | null>(null);
+  const [compilingWorker, setCompilingWorker] = useState(false);
   const [deletingArchiveId, setDeletingArchiveId] = useState<string | null>(null);
   const [selectedArchive, setSelectedArchive] = useState<GeneratedReportRecord | null>(null);
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const autoDailyArchivedRef = useRef(false);
+  const pdfAbortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    return () => {
+      pdfAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   const effectiveLga = lockedLga !== 'all' ? lockedLga : lgaId;
   const effectiveWard = lockedWard !== 'all' ? lockedWard : wardId;
@@ -143,8 +164,20 @@ export function AnalyticsReportsPage({
       puId,
       officerUid,
       category,
+      incidentCategory,
+      submissionStatus,
     }),
-    [startDateIso, endDateIso, effectiveLga, effectiveWard, puId, officerUid, category]
+    [
+      startDateIso,
+      endDateIso,
+      effectiveLga,
+      effectiveWard,
+      puId,
+      officerUid,
+      category,
+      incidentCategory,
+      submissionStatus,
+    ]
   );
 
   const dataset = useMemo(
@@ -158,19 +191,43 @@ export function AnalyticsReportsPage({
       approvedPuResults,
       tasks,
       notes,
+      queuedItems,
     }),
-    [users, wards, pollingUnits, checkIns, incidents, results, approvedPuResults, tasks, notes]
+    [users, wards, pollingUnits, checkIns, incidents, results, approvedPuResults, tasks, notes, queuedItems]
   );
 
-  const metrics = useMemo(
-    () => computeAnalyticsDashboardMetrics(dataset, filters),
-    [dataset, filters]
+  const [metrics, setMetrics] = useState<AnalyticsDashboardMetrics>(() =>
+    computeAnalyticsDashboardMetrics(dataset, filters)
+  );
+  const [compiledReport, setCompiledReport] = useState<CompiledAutomaticReport>(() =>
+    buildAutomaticReportData(dataset, filters)
   );
 
-  const compiledReport = useMemo(
-    () => buildAutomaticReportData(dataset, filters),
-    [dataset, filters]
-  );
+  // Offload report data processing to Web Worker so large datasets never block mobile UI thread
+  useEffect(() => {
+    const controller = new AbortController();
+    setCompilingWorker(true);
+    void Promise.all([
+      computeMetricsOffMainThread(dataset, filters, controller.signal),
+      compileReportOffMainThread(dataset, filters, controller.signal),
+    ])
+      .then(([nextMetrics, nextReport]) => {
+        if (!controller.signal.aborted) {
+          setMetrics(nextMetrics);
+          setCompiledReport(nextReport);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setMetrics(computeAnalyticsDashboardMetrics(dataset, filters));
+          setCompiledReport(buildAutomaticReportData(dataset, filters));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCompilingWorker(false);
+      });
+    return () => controller.abort();
+  }, [dataset, filters]);
 
   // Automatic daily situation report compilation & archival once per day when online for Full Admin
   useEffect(() => {
@@ -258,17 +315,42 @@ export function AnalyticsReportsPage({
     [isOnline, lastUpdatedAt, lastSyncedLabel, user.displayName]
   );
 
-  const handleDownloadPdf = () => {
+  const handleDownloadPdf = async () => {
+    if (generatingPdf) return;
     setBanner(null);
+    setGeneratingPdf(true);
+    setPdfProgressPercent(0);
+    const controller = new AbortController();
+    pdfAbortControllerRef.current = controller;
     try {
-      const fileName = exportReportToPdf(compiledReport, exportContext);
-      setBanner({ type: 'success', text: `Downloaded PDF report: ${fileName}` });
+      const result = await generateLargeReportPdfAsync(compiledReport, exportContext, {
+        autoDownload: true,
+        signal: controller.signal,
+        onProgress: (p) => setPdfProgressPercent(p.percent),
+      });
+      setBanner({
+        type: 'success',
+        text: `Downloaded PDF report: ${result.fileName} (${result.pageCount} page${result.pageCount === 1 ? '' : 's'}${result.usedWebWorker ? ' · processed in background worker' : ''})`,
+      });
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setBanner({
         type: 'error',
         text: err instanceof Error ? err.message : 'Unable to generate PDF report.',
       });
+    } finally {
+      if (pdfAbortControllerRef.current === controller) {
+        pdfAbortControllerRef.current = null;
+      }
+      setGeneratingPdf(false);
+      setPdfProgressPercent(null);
     }
+  };
+
+  const handleCancelPdf = () => {
+    pdfAbortControllerRef.current?.abort();
+    setGeneratingPdf(false);
+    setPdfProgressPercent(null);
   };
 
   const handleExportExcel = () => {
@@ -561,6 +643,42 @@ export function AnalyticsReportsPage({
               ))}
             </select>
           </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Incident Category
+            </label>
+            <select
+              value={incidentCategory}
+              onChange={(e) => setIncidentCategory(e.target.value)}
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+            >
+              <option value="all">All Incident Categories</option>
+              {INCIDENT_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Submission / Verification Status
+            </label>
+            <select
+              value={submissionStatus}
+              onChange={(e) => setSubmissionStatus(e.target.value)}
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+            >
+              <option value="all">All Submission Statuses</option>
+              {Object.values(VerificationStatus).map((st) => (
+                <option key={st} value={st}>
+                  {st.replace(/_/g, ' ')}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </section>
 
@@ -643,7 +761,7 @@ export function AnalyticsReportsPage({
             ) : (
               <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
                 {metrics.wardOfficerDistribution.map((w) => {
-                  const pct = Math.min(100, Math.round((w.activeCount / w.minimumRequired) * 100));
+                  const pct = Math.min(100, Math.round((w.activeCount / w.minRequired) * 100));
                   return (
                     <div key={w.wardId} className="space-y-1 text-xs">
                       <div className="flex items-center justify-between">
@@ -655,7 +773,7 @@ export function AnalyticsReportsPage({
                             w.isCompliant ? 'text-emerald-700' : 'text-amber-700'
                           }`}
                         >
-                          {w.activeCount}/{w.minimumRequired}
+                          {w.activeCount}/{w.minRequired}
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
@@ -723,21 +841,41 @@ export function AnalyticsReportsPage({
           <p className="text-sm font-semibold text-slate-900">{compiledReport.reportTitle}</p>
           <p className="text-xs text-slate-500">
             Period: {compiledReport.reportingPeriodLabel} · {compiledReport.rows.length} record(s)
+            {compilingWorker ? ' · Updating dataset in background worker...' : ''}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleDownloadPdf}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b]"
+            disabled={generatingPdf}
+            onClick={() => void handleDownloadPdf()}
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-60 whitespace-nowrap"
           >
-            <Download className="h-4 w-4" aria-hidden="true" />
-            <span>Download PDF</span>
+            {generatingPdf ? (
+              <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Download className="h-4 w-4" aria-hidden="true" />
+            )}
+            <span>
+              {generatingPdf
+                ? `Generating PDF${pdfProgressPercent !== null ? ` (${pdfProgressPercent}%)` : '...'}`
+                : 'Download PDF'}
+            </span>
           </button>
+          {generatingPdf ? (
+            <button
+              type="button"
+              onClick={handleCancelPdf}
+              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 hover:bg-rose-100 whitespace-nowrap"
+            >
+              <X className="h-3.5 w-3.5" />
+              <span>Cancel PDF</span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleExportExcel}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-emerald-700/30 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-100"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-emerald-700/30 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-100 whitespace-nowrap"
           >
             <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
             <span>Export Excel (.xlsx)</span>
@@ -745,7 +883,7 @@ export function AnalyticsReportsPage({
           <button
             type="button"
             onClick={handlePrint}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
           >
             <Printer className="h-4 w-4" aria-hidden="true" />
             <span>Print Report</span>
@@ -754,7 +892,7 @@ export function AnalyticsReportsPage({
             type="button"
             disabled={archiving}
             onClick={() => void handleArchiveSnapshot()}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50 whitespace-nowrap"
           >
             <Archive className="h-4 w-4" aria-hidden="true" />
             <span>{archiving ? 'Saving...' : isOnline ? 'Archive Snapshot' : 'Queue Archive Offline'}</span>

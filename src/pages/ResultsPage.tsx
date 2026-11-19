@@ -19,6 +19,7 @@ import { ResultBarChart } from '../components/ResultBarChart';
 import { OfflineSyncBadge, VerificationStatusBadge } from '../components/StatusBadge';
 import {
   BVAS_STATUS_OPTIONS,
+  ELECTION_CATEGORY_OPTIONS,
   FIXED_PARTIES,
   LGA_DEFINITIONS,
   UserRole,
@@ -34,6 +35,7 @@ import {
   type UserAccount,
 } from '../types/fdmis';
 import {
+  analyzeResultDiscrepancies,
   getCanonicalApprovedPuResults,
   summarizeVoteTotals,
   validateResultFigures,
@@ -95,6 +97,7 @@ export function ResultsPage({
   const [editingResult, setEditingResult] = useState<ResultSubmission | null>(null);
 
   const [puId, setPuId] = useState(defaultPuId);
+  const [electionCategory, setElectionCategory] = useState<string>(ELECTION_CATEGORY_OPTIONS[0]);
   const [apcVotes, setApcVotes] = useState('0');
   const [pdpVotes, setPdpVotes] = useState('0');
   const [adcVotes, setAdcVotes] = useState('0');
@@ -249,6 +252,29 @@ export function ResultsPage({
     ]
   );
 
+  const liveDiscrepancyPreview = useMemo(() => {
+    if (!selectedPu) return null;
+    return analyzeResultDiscrepancies(
+      {
+        id: editingResult?.id,
+        puId: selectedPu.id,
+        puCode: selectedPu.puCode,
+        apcVotes: numericSnapshot.apc,
+        pdpVotes: numericSnapshot.pdp,
+        adcVotes: numericSnapshot.adc,
+        othersVotes: numericSnapshot.others,
+        registeredVoters: numericSnapshot.reg,
+        accreditedVoters: numericSnapshot.acc,
+        validVotes: numericSnapshot.valid,
+        rejectedVotes: numericSnapshot.rej,
+        totalVotesCast: numericSnapshot.cast,
+        ec8aImageBase64: ec8aBase64,
+        electionCategory,
+      },
+      results
+    );
+  }, [selectedPu, editingResult?.id, numericSnapshot, ec8aBase64, electionCategory, results]);
+
   const canonicalApproved = useMemo(
     () => getCanonicalApprovedPuResults(approvedPuResults, results),
     [approvedPuResults, results]
@@ -258,7 +284,9 @@ export function ResultsPage({
     const pendingCount = results.filter(
       (r) =>
         r.verificationStatus === VerificationStatus.SUBMITTED ||
-        r.verificationStatus === VerificationStatus.UNDER_REVIEW
+        r.verificationStatus === VerificationStatus.PENDING_VERIFICATION ||
+        r.verificationStatus === VerificationStatus.UNDER_REVIEW ||
+        r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED
     ).length;
     const expectedCount = selectablePus.length > 0 ? selectablePus.length : pollingUnits.length;
     return summarizeVoteTotals(canonicalApproved, expectedCount, pendingCount);
@@ -268,6 +296,7 @@ export function ResultsPage({
     setEditingResult(null);
     const targetId = defaultPuId;
     setPuId(targetId);
+    setElectionCategory(ELECTION_CATEGORY_OPTIONS[0]);
     const pu = selectablePus.find((p) => p.id === targetId);
     setApcVotes('0');
     setPdpVotes('0');
@@ -291,6 +320,7 @@ export function ResultsPage({
   const openReviseSubmission = (res: ResultSubmission) => {
     setEditingResult(res);
     setPuId(res.puId);
+    setElectionCategory(res.electionCategory || ELECTION_CATEGORY_OPTIONS[0]);
     setApcVotes(String(res.apcVotes ?? 0));
     setPdpVotes(String(res.pdpVotes ?? 0));
     setAdcVotes(String(res.adcVotes ?? 0));
@@ -353,6 +383,7 @@ export function ResultsPage({
       bvasStatus,
       bvasNotes,
       submissionNotes,
+      electionCategory,
       ec8aImageBase64: ec8aBase64,
       ec8aFileName,
       targetResultId: editingResult?.id || undefined,
@@ -390,7 +421,7 @@ export function ResultsPage({
     }
 
     try {
-      await submitPollingUnitResult(user, selectedPu, payload, editingResult);
+      await submitPollingUnitResult(user, selectedPu, payload, editingResult, undefined, results);
       if (!editingResult) {
         await clearDraft(draftKey);
       }
@@ -398,7 +429,9 @@ export function ResultsPage({
         type: 'ok',
         text: asDraft
           ? `Result draft saved for ${selectedPu.puCode}.`
-          : `Official result confirmed and recorded for ${selectedPu.puCode}.`,
+          : liveDiscrepancyPreview?.hasDiscrepancy
+            ? `Result recorded for ${selectedPu.puCode} with automated discrepancy flag(s) queued for Verification Officer review.`
+            : `Official result confirmed and recorded for ${selectedPu.puCode}.`,
       });
       setReviewConfirmOpen(false);
       setShowForm(false);
@@ -496,7 +529,8 @@ export function ResultsPage({
     }
     const isEditableState =
       r.verificationStatus === VerificationStatus.DRAFT ||
-      r.verificationStatus === VerificationStatus.REQUIRES_CORRECTION;
+      r.verificationStatus === VerificationStatus.REQUIRES_CORRECTION ||
+      r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED;
     return (
       (r.submittedByUid === user.uid && isEditableState) ||
       user.role === UserRole.FULL_CONTROL_ADMIN
@@ -606,32 +640,52 @@ export function ResultsPage({
             </button>
           </div>
 
-          {/* Polling Unit Selector */}
-          <div>
-            <label htmlFor="res-pu" className="block text-xs font-medium text-slate-700">
-              {isPuAgent ? 'Assigned Polling Unit (Locked)' : 'Polling Unit *'}
-            </label>
-            <select
-              id="res-pu"
-              required
-              disabled={Boolean(editingResult) || isPuAgent}
-              value={puId}
-              onChange={(e) => {
-                const nextId = e.target.value;
-                setPuId(nextId);
-                const found = selectablePus.find((p) => p.id === nextId);
-                if (found && found.registeredVoters > 0) {
-                  setRegisteredVoters(String(found.registeredVoters));
-                }
-              }}
-              className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 disabled:bg-slate-100"
-            >
-              {selectablePus.map((pu) => (
-                <option key={pu.id} value={pu.id}>
-                  {pu.puCode} · {pu.name} ({pu.wardName})
-                </option>
-              ))}
-            </select>
+          {/* Polling Unit & Election Category Selector */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="res-pu" className="block text-xs font-medium text-slate-700">
+                {isPuAgent ? 'Assigned Polling Unit (Locked)' : 'Polling Unit *'}
+              </label>
+              <select
+                id="res-pu"
+                required
+                disabled={Boolean(editingResult) || isPuAgent}
+                value={puId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  setPuId(nextId);
+                  const found = selectablePus.find((p) => p.id === nextId);
+                  if (found && found.registeredVoters > 0) {
+                    setRegisteredVoters(String(found.registeredVoters));
+                  }
+                }}
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 disabled:bg-slate-100"
+              >
+                {selectablePus.map((pu) => (
+                  <option key={pu.id} value={pu.id}>
+                    {pu.puCode} · {pu.name} ({pu.wardName})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="res-category" className="block text-xs font-medium text-slate-700">
+                Election Category *
+              </label>
+              <select
+                id="res-category"
+                value={electionCategory}
+                onChange={(e) => setElectionCategory(e.target.value)}
+                className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              >
+                {ELECTION_CATEGORY_OPTIONS.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           {/* Fixed 4 Political Parties Entry Grid */}
@@ -814,15 +868,17 @@ export function ResultsPage({
             </div>
           ) : null}
 
-          {/* Non-blocking Integrity Warnings */}
-          {validation.warnings.length > 0 ? (
+          {/* Non-blocking Integrity & Duplicate / Discrepancy Preview Warnings */}
+          {validation.warnings.length > 0 || (liveDiscrepancyPreview && liveDiscrepancyPreview.flags.length > 0) ? (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950">
               <p className="flex items-center gap-1.5 font-semibold">
                 <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
-                <span>Conflicting Figure Warning</span>
+                <span>Automated Discrepancy &amp; Integrity Check (Human Verification Required)</span>
               </p>
               <ul className="mt-1.5 list-disc space-y-0.5 pl-5">
-                {validation.warnings.map((w) => (
+                {Array.from(
+                  new Set([...validation.warnings, ...(liveDiscrepancyPreview?.flags || [])])
+                ).map((w) => (
                   <li key={w}>{w}</li>
                 ))}
               </ul>
@@ -1020,6 +1076,9 @@ export function ResultsPage({
                       <span className="font-mono text-[11px] text-slate-500">
                         v{res.version}
                       </span>
+                      {res.electionCategory ? (
+                        <span className="text-[11px] text-slate-500">· {res.electionCategory}</span>
+                      ) : null}
                     </div>
                     <h3 className="mt-1 font-display text-sm font-semibold text-slate-900">
                       {res.puName}
@@ -1125,6 +1184,15 @@ export function ResultsPage({
                     <span className="text-amber-700">No EC8A attachment</span>
                   )}
                 </div>
+
+                {res.discrepancyFlag && res.discrepancySummary ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700" aria-hidden="true" />
+                    <span>
+                      <strong>Discrepancy Flagged:</strong> {res.discrepancySummary}
+                    </span>
+                  </div>
+                ) : null}
 
                 {res.reviewNote ? (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">

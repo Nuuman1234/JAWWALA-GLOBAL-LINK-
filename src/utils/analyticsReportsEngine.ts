@@ -1,6 +1,7 @@
 import {
   AUTOMATIC_REPORT_LABELS,
   AccountStatus,
+  INCIDENT_STATUS_META,
   IncidentStatus,
   IncidentUrgency,
   LGA_DEFINITIONS,
@@ -10,6 +11,7 @@ import {
   TASK_STATUS_META,
   TaskStatus,
   UserRole,
+  VERIFICATION_STATUS_META,
   VerificationStatus,
   formatFirestoreTime,
   getEffectiveTaskStatus,
@@ -21,6 +23,7 @@ import {
   type FirestoreTime,
   type IncidentReport,
   type LgaId,
+  type OfflineQueuedItem,
   type OperationalNote,
   type OperationalTask,
   type PollingUnit,
@@ -28,11 +31,47 @@ import {
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
-import {
-  computeWardOperationsCoverage,
-  type WardOperationsCoverageItem,
-} from '../services/directoryService';
 import { getCanonicalApprovedPuResults } from './aggregationEngine';
+
+export interface WardOperationsCoverageSummary {
+  wardId: string;
+  wardName: string;
+  wardCode: string;
+  lgaId: LgaId;
+  activeCount: number;
+  totalAssignedCount: number;
+  minRequired: number;
+  shortfall: number;
+  isCompliant: boolean;
+}
+
+function computePureWardOperationsCoverage(
+  wards: Ward[],
+  users: UserAccount[],
+  minRequired: number = MIN_OPERATIONS_OFFICERS_PER_WARD
+): WardOperationsCoverageSummary[] {
+  const officers = users.filter((u) => u.role === UserRole.OPERATIONS_OFFICER);
+  return wards
+    .map((w) => {
+      const assigned = officers.filter((o) => o.assignedWardId === w.id);
+      const activeCount = assigned.filter(
+        (o) => o.status === AccountStatus.ACTIVE && !o.sessionRevoked
+      ).length;
+      const shortfall = Math.max(0, minRequired - activeCount);
+      return {
+        wardId: w.id,
+        wardName: w.name,
+        wardCode: w.wardCode,
+        lgaId: w.lgaId,
+        activeCount,
+        totalAssignedCount: assigned.length,
+        minRequired,
+        shortfall,
+        isCompliant: activeCount >= minRequired,
+      };
+    })
+    .sort((a, b) => a.lgaId.localeCompare(b.lgaId) || a.wardName.localeCompare(b.wardName));
+}
 
 export const FDMIS_OFFICIAL_NAME = 'Funtua–Dandume Mandate Intelligence System (FDMIS)';
 
@@ -43,6 +82,8 @@ export interface AnalyticsReportFilters {
   wardId: 'all' | string;
   puId: 'all' | string;
   officerUid: 'all' | string;
+  incidentCategory?: 'all' | string;
+  submissionStatus?: 'all' | string;
   category: AutomaticReportCategory;
 }
 
@@ -56,6 +97,7 @@ export interface AnalyticsDatasetInputs {
   approvedPuResults: ApprovedPuResult[];
   tasks: OperationalTask[];
   notes: OperationalNote[];
+  queuedItems?: OfflineQueuedItem[];
 }
 
 export interface WardPerformanceRow {
@@ -97,7 +139,7 @@ export interface AnalyticsDashboardMetrics {
   activeOperationsOfficers: number;
   compliantWardsCount: number;
   understaffedWardsCount: number;
-  wardOfficerDistribution: WardOperationsCoverageItem[];
+  wardOfficerDistribution: WardOperationsCoverageSummary[];
   tasksTotal: number;
   tasksAssigned: number;
   tasksAcknowledged: number;
@@ -305,7 +347,7 @@ export function computeAnalyticsDashboardMetrics(
   const reportingRatePercent =
     scopedPus.length > 0 ? Math.round((reportingPollingUnits / scopedPus.length) * 100) : 0;
 
-  const wardOfficerDistribution = computeWardOperationsCoverage(
+  const wardOfficerDistribution = computePureWardOperationsCoverage(
     scopedWards,
     inputs.users,
     MIN_OPERATIONS_OFFICERS_PER_WARD
@@ -336,8 +378,15 @@ export function computeAnalyticsDashboardMetrics(
   });
 
   const incidentsByStatus: Record<IncidentStatus, number> = {
+    [IncidentStatus.DRAFT]: 0,
     [IncidentStatus.NEW]: 0,
+    [IncidentStatus.SUBMITTED]: 0,
+    [IncidentStatus.PENDING_REVIEW]: 0,
     [IncidentStatus.UNDER_REVIEW]: 0,
+    [IncidentStatus.UNDER_INVESTIGATION]: 0,
+    [IncidentStatus.VERIFIED]: 0,
+    [IncidentStatus.UNVERIFIED]: 0,
+    [IncidentStatus.REJECTED]: 0,
     [IncidentStatus.ESCALATED]: 0,
     [IncidentStatus.RESOLVED]: 0,
     [IncidentStatus.CLOSED]: 0,
@@ -678,6 +727,23 @@ export function buildAutomaticReportData(
     ];
     dataStatus = `${rows.length} LGA Summary Row(s) Compiled`;
   } else if (filters.category === 'ELECTION_INCIDENT') {
+    const filteredIncidents = scopedIncidents.filter((inc) => {
+      if (
+        filters.incidentCategory &&
+        filters.incidentCategory !== 'all' &&
+        inc.category !== filters.incidentCategory
+      ) {
+        return false;
+      }
+      if (
+        filters.submissionStatus &&
+        filters.submissionStatus !== 'all' &&
+        inc.status !== filters.submissionStatus
+      ) {
+        return false;
+      }
+      return true;
+    });
     headers = [
       'PU Code',
       'Polling Unit',
@@ -692,7 +758,7 @@ export function buildAutomaticReportData(
       'Original Timestamp',
       'Server Synced',
     ];
-    rows = scopedIncidents.map((inc) => [
+    rows = filteredIncidents.map((inc) => [
       inc.puCode,
       inc.puName,
       wardNameMap.get(inc.wardId) || inc.wardId,
@@ -700,20 +766,257 @@ export function buildAutomaticReportData(
       inc.category,
       inc.title,
       inc.urgency,
-      inc.status,
-      inc.reporterName,
-      inc.escalatedTo || '-',
+      INCIDENT_STATUS_META[inc.status]?.label || inc.status,
+      inc.protectReporterIdentity ? 'Protected Reporter' : inc.reporterName,
+      inc.escalatedTo || 'Not yet escalated',
       formatFirestoreTime(inc.clientCreatedAtIso || inc.createdAt),
       formatFirestoreTime(inc.serverSyncedAt || inc.createdAt),
     ]);
     summaryMetrics = [
-      { label: 'Total Incidents', value: metrics.incidentsTotal },
-      { label: 'New / Under Review', value: `${metrics.incidentsByStatus.NEW} / ${metrics.incidentsByStatus.UNDER_REVIEW}` },
-      { label: 'Escalated', value: metrics.incidentsByStatus.ESCALATED },
-      { label: 'Resolved / Closed', value: metrics.incidentsByStatus.RESOLVED + metrics.incidentsByStatus.CLOSED },
-      { label: 'Active Critical Incidents', value: metrics.criticalActiveIncidents },
+      { label: 'Total Matching Incidents', value: filteredIncidents.length },
+      { label: 'Verified Incidents', value: filteredIncidents.filter((i) => i.status === IncidentStatus.VERIFIED).length },
+      { label: 'Escalated', value: filteredIncidents.filter((i) => i.status === IncidentStatus.ESCALATED).length },
+      { label: 'Resolved / Closed', value: filteredIncidents.filter((i) => i.status === IncidentStatus.RESOLVED || i.status === IncidentStatus.CLOSED).length },
+      { label: 'Active Critical Incidents', value: filteredIncidents.filter((i) => i.urgency === IncidentUrgency.CRITICAL && isIncidentActive(i.status)).length },
     ];
     dataStatus = rows.length === 0 ? 'No Incidents Recorded in Filter Window' : `${rows.length} Incident Record(s)`;
+  } else if (filters.category === 'PU_COVERAGE') {
+    const checkInByPu = new Map<string, AgentCheckIn>();
+    scopedCheckIns.forEach((c) => {
+      if (!checkInByPu.has(c.puId)) checkInByPu.set(c.puId, c);
+    });
+    const resultByPu = new Map<string, ResultSubmission>();
+    scopedResults.forEach((r) => {
+      if (!resultByPu.has(r.puId)) resultByPu.set(r.puId, r);
+    });
+    headers = [
+      'PU Code',
+      'Polling Unit',
+      'Ward',
+      'LGA',
+      'Assigned Agent',
+      'Operational Status',
+      'GPS Coordinates',
+      'Latest Check-In',
+      'Result Status',
+    ];
+    rows = scopedPus.map((pu) => {
+      const chk = checkInByPu.get(pu.id);
+      const res = resultByPu.get(pu.id);
+      return [
+        pu.puCode,
+        pu.name,
+        pu.wardName,
+        LGA_DEFINITIONS[pu.lgaId]?.shortName || pu.lgaId,
+        pu.assignedAgentName || 'Unassigned',
+        PU_STATUS_META[pu.operationalStatus]?.label || pu.operationalStatus,
+        pu.coordinatesVerified && typeof pu.latitude === 'number' && typeof pu.longitude === 'number'
+          ? `${pu.latitude.toFixed(5)}, ${pu.longitude.toFixed(5)}`
+          : 'Data unavailable',
+        chk ? `${chk.arrivalTimeText} (${chk.agentName})` : 'Not yet reported',
+        res ? VERIFICATION_STATUS_META[res.verificationStatus]?.label || res.verificationStatus : 'Not yet reported',
+      ];
+    });
+    const assignedCount = scopedPus.filter((p) => Boolean(p.assignedAgentUid)).length;
+    const verifiedCoordCount = scopedPus.filter(
+      (p) => p.coordinatesVerified && typeof p.latitude === 'number' && typeof p.longitude === 'number'
+    ).length;
+    summaryMetrics = [
+      { label: 'Official Polling Units in Scope', value: scopedPus.length },
+      { label: 'Assigned / Unassigned PUs', value: `${assignedCount} / ${scopedPus.length - assignedCount}` },
+      { label: 'Reporting Polling Units', value: `${metrics.reportingPollingUnits} (${metrics.reportingRatePercent}%)` },
+      { label: 'Verified GPS Coordinates', value: `${verifiedCoordCount} / ${scopedPus.length}` },
+    ];
+    dataStatus = `${rows.length} Polling Unit Coverage Record(s)`;
+  } else if (filters.category === 'FIELD_CHECKIN') {
+    headers = [
+      'PU Code',
+      'Polling Unit',
+      'Ward',
+      'LGA',
+      'Officer / Agent',
+      'Arrival Time',
+      'GPS Coordinates',
+      'Accuracy (m)',
+      'Location Exception',
+      'Network / Battery',
+      'Device Ref',
+      'Device Timestamp',
+    ];
+    rows = scopedCheckIns.map((chk) => [
+      chk.puCode,
+      chk.puName,
+      wardNameMap.get(chk.wardId) || chk.wardId,
+      LGA_DEFINITIONS[chk.lgaId]?.shortName || chk.lgaId,
+      chk.agentName,
+      chk.arrivalTimeText,
+      typeof chk.latitude === 'number' && typeof chk.longitude === 'number'
+        ? `${chk.latitude.toFixed(5)}, ${chk.longitude.toFixed(5)}`
+        : 'Data unavailable',
+      typeof chk.gpsAccuracyMeters === 'number' ? `${Math.round(chk.gpsAccuracyMeters)} m` : 'Data unavailable',
+      chk.locationExceptionFlag
+        ? `Flagged (${chk.locationExceptionDistanceMeters ?? '?'}m · ${chk.exceptionReviewStatus || 'PENDING_REVIEW'})`
+        : 'Normal',
+      `${chk.networkStatus} · ${chk.batteryPercent >= 0 ? `${chk.batteryPercent}%` : 'N/A'}`,
+      chk.deviceId || 'Not recorded',
+      formatFirestoreTime(chk.clientCreatedAtIso || chk.createdAt),
+    ]);
+    const gpsCount = scopedCheckIns.filter((c) => typeof c.latitude === 'number').length;
+    const flaggedCount = scopedCheckIns.filter((c) => Boolean(c.locationExceptionFlag)).length;
+    summaryMetrics = [
+      { label: 'Total Check-Ins (Period)', value: scopedCheckIns.length },
+      { label: 'Unique Polling Units Checked In', value: new Set(scopedCheckIns.map((c) => c.puId)).size },
+      { label: 'GPS-Captured Check-Ins', value: gpsCount },
+      { label: 'Location Exceptions Flagged', value: flaggedCount },
+    ];
+    dataStatus = rows.length === 0 ? 'No Field Check-Ins Recorded' : `${rows.length} Check-In Record(s)`;
+  } else if (filters.category === 'RESULTS_SUBMISSION_STATUS') {
+    const filteredResults = scopedResults.filter((r) => {
+      if (
+        filters.submissionStatus &&
+        filters.submissionStatus !== 'all' &&
+        r.verificationStatus !== filters.submissionStatus
+      ) {
+        return false;
+      }
+      return true;
+    });
+    headers = [
+      'PU Code',
+      'Polling Unit',
+      'Ward',
+      'LGA',
+      'Election Category',
+      'Verification Status',
+      'Valid / Cast',
+      'APC / PDP / ADC / OTH',
+      'EC8A Sheet',
+      'Discrepancy Flag',
+      'Submitted By',
+      'Reviewed By',
+    ];
+    rows = filteredResults.map((r) => [
+      r.puCode,
+      r.puName,
+      r.wardName,
+      LGA_DEFINITIONS[r.lgaId]?.shortName || r.lgaId,
+      r.electionCategory || 'House of Representatives',
+      VERIFICATION_STATUS_META[r.verificationStatus]?.label || r.verificationStatus,
+      `${r.validVotes} / ${r.totalVotesCast}`,
+      `${r.apcVotes ?? 0} / ${r.pdpVotes ?? 0} / ${r.adcVotes ?? 0} / ${r.othersVotes ?? 0}`,
+      r.ec8aImageBase64 ? 'Attached' : 'Not attached',
+      r.discrepancyFlag ? r.discrepancySummary || 'Flagged' : 'Clear',
+      r.submittedByName,
+      r.reviewedByName || 'Pending review',
+    ]);
+    summaryMetrics = [
+      { label: 'Total Submissions in Scope', value: filteredResults.length },
+      { label: 'FDMIS Verified', value: filteredResults.filter((r) => r.verificationStatus === VerificationStatus.VERIFIED).length },
+      { label: 'Pending Verification / Under Review', value: filteredResults.filter((r) => r.verificationStatus === VerificationStatus.SUBMITTED || r.verificationStatus === VerificationStatus.PENDING_VERIFICATION || r.verificationStatus === VerificationStatus.UNDER_REVIEW).length },
+      { label: 'Discrepancy / Correction Required', value: filteredResults.filter((r) => r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED || r.verificationStatus === VerificationStatus.REQUIRES_CORRECTION || Boolean(r.discrepancyFlag)).length },
+    ];
+    dataStatus = rows.length === 0 ? 'No Result Submissions in Scope' : `${rows.length} Result Submission Record(s)`;
+  } else if (filters.category === 'DATA_SYNCHRONIZATION') {
+    const queue = inputs.queuedItems || [];
+    headers = [
+      'Submission ID',
+      'Record Type',
+      'PU / Scope',
+      'Summary',
+      'Sync Status',
+      'Retry Count',
+      'Conflict State',
+      'Created Offline At',
+      'Error / Note',
+    ];
+    rows = queue.map((q) => [
+      q.clientSubmissionId,
+      q.reportType,
+      q.puCode || q.lgaId,
+      q.summary,
+      q.status,
+      q.retryCount ?? 0,
+      q.conflictState || 'NONE',
+      formatFirestoreTime(q.createdAtIso),
+      q.errorMessage || '-',
+    ]);
+    const pending = queue.filter((q) => q.status === 'PENDING_SYNC' || q.status === 'SAVED_LOCALLY').length;
+    const failed = queue.filter((q) => q.status === 'SYNC_FAILED').length;
+    const synced = queue.filter((q) => q.status === 'SYNCED').length;
+    summaryMetrics = [
+      { label: 'Total Tracked Queue Items', value: queue.length },
+      { label: 'Pending Offline Uploads', value: pending },
+      { label: 'Failed Uploads Requiring Retry', value: failed },
+      { label: 'Successfully Synced Items', value: synced },
+    ];
+    dataStatus = queue.length === 0 ? 'All Local Records Synchronized (Queue Empty)' : `${queue.length} Synchronization Record(s)`;
+  } else if (filters.category === 'OUTSTANDING_ACTIONS') {
+    const actionRows: (string | number)[][] = [];
+    metrics.wardOfficerDistribution
+      .filter((w) => !w.isCompliant)
+      .forEach((w) => {
+        actionRows.push([
+          'Staffing Gap',
+          `${w.wardName} (${LGA_DEFINITIONS[w.lgaId]?.shortName || w.lgaId})`,
+          'HIGH',
+          `Shortfall of ${w.shortfall} Operations Officer(s) (${w.activeCount}/${w.minRequired})`,
+          'Admin / LGA Super Admin',
+        ]);
+      });
+    scopedTasks
+      .filter((t) => getEffectiveTaskStatus(t, nowMs) === TaskStatus.OVERDUE || t.status === TaskStatus.AWAITING_REVIEW)
+      .forEach((t) => {
+        const eff = getEffectiveTaskStatus(t, nowMs);
+        actionRows.push([
+          eff === TaskStatus.OVERDUE ? 'Overdue Task' : 'Task Review Pending',
+          `${t.wardName} · ${t.title}`,
+          t.priority,
+          `Assigned to ${t.assignedOfficerName} · Due ${t.dueDateIso}`,
+          eff === TaskStatus.OVERDUE ? t.assignedOfficerName : 'Full Control Admin',
+        ]);
+      });
+    scopedIncidents
+      .filter((i) => isIncidentActive(i.status))
+      .forEach((i) => {
+        actionRows.push([
+          'Unresolved Incident',
+          `${i.puCode} · ${i.title}`,
+          i.urgency,
+          `${i.category} (${INCIDENT_STATUS_META[i.status]?.label || i.status})`,
+          i.escalatedTo || 'Situation Room Reviewer',
+        ]);
+      });
+    scopedResults
+      .filter(
+        (r) =>
+          r.verificationStatus === VerificationStatus.SUBMITTED ||
+          r.verificationStatus === VerificationStatus.UNDER_REVIEW ||
+          r.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED ||
+          r.verificationStatus === VerificationStatus.REQUIRES_CORRECTION
+      )
+      .forEach((r) => {
+        actionRows.push([
+          'Result Verification Pending',
+          `${r.puCode} · ${r.puName}`,
+          r.discrepancyFlag ? 'CRITICAL' : 'MEDIUM',
+          `Status: ${VERIFICATION_STATUS_META[r.verificationStatus]?.label || r.verificationStatus}`,
+          'Verification Officer / Admin',
+        ]);
+      });
+
+    headers = ['Action Type', 'Location / Subject', 'Priority', 'Details', 'Responsible Role'];
+    rows = actionRows;
+    summaryMetrics = [
+      { label: 'Total Outstanding Actions', value: actionRows.length },
+      { label: 'Understaffed Wards (<5 Ops)', value: metrics.understaffedWardsCount },
+      { label: 'Overdue Tasks', value: metrics.tasksOverdue },
+      { label: 'Unresolved Incidents', value: scopedIncidents.filter((i) => isIncidentActive(i.status)).length },
+      { label: 'Pending Result Verifications', value: metrics.unverifiedResultsCount },
+    ];
+    dataStatus =
+      actionRows.length === 0
+        ? 'No Outstanding Operational Actions Detected'
+        : `${actionRows.length} Outstanding Action Item(s) Requiring Attention`;
   } else if (filters.category === 'AGENT_ACTIVITY') {
     const scopedAgents = inputs.users.filter((u) => {
       if (u.role !== UserRole.POLLING_UNIT_AGENT) return false;
@@ -757,11 +1060,11 @@ export function buildAutomaticReportData(
         pu ? `${pu.puCode} — ${pu.name}` : 'Unassigned',
         pu ? PU_STATUS_META[pu.operationalStatus]?.label || pu.operationalStatus : 'No PU',
         chkCount,
-        latestChk ? `${latestChk.arrivalTimeText} (${latestChk.networkStatus})` : 'No Check-In',
+        latestChk ? `${latestChk.arrivalTimeText} (${latestChk.networkStatus})` : 'Not yet reported',
         resCount,
         typeof agent.batteryLevel === 'number'
           ? `${agent.batteryLevel}%${agent.batteryCharging ? ' (Charging)' : ''}`
-          : 'Not Reported',
+          : 'Data unavailable',
       ];
     });
     summaryMetrics = [
@@ -809,7 +1112,7 @@ export function buildAutomaticReportData(
       const overdue = oTasks.filter(
         (t) => getEffectiveTaskStatus(t, nowMs) === TaskStatus.OVERDUE
       ).length;
-      const rate = oTasks.length > 0 ? `${Math.round((completed / oTasks.length) * 100)}%` : 'N/A';
+      const rate = oTasks.length > 0 ? `${Math.round((completed / oTasks.length) * 100)}%` : 'Data unavailable';
       const incCount = scopedIncidents.filter((i) => i.reporterUid === off.uid).length;
       const noteCount = inputs.notes.filter(
         (n) =>
@@ -831,7 +1134,7 @@ export function buildAutomaticReportData(
         noteCount,
         typeof off.batteryLevel === 'number'
           ? `${off.batteryLevel}%${off.batteryCharging ? ' (Charging)' : ''}`
-          : 'Not Reported',
+          : 'Data unavailable',
       ];
     });
     summaryMetrics = [
@@ -869,8 +1172,8 @@ export function buildAutomaticReportData(
         `${t.progressPercent}%`,
         t.startDateIso,
         t.dueDateIso,
-        t.delayReason || '-',
-        t.adminFeedback || '-',
+        t.delayReason || 'None reported',
+        t.adminFeedback || 'Pending',
         t.assignedByName,
       ];
     });

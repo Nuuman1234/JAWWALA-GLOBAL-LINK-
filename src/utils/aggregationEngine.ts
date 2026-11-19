@@ -412,8 +412,135 @@ export function buildConstituencySummary(
   const pendingCount = submissions.filter(
     (s) =>
       s.verificationStatus === VerificationStatus.SUBMITTED ||
-      s.verificationStatus === VerificationStatus.UNDER_REVIEW
+      s.verificationStatus === VerificationStatus.PENDING_VERIFICATION ||
+      s.verificationStatus === VerificationStatus.UNDER_REVIEW ||
+      s.verificationStatus === VerificationStatus.DISCREPANCY_DETECTED
   ).length;
 
   return summarizeVoteTotals(approved, expected, pendingCount);
 }
+
+/**
+ * Computes exact surface distance in meters between two WGS84 coordinates (Haversine formula).
+ */
+export function computeHaversineDistanceMeters(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const R = 6371000;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Math.round(R * c);
+}
+
+export interface ResultDiscrepancyReport {
+  hasDiscrepancy: boolean;
+  severity: 'NONE' | 'WARNING' | 'CRITICAL';
+  flags: string[];
+  summary: string;
+  duplicateSubmissionIds: string[];
+  duplicateOfSubmissionId: string;
+}
+
+export interface DiscrepancyCandidateInput {
+  id?: string;
+  puId: string;
+  puCode?: string;
+  apcVotes?: number;
+  pdpVotes?: number;
+  adcVotes?: number;
+  othersVotes?: number;
+  registeredVoters: number;
+  accreditedVoters: number;
+  validVotes: number;
+  rejectedVotes: number;
+  totalVotesCast: number;
+  ec8aImageBase64?: string | null;
+  electionCategory?: string;
+}
+
+/**
+ * Evaluates a polling unit result submission for mathematical anomalies, over-voting,
+ * missing Form EC8A evidence, and duplicate submissions for the same Polling Unit.
+ * Never alters figures silently; flags issues strictly for human verifier review.
+ */
+export function analyzeResultDiscrepancies(
+  sub: DiscrepancyCandidateInput,
+  allSubmissions: ResultSubmission[]
+): ResultDiscrepancyReport {
+  const flags: string[] = [];
+  let severity: 'NONE' | 'WARNING' | 'CRITICAL' = 'NONE';
+
+  const apc = Number(sub.apcVotes ?? 0);
+  const pdp = Number(sub.pdpVotes ?? 0);
+  const adc = Number(sub.adcVotes ?? 0);
+  const others = Number(sub.othersVotes ?? 0);
+  const partySum = apc + pdp + adc + others;
+
+  if (partySum !== sub.validVotes) {
+    flags.push(
+      `Party vote sum (${partySum.toLocaleString()}) does not match recorded valid votes (${sub.validVotes.toLocaleString()}).`
+    );
+    severity = 'CRITICAL';
+  }
+  if (sub.validVotes + sub.rejectedVotes !== sub.totalVotesCast) {
+    flags.push(
+      `Valid (${sub.validVotes.toLocaleString()}) + Rejected (${sub.rejectedVotes.toLocaleString()}) does not equal total votes cast (${sub.totalVotesCast.toLocaleString()}).`
+    );
+    severity = 'CRITICAL';
+  }
+  if (sub.accreditedVoters > 0 && sub.totalVotesCast > sub.accreditedVoters) {
+    flags.push(
+      `Over-voting flag: total votes cast (${sub.totalVotesCast.toLocaleString()}) exceed accredited voters (${sub.accreditedVoters.toLocaleString()}).`
+    );
+    severity = 'CRITICAL';
+  }
+  if (sub.registeredVoters > 0 && sub.accreditedVoters > sub.registeredVoters) {
+    flags.push(
+      `Accredited voters (${sub.accreditedVoters.toLocaleString()}) exceed registered voters (${sub.registeredVoters.toLocaleString()}).`
+    );
+    severity = 'CRITICAL';
+  }
+  if (sub.registeredVoters > 0 && sub.totalVotesCast > sub.registeredVoters) {
+    flags.push(
+      `Total votes cast (${sub.totalVotesCast.toLocaleString()}) exceed registered voters (${sub.registeredVoters.toLocaleString()}).`
+    );
+    severity = 'CRITICAL';
+  }
+  if (!sub.ec8aImageBase64) {
+    flags.push('Form EC8A photographic evidence is not attached.');
+    if (severity === 'NONE') severity = 'WARNING';
+  }
+
+  const candidateCategory = sub.electionCategory || 'House of Representatives (Funtua/Dandume)';
+  const duplicates = allSubmissions.filter(
+    (other) =>
+      other.id !== sub.id &&
+      other.puId === sub.puId &&
+      other.verificationStatus !== VerificationStatus.REJECTED &&
+      (other.electionCategory || 'House of Representatives (Funtua/Dandume)') === candidateCategory
+  );
+  if (duplicates.length > 0) {
+    flags.push(
+      `Duplicate submission alert: ${duplicates.length} other active submission(s) exist for PU ${sub.puCode || sub.puId}.`
+    );
+    severity = 'CRITICAL';
+  }
+
+  return {
+    hasDiscrepancy: flags.length > 0,
+    severity,
+    flags,
+    summary: flags.join(' '),
+    duplicateSubmissionIds: duplicates.map((d) => d.id),
+    duplicateOfSubmissionId: duplicates[0]?.id || '',
+  };
+}
+

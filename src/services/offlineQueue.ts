@@ -238,29 +238,57 @@ export async function enqueueOfflineSubmission(input: {
   });
 }
 
+function computeNextBackoffIso(retryCount: number): string {
+  const delaysMs = [5_000, 15_000, 45_000, 120_000, 300_000];
+  const delay = delaysMs[Math.min(Math.max(0, retryCount - 1), delaysMs.length - 1)];
+  return new Date(Date.now() + delay).toISOString();
+}
+
 export async function updateQueueItemStatus(
   clientSubmissionId: string,
   status: OfflineQueueStatus,
-  errorMessage?: string
+  errorMessage?: string,
+  conflict?: { state: 'NONE' | 'CONFLICT_DETECTED' | 'RESOLVED'; serverSummary?: string }
 ): Promise<void> {
   const db = await openDb();
   const now = new Date().toISOString();
 
+  const applyUpdate = (existing: OfflineQueuedItem): OfflineQueuedItem => {
+    const nextRetry =
+      status === 'SYNC_FAILED'
+        ? (existing.retryCount ?? 0) + 1
+        : status === 'SYNCED'
+          ? 0
+          : existing.retryCount ?? 0;
+    const next: OfflineQueuedItem = {
+      ...existing,
+      status,
+      retryCount: nextRetry,
+      updatedAtIso: now,
+      ...(status === 'SYNCED' ? { syncedAtIso: now } : {}),
+    };
+    if (status === 'SYNC_FAILED') {
+      next.nextRetryAtIso = computeNextBackoffIso(nextRetry);
+    } else {
+      delete next.nextRetryAtIso;
+    }
+    if (errorMessage) next.errorMessage = errorMessage;
+    else delete next.errorMessage;
+    if (conflict) {
+      next.conflictState = conflict.state;
+      if (conflict.serverSummary) next.conflictServerSummary = conflict.serverSummary;
+      else delete next.conflictServerSummary;
+    } else if (status === 'SYNCED') {
+      next.conflictState = 'NONE';
+      delete next.conflictServerSummary;
+    }
+    return next;
+  };
+
   if (!db) {
-    const updated = readLs<OfflineQueuedItem[]>(LS_QUEUE_KEY, []).map((i) => {
-      if (i.clientSubmissionId !== clientSubmissionId) return i;
-      const nextRetry = status === 'SYNC_FAILED' ? (i.retryCount ?? 0) + 1 : i.retryCount ?? 0;
-      const next: OfflineQueuedItem = {
-        ...i,
-        status,
-        retryCount: nextRetry,
-        updatedAtIso: now,
-        ...(status === 'SYNCED' ? { syncedAtIso: now } : {}),
-      };
-      if (errorMessage) next.errorMessage = errorMessage;
-      else delete next.errorMessage;
-      return next;
-    });
+    const updated = readLs<OfflineQueuedItem[]>(LS_QUEUE_KEY, []).map((i) =>
+      i.clientSubmissionId === clientSubmissionId ? applyUpdate(i) : i
+    );
     writeLs(LS_QUEUE_KEY, updated);
     notifyListeners();
     return;
@@ -274,18 +302,7 @@ export async function updateQueueItemStatus(
       getReq.onsuccess = () => {
         const existing = getReq.result as OfflineQueuedItem | undefined;
         if (existing) {
-          const nextRetry =
-            status === 'SYNC_FAILED' ? (existing.retryCount ?? 0) + 1 : existing.retryCount ?? 0;
-          const next: OfflineQueuedItem = {
-            ...existing,
-            status,
-            retryCount: nextRetry,
-            updatedAtIso: now,
-            ...(status === 'SYNCED' ? { syncedAtIso: now } : {}),
-          };
-          if (errorMessage) next.errorMessage = errorMessage;
-          else delete next.errorMessage;
-          store.put(next);
+          store.put(applyUpdate(existing));
         }
       };
       tx.oncomplete = () => {
@@ -1802,4 +1819,74 @@ export async function pruneOfflineStorageOnStartup(options?: {
   }
   return report;
 }
+
+/**
+ * Merges server-authoritative deletion tombstones from Firestore into local IndexedDB
+ * and immediately purges any matching cached records, drafts, notes, or queued uploads
+ * so permanently deleted data can NEVER reappear on any browser or Android device.
+ */
+export async function mergeServerTombstones(serverRecordIds: string[]): Promise<number> {
+  const uniqueIds = Array.from(new Set(serverRecordIds.filter((id) => Boolean(id && id.trim()))));
+  if (uniqueIds.length === 0) return 0;
+
+  const existing = await getDeletedTombstones();
+  const newlyAdded = uniqueIds.filter((id) => !existing.has(id));
+  if (newlyAdded.length === 0) return 0;
+
+  await purgeDeletedRecordsEverywhere({
+    ids: newlyAdded,
+    puIdsForApproved: newlyAdded,
+  });
+  return newlyAdded.length;
+}
+
+export interface OfflineStorageEstimate {
+  supported: boolean;
+  usageBytes: number;
+  quotaBytes: number;
+  percentUsed: number;
+  persisted: boolean;
+}
+
+export async function getOfflineStorageEstimate(): Promise<OfflineStorageEstimate> {
+  if (typeof navigator === 'undefined' || !navigator.storage || !navigator.storage.estimate) {
+    return { supported: false, usageBytes: 0, quotaBytes: 0, percentUsed: 0, persisted: false };
+  }
+  try {
+    const est = await navigator.storage.estimate();
+    const usageBytes = est.usage ?? 0;
+    const quotaBytes = est.quota ?? 0;
+    const percentUsed =
+      quotaBytes > 0 ? Math.min(100, Number(((usageBytes / quotaBytes) * 100).toFixed(2))) : 0;
+    let persisted = false;
+    if (typeof navigator.storage.persisted === 'function') {
+      persisted = await navigator.storage.persisted().catch(() => false);
+    }
+    return { supported: true, usageBytes, quotaBytes, percentUsed, persisted };
+  } catch {
+    return { supported: false, usageBytes: 0, quotaBytes: 0, percentUsed: 0, persisted: false };
+  }
+}
+
+const LS_DEVICE_REF_KEY = 'fdmis_device_ref_id_v1';
+
+export function getOrCreateDeviceRefId(): string {
+  if (typeof localStorage === 'undefined') return 'fdmis-web-device';
+  try {
+    const existing = localStorage.getItem(LS_DEVICE_REF_KEY);
+    if (existing && existing.length >= 6) return existing;
+    const suffix =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID().slice(0, 12).toUpperCase()
+        : Math.random().toString(36).slice(2, 10).toUpperCase();
+    const isAndroid =
+      typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
+    const id = `${isAndroid ? 'APK' : 'WEB'}-${suffix}`;
+    localStorage.setItem(LS_DEVICE_REF_KEY, id);
+    return id;
+  } catch {
+    return 'fdmis-device-local';
+  }
+}
+
 

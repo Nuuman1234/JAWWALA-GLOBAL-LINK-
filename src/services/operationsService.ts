@@ -66,6 +66,17 @@ import {
   syncNoteDeleteToFirestore,
   syncNoteUpsertToFirestore,
 } from './notesService';
+import {
+  createOperationalTask,
+  submitOfficerTaskUpdate,
+  type OfficerTaskUpdateInput,
+} from './taskService';
+import { archiveGeneratedReport } from './reportArchiveService';
+import type {
+  AnalyticsReportFilters,
+  CompiledAutomaticReport,
+} from '../utils/analyticsReportsEngine';
+import type { OperationalTask, TaskPriority } from '../types/fdmis';
 
 function requireAuthUid(): string {
   const uid = auth.currentUser?.uid;
@@ -155,10 +166,18 @@ async function addNotification(
     targetWardId: string;
     isCritical: boolean;
     isTestData?: boolean;
+    deterministicNotificationId?: string;
   }
 ): Promise<void> {
   try {
-    await setDoc(doc(collection(db, 'notifications')), {
+    const ref = item.deterministicNotificationId
+      ? doc(db, 'notifications', toValidDocId(item.deterministicNotificationId))
+      : doc(collection(db, 'notifications'));
+    if (item.deterministicNotificationId) {
+      const existing = await getDoc(ref);
+      if (existing.exists()) return;
+    }
+    await setDoc(ref, {
       title: item.title.slice(0, 160),
       body: item.body.slice(0, 1000),
       type: item.type.slice(0, 64),
@@ -198,10 +217,13 @@ function buildAreaScopedQuery(
     }
     return base;
   }
-  if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     return query(base, where('wardId', '==', user.assignedWardId));
   }
-  if (user.role === UserRole.POLLING_UNIT_AGENT) {
+  if (user.role === UserRole.POLLING_UNIT_AGENT || user.role === UserRole.ORDINARY_USER) {
     return query(base, where(ownerField, '==', user.uid));
   }
   return null;
@@ -322,7 +344,10 @@ export function observeApprovedPuResults(
     } else {
       q = base;
     }
-  } else if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  } else if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     q = query(base, where('wardId', '==', user.assignedWardId));
   } else if (user.role === UserRole.POLLING_UNIT_AGENT) {
     q = user.assignedPollingUnitId
@@ -375,7 +400,10 @@ export function observeAggregatedResults(
     } else {
       q = base;
     }
-  } else if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  } else if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     q = query(base, where('scopeType', '==', 'WARD'), where('wardId', '==', user.assignedWardId));
   }
 
@@ -523,6 +551,7 @@ export async function submitCheckIn(
     latitude?: number | null;
     longitude?: number | null;
     isTestData?: boolean;
+    clientCreatedAtIso?: string;
   },
   existingClientSubmissionId?: string
 ): Promise<string> {
@@ -541,6 +570,8 @@ export async function submitCheckIn(
     handleFirestoreError(error, OperationType.GET, `check_ins/${docId}`);
   }
 
+  const clientCreatedAtIso = (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64);
+
   const payload: Record<string, unknown> = {
     puId: pu.id,
     puCode: pu.puCode.slice(0, 40),
@@ -554,6 +585,8 @@ export async function submitCheckIn(
     batteryPercent: Math.max(-1, Math.min(100, Math.round(input.batteryPercent))),
     networkStatus: input.networkStatus.trim().slice(0, 64),
     clientSubmissionId: docId,
+    clientCreatedAtIso,
+    serverSyncedAt: serverTimestamp(),
     isTestData: Boolean(input.isTestData),
     createdAt: serverTimestamp(),
   };
@@ -665,6 +698,7 @@ export async function submitIncidentReport(
     evidenceBase64?: string | null;
     evidenceFileName?: string | null;
     isTestData?: boolean;
+    clientCreatedAtIso?: string;
   },
   existingClientSubmissionId?: string
 ): Promise<string> {
@@ -687,6 +721,8 @@ export async function submitIncidentReport(
     handleFirestoreError(error, OperationType.GET, `incidents/${docId}`);
   }
 
+  const clientCreatedAtIso = (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64);
+
   const payload: Record<string, unknown> = {
     title: cleanTitle,
     category: input.category.slice(0, 100),
@@ -704,6 +740,8 @@ export async function submitIncidentReport(
     escalatedTo: '',
     reviewedByUid: '',
     clientSubmissionId: docId,
+    clientCreatedAtIso,
+    serverSyncedAt: serverTimestamp(),
     isTestData: Boolean(input.isTestData),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -856,6 +894,7 @@ export async function submitPollingUnitResult(
     ec8aFileName?: string | null;
     asDraft?: boolean;
     isTestData?: boolean;
+    clientCreatedAtIso?: string;
   },
   existingResult?: ResultSubmission | null,
   existingClientSubmissionId?: string
@@ -1060,6 +1099,8 @@ export async function submitPollingUnitResult(
     reviewedByName: '',
     version: 1,
     clientSubmissionId: docId,
+    clientCreatedAtIso: (input.clientCreatedAtIso || new Date().toISOString()).slice(0, 64),
+    serverSyncedAt: serverTimestamp(),
     isTestData: Boolean(input.isTestData),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -1513,7 +1554,8 @@ export async function sendSituationNotification(
     targetWardId: string;
     isCritical: boolean;
     isTestData?: boolean;
-  }
+  },
+  existingClientSubmissionId?: string
 ): Promise<void> {
   requireAuthUid();
   if (!canReviewIncidents(actor.role)) {
@@ -1528,6 +1570,7 @@ export async function sendSituationNotification(
     targetWardId: input.targetWardId,
     isCritical: input.isCritical,
     isTestData: Boolean(input.isTestData),
+    deterministicNotificationId: existingClientSubmissionId,
   });
 
   await logAudit(
@@ -1658,6 +1701,7 @@ export async function syncSingleQueuedItem(
         isPinned: Boolean(item.payload.isPinned),
         isTestData: Boolean(item.payload.isTestData),
         revision: Number(item.payload.revision || 1),
+        clientCreatedAtIso: String(item.payload.createdAtIso || item.createdAtIso),
         updatedAt: String(item.payload.updatedAtIso || new Date().toISOString()),
         syncState: 'SYNCED',
       };
@@ -1669,6 +1713,140 @@ export async function syncSingleQueuedItem(
 
     if (item.reportType === 'NOTE_DELETE') {
       await syncNoteDeleteToFirestore(clientNoteId || item.clientSubmissionId);
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    if (item.reportType === 'NOTIFICATION_BROADCAST') {
+      await sendSituationNotification(
+        actor,
+        {
+          title: String(item.payload.title || ''),
+          body: String(item.payload.body || ''),
+          targetLgaId: String(item.payload.targetLgaId || item.lgaId || 'all'),
+          targetWardId: String(item.payload.targetWardId || item.wardId || ''),
+          isCritical: Boolean(item.payload.isCritical),
+          isTestData: Boolean(item.payload.isTestData),
+        },
+        item.clientSubmissionId
+      );
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    if (item.reportType === 'TASK_CREATE') {
+      const lgaId = (item.payload.lgaId as LgaId) || (item.lgaId as LgaId);
+      const wardId = String(item.payload.wardId || item.wardId || '');
+      const wardName = String(item.payload.wardName || '');
+      const assignedOfficerUid = String(item.payload.assignedOfficerUid || '');
+      const assignedOfficerName = String(item.payload.assignedOfficerName || '');
+      await createOperationalTask(
+        actor,
+        {
+          title: String(item.payload.title || ''),
+          description: String(item.payload.description || ''),
+          priority: item.payload.priority as TaskPriority,
+          lgaId,
+          ward: {
+            id: wardId,
+            lgaId,
+            wardCode: '',
+            name: wardName,
+            coordinatorUid: '',
+            coordinatorName: '',
+            expectedPollingUnits: 0,
+            isTestData: false,
+            createdByUid: actor.uid,
+          },
+          officer: {
+            uid: assignedOfficerUid,
+            displayName: assignedOfficerName,
+            email: '',
+            phone: '',
+            role: UserRole.OPERATIONS_OFFICER,
+            status: actor.status,
+            assignedLgaId: lgaId,
+            assignedWardId: wardId,
+            assignedPollingUnitId: '',
+            sessionRevoked: false,
+          },
+          startDateIso: String(item.payload.startDateIso || ''),
+          dueDateIso: String(item.payload.dueDateIso || ''),
+          clientCreatedAtIso: item.createdAtIso,
+        },
+        item.clientSubmissionId
+      );
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    if (item.reportType === 'TASK_OFFICER_UPDATE') {
+      const taskId = String(item.payload.taskId || '');
+      if (!taskId) {
+        await updateQueueItemStatus(
+          item.clientSubmissionId,
+          'SYNC_FAILED',
+          'Missing task reference for queued update.'
+        );
+        return false;
+      }
+      const taskSnap = await getDoc(doc(db, 'operational_tasks', taskId));
+      if (!taskSnap.exists()) {
+        await updateQueueItemStatus(
+          item.clientSubmissionId,
+          'SYNC_FAILED',
+          'Task record no longer exists on the server.'
+        );
+        return false;
+      }
+      const liveTask = {
+        id: taskSnap.id,
+        ...(taskSnap.data() as Omit<OperationalTask, 'id'>),
+      };
+      await submitOfficerTaskUpdate(
+        actor,
+        liveTask,
+        {
+          nextStatus: item.payload.nextStatus as OfficerTaskUpdateInput['nextStatus'],
+          progressPercent: Number(item.payload.progressPercent ?? liveTask.progressPercent ?? 0),
+          fieldReport: String(item.payload.fieldReport || ''),
+          delayReason: String(item.payload.delayReason || ''),
+          evidenceBase64:
+            typeof item.payload.evidenceBase64 === 'string'
+              ? item.payload.evidenceBase64
+              : null,
+          evidenceFileName:
+            typeof item.payload.evidenceFileName === 'string'
+              ? item.payload.evidenceFileName
+              : null,
+          clientCreatedAtIso: item.createdAtIso,
+        },
+        item.clientSubmissionId
+      );
+      await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
+      return true;
+    }
+
+    if (item.reportType === 'REPORT_ARCHIVE') {
+      const report = item.payload.report as CompiledAutomaticReport | undefined;
+      const filters = item.payload.filters as AnalyticsReportFilters | undefined;
+      const generationMode =
+        item.payload.generationMode === 'AUTOMATIC_DAILY' ? 'AUTOMATIC_DAILY' : 'ON_DEMAND';
+      if (!report || !filters) {
+        await updateQueueItemStatus(
+          item.clientSubmissionId,
+          'SYNC_FAILED',
+          'Incomplete queued report payload.'
+        );
+        return false;
+      }
+      await archiveGeneratedReport(
+        actor,
+        report,
+        filters,
+        generationMode,
+        item.clientSubmissionId
+      );
       await updateQueueItemStatus(item.clientSubmissionId, 'SYNCED');
       return true;
     }
@@ -1687,7 +1865,10 @@ export async function syncSingleQueuedItem(
       await submitCheckIn(
         actor,
         pu,
-        item.payload as Parameters<typeof submitCheckIn>[2],
+        {
+          ...(item.payload as Parameters<typeof submitCheckIn>[2]),
+          clientCreatedAtIso: item.createdAtIso,
+        },
         item.clientSubmissionId
       );
     } else if (item.reportType === 'STATUS_UPDATE') {
@@ -1702,7 +1883,10 @@ export async function syncSingleQueuedItem(
       await submitIncidentReport(
         actor,
         pu,
-        item.payload as Parameters<typeof submitIncidentReport>[2],
+        {
+          ...(item.payload as Parameters<typeof submitIncidentReport>[2]),
+          clientCreatedAtIso: item.createdAtIso,
+        },
         item.clientSubmissionId
       );
     } else if (item.reportType === 'RESULT_SUBMISSION') {
@@ -1715,7 +1899,10 @@ export async function syncSingleQueuedItem(
       await submitPollingUnitResult(
         actor,
         pu,
-        item.payload as Parameters<typeof submitPollingUnitResult>[2],
+        {
+          ...(item.payload as Parameters<typeof submitPollingUnitResult>[2]),
+          clientCreatedAtIso: item.createdAtIso,
+        },
         prev,
         item.clientSubmissionId
       );

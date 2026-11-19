@@ -1,0 +1,157 @@
+/* FDMIS Print Stylesheet — formatted for A4 paper & PDF report/situation-board export */
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  @page landscape-report {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Hide application chrome, drawers, navigation, filters, and action bars */
+  aside,
+  header,
+  nav,
+  .print-hidden,
+  .no-print,
+  button.no-print {
+    display: none !important;
+  }
+
+  /* Expand main content container to full printable width */
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  /* Remove desktop sidebar padding wrapper */
+  .lg\:pl-64 {
+    padding-left: 0 !important;
+  }
+
+  /* Report & Situation Board container normalization */
+  [data-print-report],
+  [data-print-board] {
+    border: none !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    width: 100% !important;
+  }
+
+  [data-print-landscape='true'] {
+    page: landscape-report;
+  }
+
+  /* Official report masthead displayed on print */
+  .print-only-header {
+    display: block !important;
+    border-bottom: 2px solid #0b3b24 !important;
+    padding-bottom: 8px !important;
+    margin-bottom: 12px !important;
+  }
+
+  /* Prevent awkward page breaks inside KPI cards, charts, callouts, and table rows */
+  .print-avoid-break,
+  section,
+  article,
+  tr,
+  [data-print-card] {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+    color: #0f172a !important;
+  }
+
+  /* Tables: crisp repeating headers and clean cell borders */
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 8.5pt !important;
+    table-layout: auto !important;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+  }
+
+  th,
+  td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 5px 6px !important;
+    vertical-align: top !important;
+    word-break: break-word !important;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+  }
+
+  /* Soften borders & remove drop shadows on cards */
+  .shadow-sm,
+  .shadow,
+  .shadow-md,
+  .shadow-lg,
+  .shadow-xl {
+    box-shadow: none !important;
+  }
+
+  /* Preserve clean grid structure for KPI summary cards on paper */
+  .print-grid-4 {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .print-grid-3 {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .print-grid-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  /* Explicit page break helper */
+  .print-page-break {
+    break-before: page !important;
+    page-break-before: always !important;
+  }
+}

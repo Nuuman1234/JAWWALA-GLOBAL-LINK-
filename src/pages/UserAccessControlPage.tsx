@@ -1,6 +1,8 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import {
   ArrowLeftRight,
+  Battery,
+  BatteryCharging,
   CheckCircle2,
   Copy,
   KeyRound,
@@ -36,6 +38,7 @@ import {
   revokeOrSuspendUser,
   updateUserRoleAndScope,
 } from '../services/directoryService';
+import { adminInitiateUserPasswordReset } from '../services/authService';
 import { formatAccountIdentifier } from '../utils/phoneAuth';
 
 interface UserAccessControlPageProps {
@@ -62,6 +65,8 @@ export function UserAccessControlPage({
   const canDelete = canDeleteUsers(currentUser.role);
 
   const [statusFilter, setStatusFilter] = useState<'ALL' | AccountStatus>('ALL');
+  const [roleFilter, setRoleFilter] = useState<'ALL' | UserRole>('ALL');
+  const [lgaFilter, setLgaFilter] = useState<'ALL' | 'funtua' | 'dandume'>('ALL');
   const [search, setSearch] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
@@ -93,19 +98,63 @@ export function UserAccessControlPage({
   const [rejectingReq, setRejectingReq] = useState<PasswordResetRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
 
+  const wardNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    wards.forEach((w) => map.set(w.id, w.name));
+    return map;
+  }, [wards]);
+
+  const puLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    pollingUnits.forEach((p) => map.set(p.id, `${p.puCode} (${p.name})`));
+    return map;
+  }, [pollingUnits]);
+
+  const accountCounts = useMemo(() => {
+    let active = 0;
+    let opsOfficers = 0;
+    let ordinary = 0;
+    let pending = 0;
+    let suspended = 0;
+    users.forEach((u) => {
+      if (u.status === AccountStatus.ACTIVE && !u.sessionRevoked) active += 1;
+      if (u.role === UserRole.OPERATIONS_OFFICER && u.status === AccountStatus.ACTIVE && !u.sessionRevoked) {
+        opsOfficers += 1;
+      }
+      if (u.role === UserRole.ORDINARY_USER) ordinary += 1;
+      if (u.status === AccountStatus.PENDING_APPROVAL) pending += 1;
+      if (u.status === AccountStatus.SUSPENDED || u.sessionRevoked) suspended += 1;
+    });
+    return { total: users.length, active, opsOfficers, ordinary, pending, suspended };
+  }, [users]);
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return users.filter((u) => {
       if (statusFilter !== 'ALL' && u.status !== statusFilter) return false;
+      if (roleFilter !== 'ALL' && u.role !== roleFilter) return false;
+      if (lgaFilter !== 'ALL' && u.assignedLgaId !== lgaFilter && u.requestedLgaId !== lgaFilter) {
+        return false;
+      }
       if (!q) return true;
+      const wardName = wardNameById.get(u.assignedWardId || '') || '';
+      const puLabel = puLabelById.get(u.assignedPollingUnitId || '') || '';
       return (
         u.displayName.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
         (u.phone || '').toLowerCase().includes(q) ||
-        u.role.toLowerCase().includes(q)
+        u.role.toLowerCase().includes(q) ||
+        (USER_ROLE_META[u.role]?.label || '').toLowerCase().includes(q) ||
+        (u.assignedLgaId || '').toLowerCase().includes(q) ||
+        (u.assignedWardId || '').toLowerCase().includes(q) ||
+        wardName.toLowerCase().includes(q) ||
+        (u.assignedPollingUnitId || '').toLowerCase().includes(q) ||
+        puLabel.toLowerCase().includes(q) ||
+        (u.requestedWardName || '').toLowerCase().includes(q) ||
+        (u.requestedPollingUnitCode || '').toLowerCase().includes(q)
       );
     });
-  }, [users, statusFilter, search]);
+  }, [users, statusFilter, roleFilter, lgaFilter, search, wardNameById, puLabelById]);
 
   const availableRoles: UserRole[] = useMemo(() => {
     if (isFullAdmin) {
@@ -114,15 +163,19 @@ export function UserAccessControlPage({
         UserRole.FUNTUA_SUPER_ADMIN,
         UserRole.DANDUME_SUPER_ADMIN,
         UserRole.VERIFICATION_OFFICER,
+        UserRole.OPERATIONS_OFFICER,
         UserRole.WARD_COORDINATOR,
         UserRole.POLLING_UNIT_AGENT,
+        UserRole.ORDINARY_USER,
         UserRole.PENDING,
       ];
     }
     return [
       UserRole.VERIFICATION_OFFICER,
+      UserRole.OPERATIONS_OFFICER,
       UserRole.WARD_COORDINATOR,
       UserRole.POLLING_UNIT_AGENT,
+      UserRole.ORDINARY_USER,
       UserRole.PENDING,
     ];
   }, [isFullAdmin]);
@@ -189,6 +242,17 @@ export function UserAccessControlPage({
       });
       return;
     }
+    if (
+      (editRole === UserRole.OPERATIONS_OFFICER || editRole === UserRole.WARD_COORDINATOR) &&
+      editStatus === AccountStatus.ACTIVE &&
+      (!editLga || !editWard)
+    ) {
+      setFeedback({
+        type: 'err',
+        text: `Select both LGA and Ward for an active ${USER_ROLE_META[editRole].label}.`,
+      });
+      return;
+    }
 
     setBusy(true);
     setFeedback(null);
@@ -251,6 +315,25 @@ export function UserAccessControlPage({
       setFeedback({
         type: 'err',
         text: err instanceof Error ? err.message : 'Failed to reactivate account.',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAdminPasswordReset = async (target: UserAccount) => {
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const sentTo = await adminInitiateUserPasswordReset(currentUser, target);
+      setFeedback({
+        type: 'ok',
+        text: `Sent real password reset link to ${sentTo} for ${target.displayName}.`,
+      });
+    } catch (err) {
+      setFeedback({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Unable to send password reset email.',
       });
     } finally {
       setBusy(false);
@@ -387,54 +470,123 @@ export function UserAccessControlPage({
 
   return (
     <div className="space-y-5">
-      {/* Toolbar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-1 flex-wrap items-center gap-3">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search operator name, phone, email, or role..."
-            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
-          />
-
-          {isFullAdmin ? (
-            <button
-              type="button"
-              onClick={() => {
-                setReassignModalOpen(true);
-                setReassignReason('');
-              }}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap"
-            >
-              <ArrowLeftRight className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
-              <span>Controlled PU Reassignment</span>
-            </button>
-          ) : null}
+      {/* Compact Account Summary Strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Total Accounts</p>
+          <p className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
+            {accountCounts.total}
+          </p>
         </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Active</p>
+          <p className="mt-1 font-mono text-xl font-bold text-emerald-800 tabular-nums">
+            {accountCounts.active}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Ops Officers</p>
+          <p className="mt-1 font-mono text-xl font-bold text-[#0b3b24] tabular-nums">
+            {accountCounts.opsOfficers}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Ordinary Users</p>
+          <p className="mt-1 font-mono text-xl font-bold text-slate-800 tabular-nums">
+            {accountCounts.ordinary}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Pending</p>
+          <p className="mt-1 font-mono text-xl font-bold text-amber-800 tabular-nums">
+            {accountCounts.pending}
+          </p>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="text-[11px] font-medium text-slate-500">Suspended</p>
+          <p className="mt-1 font-mono text-xl font-bold text-red-700 tabular-nums">
+            {accountCounts.suspended}
+          </p>
+        </div>
+      </div>
 
-        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1">
-          {(
-            [
-              { id: 'ALL', label: 'All' },
-              { id: AccountStatus.PENDING_APPROVAL, label: 'Pending' },
-              { id: AccountStatus.ACTIVE, label: 'Active' },
-              { id: AccountStatus.SUSPENDED, label: 'Suspended' },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setStatusFilter(tab.id)}
-              className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
-                statusFilter === tab.id
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+      {/* Toolbar */}
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-1 flex-wrap items-center gap-2.5">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, phone, email, role, ward, or PU..."
+              className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
+            />
+
+            <select
+              aria-label="Filter by Role"
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value as 'ALL' | UserRole)}
+              className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800"
             >
-              {tab.label}
-            </button>
-          ))}
+              <option value="ALL">All Roles</option>
+              {Object.values(UserRole).map((r) => (
+                <option key={r} value={r}>
+                  {USER_ROLE_META[r].label}
+                </option>
+              ))}
+            </select>
+
+            {isFullAdmin ? (
+              <select
+                aria-label="Filter by LGA"
+                value={lgaFilter}
+                onChange={(e) => setLgaFilter(e.target.value as 'ALL' | 'funtua' | 'dandume')}
+                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-800"
+              >
+                <option value="ALL">All LGAs</option>
+                <option value="funtua">Funtua LGA</option>
+                <option value="dandume">Dandume LGA</option>
+              </select>
+            ) : null}
+
+            {isFullAdmin ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setReassignModalOpen(true);
+                  setReassignReason('');
+                }}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap"
+              >
+                <ArrowLeftRight className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+                <span>Controlled PU Reassignment</span>
+              </button>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1">
+            {(
+              [
+                { id: 'ALL', label: 'All' },
+                { id: AccountStatus.PENDING_APPROVAL, label: 'Pending' },
+                { id: AccountStatus.ACTIVE, label: 'Active' },
+                { id: AccountStatus.SUSPENDED, label: 'Suspended' },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                className={`min-h-[36px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                  statusFilter === tab.id
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -447,6 +599,12 @@ export function UserAccessControlPage({
           }`}
         >
           {feedback.text}
+        </div>
+      ) : null}
+
+      {canEdit ? (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+          Security notice: User passwords are salted and one-way hashed (never readable or retrievable by administrators). Use <span className="font-semibold">Reset PW</span> to dispatch a real password reset email, or issue a one-time Reset PIN for legacy phone-only accounts.
         </div>
       ) : null}
 
@@ -468,8 +626,9 @@ export function UserAccessControlPage({
                   <th className="px-4 py-3">Operator</th>
                   <th className="px-4 py-3">Role</th>
                   <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Battery</th>
                   <th className="px-4 py-3">Geographic Scope</th>
-                  <th className="px-4 py-3">Last Login</th>
+                  <th className="px-4 py-3">Registered / Login</th>
                   {canEdit ? <th className="px-4 py-3 text-right">Actions</th> : null}
                 </tr>
               </thead>
@@ -477,11 +636,17 @@ export function UserAccessControlPage({
                 {filteredUsers.map((u) => {
                   const canModifyTarget =
                     canEdit && (isFullAdmin || u.role !== UserRole.FULL_CONTROL_ADMIN);
+                  const hasBattery = typeof u.batteryLevel === 'number';
                   return (
                     <tr key={u.uid} className="hover:bg-slate-50/70">
                       <td className="px-4 py-3.5">
                         <p className="font-medium text-slate-900">{u.displayName}</p>
-                        <p className="text-xs text-slate-500">{formatAccountIdentifier(u)}</p>
+                        <p className="text-xs text-slate-500">
+                          {formatAccountIdentifier(u)}
+                          {u.phone && u.email && !u.email.endsWith('@fdmis.local')
+                            ? ` · ${u.phone}`
+                            : ''}
+                        </p>
                         {u.status === AccountStatus.PENDING_APPROVAL && u.requestedLgaId ? (
                           <p className="mt-0.5 text-[11px] font-medium text-amber-800">
                             Requested: {u.requestedLgaId.toUpperCase()}
@@ -496,17 +661,40 @@ export function UserAccessControlPage({
                       <td className="px-4 py-3.5">
                         <AccountStatusBadge status={u.status} />
                       </td>
+                      <td className="px-4 py-3.5">
+                        {hasBattery ? (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                              u.batteryCharging
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                                : (u.batteryLevel ?? 100) <= 20
+                                  ? 'border-red-200 bg-red-50 text-red-900'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700'
+                            }`}
+                          >
+                            {u.batteryCharging ? (
+                              <BatteryCharging className="h-3 w-3 text-emerald-700" aria-hidden="true" />
+                            ) : (
+                              <Battery className="h-3 w-3 text-slate-600" aria-hidden="true" />
+                            )}
+                            <span>{u.batteryLevel}%</span>
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">N/A</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3.5 text-xs text-slate-700">
                         {u.role === UserRole.FULL_CONTROL_ADMIN
                           ? 'Funtua & Dandume (Full)'
                           : u.role === UserRole.VERIFICATION_OFFICER && !u.assignedLgaId
                             ? 'Constituency-wide Verification'
                             : u.assignedLgaId
-                              ? `${LGA_DEFINITIONS[u.assignedLgaId as 'funtua' | 'dandume']?.shortName || u.assignedLgaId}${u.assignedWardId ? ` · ${u.assignedWardId}` : ''}${u.assignedPollingUnitId ? ` · ${u.assignedPollingUnitId}` : ''}`
+                              ? `${LGA_DEFINITIONS[u.assignedLgaId as 'funtua' | 'dandume']?.shortName || u.assignedLgaId}${u.assignedWardId ? ` · ${wardNameById.get(u.assignedWardId) || u.requestedWardName || u.assignedWardId}` : ''}${u.assignedPollingUnitId ? ` · ${puLabelById.get(u.assignedPollingUnitId) || u.requestedPollingUnitCode || u.assignedPollingUnitId}` : ''}`
                               : 'Unassigned'}
                       </td>
-                      <td className="px-4 py-3.5 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                        {formatFirestoreTime(u.lastLoginAt)}
+                      <td className="px-4 py-3.5 font-mono text-[11px] text-slate-500 tabular-nums whitespace-nowrap">
+                        <p>Reg: {formatFirestoreTime(u.createdAt)}</p>
+                        <p className="text-slate-400">Last: {formatFirestoreTime(u.lastLoginAt)}</p>
                       </td>
                       {canEdit ? (
                         <td className="px-4 py-3.5 text-right">
@@ -520,6 +708,17 @@ export function UserAccessControlPage({
                                 <UserCog className="h-3.5 w-3.5" aria-hidden="true" />
                                 <span>Role &amp; Scope</span>
                               </button>
+                              {u.email && !u.email.endsWith('@fdmis.local') ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void handleAdminPasswordReset(u)}
+                                  className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap disabled:opacity-50"
+                                >
+                                  <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                                  <span>Reset PW</span>
+                                </button>
+                              ) : null}
                               {u.uid !== currentUser.uid &&
                               u.status !== AccountStatus.SUSPENDED &&
                               !u.sessionRevoked ? (
@@ -695,8 +894,10 @@ export function UserAccessControlPage({
                 </div>
               ) : null}
 
-              {(editRole === UserRole.WARD_COORDINATOR ||
+              {(editRole === UserRole.OPERATIONS_OFFICER ||
+                editRole === UserRole.WARD_COORDINATOR ||
                 editRole === UserRole.POLLING_UNIT_AGENT ||
+                editRole === UserRole.ORDINARY_USER ||
                 (editRole === UserRole.VERIFICATION_OFFICER && Boolean(editLga))) ? (
                 <div>
                   <label htmlFor="edit-ward" className="block text-xs font-medium text-slate-700">
@@ -704,7 +905,7 @@ export function UserAccessControlPage({
                       ? '2. Select Ward *'
                       : editRole === UserRole.VERIFICATION_OFFICER
                         ? 'Assigned Ward (Optional)'
-                        : 'Assigned Ward'}
+                        : 'Assigned Ward *'}
                   </label>
                   <select
                     id="edit-ward"
@@ -730,10 +931,12 @@ export function UserAccessControlPage({
                 </div>
               ) : null}
 
-              {editRole === UserRole.POLLING_UNIT_AGENT ? (
+              {editRole === UserRole.POLLING_UNIT_AGENT || editRole === UserRole.ORDINARY_USER ? (
                 <div>
                   <label htmlFor="edit-pu" className="block text-xs font-medium text-slate-700">
-                    3. Select Available Polling Unit *
+                    {editRole === UserRole.POLLING_UNIT_AGENT
+                      ? '3. Select Available Polling Unit *'
+                      : '3. Select Polling Unit *'}
                   </label>
                   <select
                     id="edit-pu"
@@ -745,17 +948,19 @@ export function UserAccessControlPage({
                     <option value="">
                       {!editWard
                         ? 'Select a Ward first...'
-                        : availableWardPus.length === 0
-                          ? 'No unassigned Polling Units left in this Ward'
-                          : `Select Available PU (${availableWardPus.length} open)...`}
+                        : editRole === UserRole.ORDINARY_USER
+                          ? `Select Polling Unit (${wardAllPus.length})...`
+                          : availableWardPus.length === 0
+                            ? 'No unassigned Polling Units left in this Ward'
+                            : `Select Available PU (${availableWardPus.length} open)...`}
                     </option>
-                    {availableWardPus.map((p) => (
+                    {(editRole === UserRole.ORDINARY_USER ? wardAllPus : availableWardPus).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.puCode} · {p.name}
                       </option>
                     ))}
                   </select>
-                  {editWard ? (
+                  {editWard && editRole === UserRole.POLLING_UNIT_AGENT ? (
                     <p className="mt-1 text-[11px] text-slate-500">
                       Unique 1-to-1 lock active: {availableWardPus.length} available,{' '}
                       {occupiedCountInWard} already assigned and hidden from selection.

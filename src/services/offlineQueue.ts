@@ -10,13 +10,14 @@ import type {
 } from '../types/fdmis';
 
 const DB_NAME = 'fdmis_offline_db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const QUEUE_STORE = 'queue';
 const DRAFTS_STORE = 'drafts';
 const SNAPSHOTS_STORE = 'snapshots';
 const NOTES_STORE = 'notes';
 const TOMBSTONES_STORE = 'tombstones';
 const PENDING_REG_STORE = 'pending_registrations';
+const CRYPTO_KEYS_STORE = 'device_keys';
 
 const LS_QUEUE_KEY = 'fdmis_offline_queue_v1';
 const LS_DRAFTS_KEY = 'fdmis_offline_drafts_v1';
@@ -107,6 +108,9 @@ function openDb(): Promise<IDBDatabase | null> {
         }
         if (!db.objectStoreNames.contains(PENDING_REG_STORE)) {
           db.createObjectStore(PENDING_REG_STORE, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+          db.createObjectStore(CRYPTO_KEYS_STORE, { keyPath: 'id' });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -251,6 +255,7 @@ export async function updateQueueItemStatus(
         status,
         retryCount: nextRetry,
         updatedAtIso: now,
+        ...(status === 'SYNCED' ? { syncedAtIso: now } : {}),
       };
       if (errorMessage) next.errorMessage = errorMessage;
       else delete next.errorMessage;
@@ -276,6 +281,7 @@ export async function updateQueueItemStatus(
             status,
             retryCount: nextRetry,
             updatedAtIso: now,
+            ...(status === 'SYNCED' ? { syncedAtIso: now } : {}),
           };
           if (errorMessage) next.errorMessage = errorMessage;
           else delete next.errorMessage;
@@ -729,6 +735,8 @@ const OPERATIONAL_SNAPSHOT_KEYS = new Set([
   'timelineEvents',
   'operationalNotes',
   'reportAttachments',
+  'operationalTasks',
+  'generatedReports',
 ]);
 
 export async function recordDeletedTombstones(ids: string[]): Promise<void> {
@@ -1109,6 +1117,9 @@ export async function updatePendingOfflineRegistrationStatus(
       resolve();
     }
   });
+  if (status === 'SYNCED') {
+    await deleteOfflinePasswordKey(id);
+  }
 }
 
 export async function deletePendingOfflineRegistration(id: string): Promise<void> {
@@ -1121,8 +1132,149 @@ export async function deletePendingOfflineRegistration(id: string): Promise<void
 
   await new Promise<void>((resolve) => {
     try {
-      const tx = db.transaction(PENDING_REG_STORE, 'readwrite');
+      const storeNames = db.objectStoreNames.contains(CRYPTO_KEYS_STORE)
+        ? [PENDING_REG_STORE, CRYPTO_KEYS_STORE]
+        : [PENDING_REG_STORE];
+      const tx = db.transaction(storeNames, 'readwrite');
       tx.objectStore(PENDING_REG_STORE).delete(id);
+      if (db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+        tx.objectStore(CRYPTO_KEYS_STORE).delete(id);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array | null {
+  if (!hex || hex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(hex)) return null;
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+/**
+ * Encrypts a transient offline registration password using a non-extractable
+ * AES-GCM 256-bit CryptoKey stored strictly inside IndexedDB (`device_keys`),
+ * enabling automatic background synchronization across app closures and device restarts
+ * without storing plaintext passwords anywhere on disk.
+ */
+export async function wrapAndStoreOfflinePassword(
+  regId: string,
+  password: string
+): Promise<{ cipherHex: string; ivHex: string } | null> {
+  if (
+    !password ||
+    typeof crypto === 'undefined' ||
+    !crypto.subtle ||
+    typeof TextEncoder === 'undefined'
+  ) {
+    return null;
+  }
+
+  const db = await openDb();
+  if (!db || !db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+    return null;
+  }
+
+  try {
+    const key = await crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const encoded = new TextEncoder().encode(password);
+    const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+    encoded.fill(0);
+
+    const saved = await new Promise<boolean>((resolve) => {
+      try {
+        const tx = db.transaction(CRYPTO_KEYS_STORE, 'readwrite');
+        tx.objectStore(CRYPTO_KEYS_STORE).put({ id: regId, key });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      } catch {
+        resolve(false);
+      }
+    });
+
+    if (!saved) return null;
+    return {
+      cipherHex: bytesToHex(new Uint8Array(cipherBuf)),
+      ivHex: bytesToHex(iv),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function unwrapOfflinePassword(
+  reg: PendingOfflineRegistration
+): Promise<string | null> {
+  if (
+    !reg.wrappedPasswordCipher ||
+    !reg.wrappedPasswordIv ||
+    typeof crypto === 'undefined' ||
+    !crypto.subtle ||
+    typeof TextDecoder === 'undefined'
+  ) {
+    return null;
+  }
+
+  const cipherBytes = hexToBytes(reg.wrappedPasswordCipher);
+  const ivBytes = hexToBytes(reg.wrappedPasswordIv);
+  if (!cipherBytes || !ivBytes) return null;
+
+  const db = await openDb();
+  if (!db || !db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+    return null;
+  }
+
+  const storedKey = await new Promise<CryptoKey | null>((resolve) => {
+    try {
+      const tx = db.transaction(CRYPTO_KEYS_STORE, 'readonly');
+      const req = tx.objectStore(CRYPTO_KEYS_STORE).get(reg.id);
+      req.onsuccess = () => {
+        const rec = req.result as { id: string; key?: CryptoKey } | undefined;
+        resolve(rec?.key ?? null);
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+
+  if (!storedKey) return null;
+
+  try {
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(ivBytes) },
+      storedKey,
+      new Uint8Array(cipherBytes)
+    );
+    return new TextDecoder().decode(plainBuf);
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteOfflinePasswordKey(regId: string): Promise<void> {
+  const db = await openDb();
+  if (!db || !db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) return;
+
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(CRYPTO_KEYS_STORE, 'readwrite');
+      tx.objectStore(CRYPTO_KEYS_STORE).delete(regId);
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     } catch {
@@ -1287,10 +1439,17 @@ function pruneSnapshotRecord(
     return { remove: true, prunedEntries: 0 };
   }
 
-  const updatedMs = parseIsoMs(s.updatedAtIso);
-  const ttl = REFERENCE_SNAPSHOT_KEYS.has(collectionKey) ? referenceSnapshotTtlMs : snapshotTtlMs;
-  if (updatedMs === null || nowMs - updatedMs > ttl) {
-    return { remove: true, prunedEntries: 0 };
+  // Never expire a valid offline locationCatalog due to age — offline registration depends on it across restarts.
+  if (collectionKey === 'locationCatalog') {
+    if (!Array.isArray(s.data) || s.data.length === 0) {
+      return { remove: true, prunedEntries: 0 };
+    }
+  } else {
+    const updatedMs = parseIsoMs(s.updatedAtIso);
+    const ttl = REFERENCE_SNAPSHOT_KEYS.has(collectionKey) ? referenceSnapshotTtlMs : snapshotTtlMs;
+    if (updatedMs === null || nowMs - updatedMs > ttl) {
+      return { remove: true, prunedEntries: 0 };
+    }
   }
 
   if (OPERATIONAL_SNAPSHOT_KEYS.has(collectionKey) && Array.isArray(s.data) && tombstones.size > 0) {
@@ -1349,7 +1508,7 @@ export async function pruneOfflineStorageOnStartup(options?: {
   const syncedQueueTtlMs = options?.syncedQueueTtlMs ?? DEFAULT_PRUNE_TTLS.syncedQueueTtlMs;
   const draftTtlMs = options?.draftTtlMs ?? DEFAULT_PRUNE_TTLS.draftTtlMs;
   const tombstoneTtlMs = options?.tombstoneTtlMs ?? DEFAULT_PRUNE_TTLS.tombstoneTtlMs;
-  const pendingRegTtlMs = options?.pendingRegTtlMs ?? DEFAULT_PRUNE_TTLS.pendingRegTtlMs;
+  void options?.pendingRegTtlMs;
 
   const report: OfflinePruneReport = {
     prunedQueueItems: 0,
@@ -1452,14 +1611,17 @@ export async function pruneOfflineStorageOnStartup(options?: {
   const lsPendingRegs = readLs<unknown[]>(LS_PENDING_REG_KEY, []);
   if (Array.isArray(lsPendingRegs) && lsPendingRegs.length > 0) {
     const nextRegs = lsPendingRegs.filter((r) => {
-      if (!r || typeof r !== 'object') return false;
+      if (!r || typeof r !== 'object') {
+        if (!db) report.prunedPendingRegistrations += 1;
+        return false;
+      }
       const reg = r as Partial<PendingOfflineRegistration>;
       if (!reg.id || !reg.phoneHash || !reg.displayName) {
         if (!db) report.prunedPendingRegistrations += 1;
         return false;
       }
-      const ts = parseIsoMs(reg.updatedAtIso) ?? parseIsoMs(reg.createdAtIso);
-      if (reg.status === 'SYNCED' || ts === null || nowMs - ts > pendingRegTtlMs) {
+      // Preserve un-synced registrations (QUEUED_OFFLINE / SYNC_FAILED) across updates, closure & restarts
+      if (reg.status === 'SYNCED') {
         if (!db) report.prunedPendingRegistrations += 1;
         return false;
       }
@@ -1491,17 +1653,18 @@ export async function pruneOfflineStorageOnStartup(options?: {
   // 3. Proactively prune all IndexedDB object stores in a single readwrite transaction
   await new Promise<void>((resolve) => {
     try {
-      const tx = db.transaction(
-        [
-          QUEUE_STORE,
-          DRAFTS_STORE,
-          NOTES_STORE,
-          SNAPSHOTS_STORE,
-          TOMBSTONES_STORE,
-          PENDING_REG_STORE,
-        ],
-        'readwrite'
-      );
+      const storeList = [
+        QUEUE_STORE,
+        DRAFTS_STORE,
+        NOTES_STORE,
+        SNAPSHOTS_STORE,
+        TOMBSTONES_STORE,
+        PENDING_REG_STORE,
+      ];
+      if (db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+        storeList.push(CRYPTO_KEYS_STORE);
+      }
+      const tx = db.transaction(storeList, 'readwrite');
 
       // Queue store
       const qStore = tx.objectStore(QUEUE_STORE);
@@ -1574,25 +1737,39 @@ export async function pruneOfflineStorageOnStartup(options?: {
         });
       };
 
-      // Pending offline registrations store
+      // Pending offline registrations store (preserve QUEUED_OFFLINE and SYNC_FAILED across restarts)
+      const activeRegIds = new Set<string>();
       const rStore = tx.objectStore(PENDING_REG_STORE);
       const rReq = rStore.getAll();
       rReq.onsuccess = () => {
         const rows = (rReq.result || []) as Array<Partial<PendingOfflineRegistration>>;
         rows.forEach((reg) => {
-          const ts = parseIsoMs(reg.updatedAtIso) ?? parseIsoMs(reg.createdAtIso);
-          const orphanedOrExpired =
+          const invalidOrSynced =
             !reg.id ||
             !reg.phoneHash ||
             !reg.displayName ||
-            reg.status === 'SYNCED' ||
-            ts === null ||
-            nowMs - ts > pendingRegTtlMs;
-          if (orphanedOrExpired) {
+            reg.status === 'SYNCED';
+          if (invalidOrSynced) {
             if (typeof reg.id === 'string' && reg.id) rStore.delete(reg.id);
             report.prunedPendingRegistrations += 1;
+          } else if (typeof reg.id === 'string') {
+            activeRegIds.add(reg.id);
           }
         });
+
+        // Remove only orphaned device keys whose pending registration no longer exists
+        if (db.objectStoreNames.contains(CRYPTO_KEYS_STORE)) {
+          const kStore = tx.objectStore(CRYPTO_KEYS_STORE);
+          const kReq = kStore.getAllKeys();
+          kReq.onsuccess = () => {
+            const keys = (kReq.result || []) as Array<unknown>;
+            keys.forEach((k) => {
+              if (typeof k === 'string' && !activeRegIds.has(k)) {
+                kStore.delete(k);
+              }
+            });
+          };
+        }
       };
 
       // Tombstones store (expire old deletion markers after cleaning dependent stores)

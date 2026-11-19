@@ -30,8 +30,16 @@ service cloud.firestore {
         request.auth.token.email.matches('^ph_[0-9]{10,15}(\\.r[0-9]{1,3})?@fdmis\\.local$');
     }
 
+    function isPasswordAccountUser() {
+      return isSignedIn() &&
+        'firebase' in request.auth.token &&
+        request.auth.token.firebase.sign_in_provider == 'password' &&
+        'email' in request.auth.token &&
+        request.auth.token.email.size() >= 3;
+    }
+
     function isVerifiedUser() {
-      return isVerifiedGoogleUser() || isPhonePasswordUser();
+      return isVerifiedGoogleUser() || isPasswordAccountUser();
     }
 
     function isBootstrappedEmail() {
@@ -76,7 +84,7 @@ service cloud.firestore {
           u.assignedLgaId == '' ||
           (u.assignedLgaId == lgaId && (u.assignedWardId == '' || u.assignedWardId == wardId))
         )) ||
-        (u.role == 'WARD_COORDINATOR' && wardId.size() > 0 && u.assignedWardId == wardId) ||
+        (u.role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && wardId.size() > 0 && u.assignedWardId == wardId) ||
         (u.role == 'POLLING_UNIT_AGENT' && puId.size() > 0 && u.assignedPollingUnitId == puId) ||
         ownerUid == request.auth.uid
       );
@@ -93,6 +101,11 @@ service cloud.firestore {
     function isWardCoordFor(wardId) {
       let u = callerDoc();
       return isCallerActive(u) && u.role == 'WARD_COORDINATOR' && wardId.size() > 0 && u.assignedWardId == wardId;
+    }
+
+    function isOpsOfficerFor(wardId) {
+      let u = callerDoc();
+      return isCallerActive(u) && u.role == 'OPERATIONS_OFFICER' && wardId.size() > 0 && u.assignedWardId == wardId;
     }
 
     function isPuAgentFor(puId) {
@@ -116,8 +129,10 @@ service cloud.firestore {
         'FUNTUA_SUPER_ADMIN',
         'DANDUME_SUPER_ADMIN',
         'VERIFICATION_OFFICER',
+        'OPERATIONS_OFFICER',
         'WARD_COORDINATOR',
         'POLLING_UNIT_AGENT',
+        'ORDINARY_USER',
         'PENDING'
       ];
     }
@@ -212,12 +227,12 @@ service cloud.firestore {
 
     function isValidUserAccount(data) {
       return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'authMethod', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'requestedLgaId', 'requestedWardId', 'requestedWardName', 'requestedPollingUnitId', 'requestedPollingUnitCode', 'requestedPollingUnitName', 'sessionRevoked', 'revokedReason', 'lastLoginAt', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'phone', 'authMethod', 'role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'requestedLgaId', 'requestedWardId', 'requestedWardName', 'requestedPollingUnitId', 'requestedPollingUnitCode', 'requestedPollingUnitName', 'sessionRevoked', 'revokedReason', 'batteryLevel', 'batteryCharging', 'batteryUpdatedAt', 'lastPasswordChangedAt', 'lastLoginAt', 'createdAt', 'updatedAt']) &&
         data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
         data.email is string && data.email.size() <= 200 &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
         (!('phone' in data) || data.phone == null || (data.phone is string && data.phone.size() <= 30)) &&
-        (!('authMethod' in data) || data.authMethod in ['GOOGLE', 'PHONE_PASSWORD']) &&
+        (!('authMethod' in data) || data.authMethod in ['GOOGLE', 'PHONE_PASSWORD', 'EMAIL_PASSWORD']) &&
         isValidRole(data.role) &&
         isValidAccountStatus(data.status) &&
         data.assignedLgaId is string && data.assignedLgaId.size() <= 32 &&
@@ -231,6 +246,10 @@ service cloud.firestore {
         (!('requestedPollingUnitName' in data) || data.requestedPollingUnitName == null || (data.requestedPollingUnitName is string && data.requestedPollingUnitName.size() <= 160)) &&
         data.sessionRevoked is bool &&
         (!('revokedReason' in data) || data.revokedReason == null || (data.revokedReason is string && data.revokedReason.size() <= 300)) &&
+        (!('batteryLevel' in data) || data.batteryLevel == null || (data.batteryLevel is int && data.batteryLevel >= 0 && data.batteryLevel <= 100)) &&
+        (!('batteryCharging' in data) || data.batteryCharging == null || data.batteryCharging is bool) &&
+        (!('batteryUpdatedAt' in data) || data.batteryUpdatedAt == null || (data.batteryUpdatedAt is timestamp && data.batteryUpdatedAt <= request.time)) &&
+        (!('lastPasswordChangedAt' in data) || data.lastPasswordChangedAt == null || (data.lastPasswordChangedAt is timestamp && data.lastPasswordChangedAt <= request.time)) &&
         (!('lastLoginAt' in data) || data.lastLoginAt == null || (data.lastLoginAt is timestamp && data.lastLoginAt <= request.time)) &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -252,9 +271,10 @@ service cloud.firestore {
 
     function isValidPhoneIndex(data, phoneHash) {
       return data.keys().hasAll(['phoneHash', 'ownerUidHash', 'authSeq', 'pendingNextAuthSeq', 'resetPinSalt', 'resetPinHash', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['phoneHash', 'ownerUidHash', 'authSeq', 'pendingNextAuthSeq', 'resetPinSalt', 'resetPinHash', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['phoneHash', 'ownerUidHash', 'accountType', 'authSeq', 'pendingNextAuthSeq', 'resetPinSalt', 'resetPinHash', 'recoveryKeySalt', 'recoveryKeyHash', 'createdAt', 'updatedAt']) &&
         data.phoneHash == phoneHash &&
         data.ownerUidHash is string && data.ownerUidHash.size() >= 16 && data.ownerUidHash.size() <= 128 &&
+        (!('accountType' in data) || data.accountType in ['PHONE_PASSWORD', 'EMAIL_PASSWORD']) &&
         data.authSeq is int && data.authSeq >= 0 && data.authSeq <= 100 &&
         data.pendingNextAuthSeq is int && data.pendingNextAuthSeq >= 0 && data.pendingNextAuthSeq <= 100 &&
         data.resetPinSalt is string && data.resetPinSalt.size() <= 128 &&
@@ -400,7 +420,7 @@ service cloud.firestore {
 
     function isValidCheckIn(data) {
       return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'clientSubmissionId', 'isTestData', 'createdAt']) &&
-        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'latitude', 'longitude', 'clientSubmissionId', 'isTestData', 'createdAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'agentUid', 'agentName', 'arrivalTimeText', 'comments', 'batteryPercent', 'networkStatus', 'latitude', 'longitude', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt']) &&
         data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
         data.puCode is string && data.puCode.size() <= 40 &&
         data.puName is string && data.puName.size() <= 160 &&
@@ -415,13 +435,15 @@ service cloud.firestore {
         (!('latitude' in data) || data.latitude == null || data.latitude is number) &&
         (!('longitude' in data) || data.longitude == null || data.longitude is number) &&
         data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
         data.isTestData is bool &&
         data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
     function isValidIncident(data) {
       return data.keys().hasAll(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'evidenceBase64', 'evidenceFileName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['title', 'category', 'description', 'urgency', 'status', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'reporterUid', 'reporterName', 'evidenceBase64', 'evidenceFileName', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt']) &&
         data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
         data.category is string && data.category.size() <= 100 &&
         data.description is string && data.description.size() >= 5 && data.description.size() <= 2000 &&
@@ -440,6 +462,8 @@ service cloud.firestore {
         data.escalatedTo is string && data.escalatedTo.size() <= 120 &&
         data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
         data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
         data.isTestData is bool &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -447,7 +471,7 @@ service cloud.firestore {
 
     function isValidResultSubmission(data) {
       return data.keys().hasAll(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'version', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'version', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['puId', 'puCode', 'puName', 'lgaId', 'wardId', 'wardName', 'submittedByUid', 'submittedByName', 'apcVotes', 'pdpVotes', 'adcVotes', 'othersVotes', 'registeredVoters', 'accreditedVoters', 'validVotes', 'rejectedVotes', 'totalVotesCast', 'bvasStatus', 'bvasNotes', 'submissionNotes', 'ec8aImageBase64', 'ec8aFileName', 'verificationStatus', 'publiclyApproved', 'reviewNote', 'reviewedByUid', 'reviewedByName', 'reviewedAt', 'version', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt']) &&
         data.puId is string && data.puId.size() >= 1 && data.puId.size() <= 128 &&
         data.puCode is string && data.puCode.size() <= 40 &&
         data.puName is string && data.puName.size() <= 160 &&
@@ -476,6 +500,8 @@ service cloud.firestore {
         (!('reviewedAt' in data) || data.reviewedAt == null || (data.reviewedAt is timestamp && data.reviewedAt <= request.time)) &&
         data.version is int && data.version >= 1 &&
         data.clientSubmissionId is string && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
         data.isTestData is bool &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -631,7 +657,7 @@ service cloud.firestore {
 
     function isValidOperationalNote(data) {
       return data.keys().hasAll(['clientNoteId', 'title', 'content', 'category', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'authorUid', 'authorName', 'isPinned', 'isTestData', 'revision', 'createdAt', 'updatedAt']) &&
-        data.keys().hasOnly(['clientNoteId', 'title', 'content', 'category', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'authorUid', 'authorName', 'isPinned', 'isTestData', 'revision', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['clientNoteId', 'title', 'content', 'category', 'lgaId', 'wardId', 'puId', 'puCode', 'puName', 'authorUid', 'authorName', 'isPinned', 'isTestData', 'revision', 'clientCreatedAtIso', 'serverSyncedAt', 'createdAt', 'updatedAt']) &&
         data.clientNoteId is string && data.clientNoteId.size() >= 1 && data.clientNoteId.size() <= 128 &&
         data.title is string && data.title.size() <= 120 &&
         data.content is string && data.content.size() >= 1 && data.content.size() <= 1000 &&
@@ -646,8 +672,150 @@ service cloud.firestore {
         data.isPinned is bool &&
         data.isTestData is bool &&
         data.revision is int && data.revision >= 1 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTaskPriority(priority) {
+      return priority in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+    }
+
+    function isValidTaskStatus(status) {
+      return status in [
+        'ASSIGNED',
+        'ACKNOWLEDGED',
+        'IN_PROGRESS',
+        'AWAITING_REVIEW',
+        'REVISION_REQUIRED',
+        'APPROVED_COMPLETED',
+        'OVERDUE'
+      ];
+    }
+
+    function isValidOperationalTask(data) {
+      return data.keys().hasAll([
+          'title', 'description', 'priority', 'status', 'lgaId', 'wardId', 'wardName',
+          'assignedOfficerUid', 'assignedOfficerName', 'assignedByUid', 'assignedByName',
+          'startDateIso', 'dueDateIso', 'progressPercent', 'acknowledgedAtIso',
+          'submittedForReviewAtIso', 'completedAtIso', 'latestFieldReport', 'delayReason',
+          'adminFeedback', 'updateRequestedAtIso', 'updateRequestNote', 'reviewedByUid',
+          'reviewedByName', 'clientSubmissionId', 'isTestData', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title', 'description', 'priority', 'status', 'lgaId', 'wardId', 'wardName',
+          'assignedOfficerUid', 'assignedOfficerName', 'assignedByUid', 'assignedByName',
+          'startDateIso', 'dueDateIso', 'progressPercent', 'acknowledgedAtIso',
+          'submittedForReviewAtIso', 'completedAtIso', 'latestFieldReport', 'delayReason',
+          'evidenceBase64', 'evidenceFileName', 'adminFeedback', 'updateRequestedAtIso',
+          'updateRequestNote', 'reviewedByUid', 'reviewedByName', 'clientSubmissionId',
+          'clientCreatedAtIso', 'serverSyncedAt', 'isTestData', 'createdAt', 'updatedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 160 &&
+        data.description is string && data.description.size() >= 5 && data.description.size() <= 2000 &&
+        isValidTaskPriority(data.priority) &&
+        isValidTaskStatus(data.status) &&
+        isValidLgaId(data.lgaId) &&
+        data.wardId is string && data.wardId.size() >= 1 && data.wardId.size() <= 128 &&
+        data.wardName is string && data.wardName.size() >= 1 && data.wardName.size() <= 120 &&
+        data.assignedOfficerUid is string && data.assignedOfficerUid.size() >= 1 && data.assignedOfficerUid.size() <= 128 &&
+        data.assignedOfficerName is string && data.assignedOfficerName.size() >= 1 && data.assignedOfficerName.size() <= 120 &&
+        data.assignedByUid is string && data.assignedByUid.size() >= 1 && data.assignedByUid.size() <= 128 &&
+        data.assignedByName is string && data.assignedByName.size() >= 1 && data.assignedByName.size() <= 120 &&
+        data.startDateIso is string && data.startDateIso.size() >= 8 && data.startDateIso.size() <= 40 &&
+        data.dueDateIso is string && data.dueDateIso.size() >= 8 && data.dueDateIso.size() <= 40 &&
+        data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+        data.acknowledgedAtIso is string && data.acknowledgedAtIso.size() <= 64 &&
+        data.submittedForReviewAtIso is string && data.submittedForReviewAtIso.size() <= 64 &&
+        data.completedAtIso is string && data.completedAtIso.size() <= 64 &&
+        data.latestFieldReport is string && data.latestFieldReport.size() <= 2000 &&
+        data.delayReason is string && data.delayReason.size() <= 1000 &&
+        (!('evidenceBase64' in data) || data.evidenceBase64 == null || (data.evidenceBase64 is string && data.evidenceBase64.size() <= 350000)) &&
+        (!('evidenceFileName' in data) || data.evidenceFileName == null || (data.evidenceFileName is string && data.evidenceFileName.size() <= 120)) &&
+        data.adminFeedback is string && data.adminFeedback.size() <= 1500 &&
+        data.updateRequestedAtIso is string && data.updateRequestedAtIso.size() <= 64 &&
+        data.updateRequestNote is string && data.updateRequestNote.size() <= 600 &&
+        data.reviewedByUid is string && data.reviewedByUid.size() <= 128 &&
+        data.reviewedByName is string && data.reviewedByName.size() <= 120 &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() >= 1 && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
+        data.isTestData is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTaskUpdateEntry(data, taskId) {
+      return data.keys().hasAll([
+          'taskId', 'entryType', 'statusSnapshot', 'progressPercent', 'summary',
+          'delayReason', 'actorUid', 'actorName', 'actorRole', 'clientSubmissionId', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'taskId', 'entryType', 'statusSnapshot', 'progressPercent', 'summary',
+          'delayReason', 'evidenceBase64', 'evidenceFileName', 'actorUid', 'actorName',
+          'actorRole', 'clientSubmissionId', 'clientCreatedAtIso', 'serverSyncedAt', 'createdAt'
+        ]) &&
+        data.taskId == taskId &&
+        data.entryType in ['OFFICER_PROGRESS', 'FIELD_REPORT', 'UPDATE_REQUEST', 'ADMIN_REVIEW', 'STATUS_CHANGE'] &&
+        isValidTaskStatus(data.statusSnapshot) &&
+        data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+        data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 2000 &&
+        data.delayReason is string && data.delayReason.size() <= 1000 &&
+        (!('evidenceBase64' in data) || data.evidenceBase64 == null || (data.evidenceBase64 is string && data.evidenceBase64.size() <= 350000)) &&
+        (!('evidenceFileName' in data) || data.evidenceFileName == null || (data.evidenceFileName is string && data.evidenceFileName.size() <= 120)) &&
+        data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128 &&
+        data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 120 &&
+        data.actorRole is string && data.actorRole.size() <= 40 &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() >= 1 && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidGeneratedReport(data) {
+      return data.keys().hasAll([
+          'reportCategory', 'reportTitle', 'reportingPeriodStartIso', 'reportingPeriodEndIso',
+          'lgaId', 'wardId', 'puId', 'officerUid', 'scopeLabel', 'generatedByUid',
+          'generatedByName', 'generationMode', 'dataStatus', 'dataCompletenessNotice',
+          'rowCount', 'headers', 'summaryMetrics', 'clientSubmissionId', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'reportCategory', 'reportTitle', 'reportingPeriodStartIso', 'reportingPeriodEndIso',
+          'lgaId', 'wardId', 'puId', 'officerUid', 'scopeLabel', 'generatedByUid',
+          'generatedByName', 'generationMode', 'dataStatus', 'dataCompletenessNotice',
+          'rowCount', 'headers', 'summaryMetrics', 'clientSubmissionId', 'clientCreatedAtIso',
+          'serverSyncedAt', 'createdAt'
+        ]) &&
+        data.reportCategory in [
+          'DAILY_SITUATION',
+          'WARD_PERFORMANCE',
+          'LGA_SUMMARY',
+          'ELECTION_INCIDENT',
+          'AGENT_ACTIVITY',
+          'OFFICER_PERFORMANCE',
+          'TASK_COMPLETION'
+        ] &&
+        data.reportTitle is string && data.reportTitle.size() >= 3 && data.reportTitle.size() <= 180 &&
+        data.reportingPeriodStartIso is string && data.reportingPeriodStartIso.size() <= 40 &&
+        data.reportingPeriodEndIso is string && data.reportingPeriodEndIso.size() <= 40 &&
+        data.lgaId in ['all', 'funtua', 'dandume'] &&
+        data.wardId is string && data.wardId.size() <= 128 &&
+        data.puId is string && data.puId.size() <= 128 &&
+        data.officerUid is string && data.officerUid.size() <= 128 &&
+        data.scopeLabel is string && data.scopeLabel.size() <= 160 &&
+        data.generatedByUid is string && data.generatedByUid.size() >= 1 && data.generatedByUid.size() <= 128 &&
+        data.generatedByName is string && data.generatedByName.size() >= 1 && data.generatedByName.size() <= 120 &&
+        data.generationMode in ['AUTOMATIC_DAILY', 'ON_DEMAND'] &&
+        data.dataStatus is string && data.dataStatus.size() <= 160 &&
+        data.dataCompletenessNotice is string && data.dataCompletenessNotice.size() <= 600 &&
+        data.rowCount is int && data.rowCount >= 0 && data.rowCount <= 5000 &&
+        data.headers is list && data.headers.size() <= 40 && (data.headers.size() == 0 || data.headers[0] is string) &&
+        data.summaryMetrics is map &&
+        data.clientSubmissionId is string && data.clientSubmissionId.size() >= 1 && data.clientSubmissionId.size() <= 128 &&
+        (!('clientCreatedAtIso' in data) || data.clientCreatedAtIso == null || (data.clientCreatedAtIso is string && data.clientCreatedAtIso.size() <= 64)) &&
+        (!('serverSyncedAt' in data) || data.serverSyncedAt == null || (data.serverSyncedAt is timestamp && data.serverSyncedAt <= request.time)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
     }
 
     function isValidAuditLog(data) {
@@ -710,19 +878,28 @@ service cloud.firestore {
         isFullControlAdmin() ||
         isLgaAdminFor(existing().assignedLgaId) ||
         (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId)) ||
-        isWardCoordFor(existing().assignedWardId)
+        isWardCoordFor(existing().assignedWardId) ||
+        isOpsOfficerFor(existing().assignedWardId)
       );
       allow list: if isVerifiedUser() && (
         isFullControlAdmin() ||
         isLgaAdminFor(existing().assignedLgaId) ||
         (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId)) ||
-        isWardCoordFor(existing().assignedWardId)
+        isWardCoordFor(existing().assignedWardId) ||
+        isOpsOfficerFor(existing().assignedWardId)
       );
       allow create: if isVerifiedUser() && isValidId(uid) &&
         isValidUserAccount(incoming()) &&
         incoming().uid == uid &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time && (
+          (request.auth.uid == uid &&
+            incoming().role == 'ORDINARY_USER' &&
+            incoming().status == 'ACTIVE' &&
+            incoming().sessionRevoked == false &&
+            isValidLgaId(incoming().assignedLgaId) &&
+            incoming().assignedWardId.size() >= 1 &&
+            incoming().assignedPollingUnitId.size() >= 1) ||
           (request.auth.uid == uid &&
             incoming().role == 'PENDING' &&
             incoming().status == 'PENDING_APPROVAL' &&
@@ -749,7 +926,7 @@ service cloud.firestore {
           ((isLgaAdminFor(existing().assignedLgaId) || (existing().status == 'PENDING_APPROVAL' && 'requestedLgaId' in existing() && isLgaAdminFor(existing().requestedLgaId))) &&
             isLgaAdminFor(incoming().assignedLgaId) &&
             existing().role != 'FULL_CONTROL_ADMIN' &&
-            incoming().role in ['VERIFICATION_OFFICER', 'WARD_COORDINATOR', 'POLLING_UNIT_AGENT', 'PENDING'] &&
+            incoming().role in ['VERIFICATION_OFFICER', 'OPERATIONS_OFFICER', 'WARD_COORDINATOR', 'POLLING_UNIT_AGENT', 'ORDINARY_USER', 'PENDING'] &&
             incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'assignedLgaId', 'assignedWardId', 'assignedPollingUnitId', 'sessionRevoked', 'revokedReason', 'updatedAt'])) ||
           (isWardCoordFor(existing().assignedWardId) &&
             existing().role == 'POLLING_UNIT_AGENT' &&
@@ -760,7 +937,7 @@ service cloud.firestore {
           (request.auth.uid == uid &&
             existing().status == 'ACTIVE' &&
             existing().sessionRevoked != true &&
-            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'lastLoginAt', 'updatedAt']))
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'phone', 'batteryLevel', 'batteryCharging', 'batteryUpdatedAt', 'lastPasswordChangedAt', 'lastLoginAt', 'updatedAt']))
         );
       allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
     }
@@ -770,7 +947,7 @@ service cloud.firestore {
       allow get: if isVerifiedUser() && isValidId(uid) && (request.auth.uid == uid || isFullControlAdmin());
       allow list: if false;
       allow create: if isVerifiedUser() && isValidId(uid) &&
-        request.auth.uid == uid &&
+        (request.auth.uid == uid || isFullControlAdmin()) &&
         isValidUserCredential(incoming(), uid) &&
         incoming().createdAt == request.time &&
         incoming().updatedAt == request.time;
@@ -778,7 +955,7 @@ service cloud.firestore {
         isValidUserCredential(incoming(), uid) &&
         incoming().createdAt == existing().createdAt &&
         incoming().updatedAt == request.time &&
-        request.auth.uid == uid;
+        (request.auth.uid == uid || isFullControlAdmin());
       allow delete: if isFullControlAdmin() && isValidId(uid) && uid != request.auth.uid;
     }
 
@@ -915,7 +1092,8 @@ service cloud.firestore {
     match /polling_units/{puId} {
       allow get: if isVerifiedUser() && isValidId(puId) && (
         isFullControlAdmin() ||
-        canReadInArea(existing().lgaId, existing().wardId, puId, existing().assignedAgentUid)
+        canReadInArea(existing().lgaId, existing().wardId, puId, existing().assignedAgentUid) ||
+        (hasActiveUser() && callerDoc().role == 'ORDINARY_USER' && callerDoc().assignedPollingUnitId == puId)
       );
       allow list: if isVerifiedUser() && (
         isFullControlAdmin() ||
@@ -939,6 +1117,8 @@ service cloud.firestore {
           (isLgaAdminFor(existing().lgaId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'registeredVoters', 'updatedAt'])) ||
           (isVerificationOfficerFor(existing().lgaId, existing().wardId) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['operationalStatus', 'updatedAt'])) ||
+          (isOpsOfficerFor(existing().wardId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['operationalStatus', 'updatedAt'])) ||
           (isWardCoordFor(existing().wardId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['assignedAgentUid', 'assignedAgentName', 'operationalStatus', 'updatedAt'])) ||
@@ -1039,7 +1219,7 @@ service cloud.firestore {
           isFullControlAdmin() ||
           (isLgaAdminFor(existing().lgaId) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt'])) ||
-          (isWardCoordFor(existing().wardId) &&
+          ((isWardCoordFor(existing().wardId) || isOpsOfficerFor(existing().wardId)) &&
             incoming().diff(existing()).affectedKeys().hasOnly(['status', 'urgency', 'internalNotes', 'escalatedTo', 'reviewedByUid', 'updatedAt']))
         );
       allow delete: if isFullControlAdmin() && isValidId(incidentId);
@@ -1291,7 +1471,7 @@ service cloud.firestore {
             callerDoc().assignedLgaId == '' ||
             (existing().lgaId == callerDoc().assignedLgaId && (callerDoc().assignedWardId == '' || existing().wardId == callerDoc().assignedWardId))
           )) ||
-          (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
+          (callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
           (callerDoc().role == 'POLLING_UNIT_AGENT' && callerDoc().assignedPollingUnitId.size() > 0 && existing().puId == callerDoc().assignedPollingUnitId)
         ))
       );
@@ -1305,7 +1485,7 @@ service cloud.firestore {
             callerDoc().assignedLgaId == '' ||
             (existing().lgaId == callerDoc().assignedLgaId && (callerDoc().assignedWardId == '' || existing().wardId == callerDoc().assignedWardId))
           )) ||
-          (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
+          (callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId) ||
           (callerDoc().role == 'POLLING_UNIT_AGENT' && callerDoc().assignedPollingUnitId.size() > 0 && existing().puId == callerDoc().assignedPollingUnitId)
         ))
       );
@@ -1323,8 +1503,9 @@ service cloud.firestore {
               callerDoc().assignedLgaId == '' ||
               incoming().lgaId == callerDoc().assignedLgaId
             )) ||
-            (callerDoc().role == 'WARD_COORDINATOR' && callerDoc().assignedWardId.size() > 0 && incoming().wardId == callerDoc().assignedWardId) ||
-            (callerDoc().role == 'POLLING_UNIT_AGENT' && (incoming().puId == '' || incoming().puId == callerDoc().assignedPollingUnitId))
+            (callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && incoming().wardId == callerDoc().assignedWardId) ||
+            (callerDoc().role == 'POLLING_UNIT_AGENT' && (incoming().puId == '' || incoming().puId == callerDoc().assignedPollingUnitId)) ||
+            (callerDoc().role == 'ORDINARY_USER' && (incoming().puId == '' || incoming().puId == callerDoc().assignedPollingUnitId))
           ))
         );
       allow update: if isVerifiedUser() && isValidId(noteId) &&
@@ -1341,6 +1522,122 @@ service cloud.firestore {
         isFullControlAdmin() ||
         (hasActiveUser() && existing().authorUid == request.auth.uid)
       );
+    }
+
+    // --- 11D. TASK ASSIGNMENT & FIELD OPERATIONS ---
+    match /operational_tasks/{taskId} {
+      allow get: if isVerifiedUser() && isValidId(taskId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && (
+          isLgaAdminFor(existing().lgaId) ||
+          (hasActiveUser() && existing().assignedOfficerUid == request.auth.uid)
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().lgaId) ||
+        (hasActiveUser() && existing().assignedOfficerUid == request.auth.uid)
+      );
+      allow create: if isFullControlAdmin() && isValidId(taskId) &&
+        isValidOperationalTask(incoming()) &&
+        incoming().assignedByUid == request.auth.uid &&
+        incoming().status == 'ASSIGNED' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        exists(/databases/$(database)/documents/wards/$(incoming().wardId)) &&
+        exists(/databases/$(database)/documents/users/$(incoming().assignedOfficerUid));
+      allow update: if isVerifiedUser() && isValidId(taskId) &&
+        isValidOperationalTask(incoming()) &&
+        incoming().assignedByUid == existing().assignedByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isFullControlAdmin() ||
+          (hasActiveUser() &&
+            existing().assignedOfficerUid == request.auth.uid &&
+            existing().status != 'APPROVED_COMPLETED' &&
+            incoming().assignedOfficerUid == existing().assignedOfficerUid &&
+            incoming().lgaId == existing().lgaId &&
+            incoming().wardId == existing().wardId &&
+            incoming().status in ['ACKNOWLEDGED', 'IN_PROGRESS', 'AWAITING_REVIEW'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'progressPercent',
+              'acknowledgedAtIso',
+              'submittedForReviewAtIso',
+              'latestFieldReport',
+              'delayReason',
+              'evidenceBase64',
+              'evidenceFileName',
+              'serverSyncedAt',
+              'updatedAt'
+            ]))
+        );
+      allow delete: if isFullControlAdmin() && isValidId(taskId);
+
+      match /updates/{updateId} {
+        allow get, list: if isVerifiedUser() && isValidId(taskId) && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(get(/databases/$(database)/documents/operational_tasks/$(taskId)).data.lgaId) ||
+          (hasActiveUser() && get(/databases/$(database)/documents/operational_tasks/$(taskId)).data.assignedOfficerUid == request.auth.uid)
+        );
+        allow create: if isVerifiedUser() && isValidId(taskId) && isValidId(updateId) &&
+          isValidTaskUpdateEntry(incoming(), taskId) &&
+          incoming().actorUid == request.auth.uid &&
+          incoming().createdAt == request.time &&
+          exists(/databases/$(database)/documents/operational_tasks/$(taskId)) && (
+            isFullControlAdmin() ||
+            (hasActiveUser() &&
+              get(/databases/$(database)/documents/operational_tasks/$(taskId)).data.assignedOfficerUid == request.auth.uid &&
+              get(/databases/$(database)/documents/operational_tasks/$(taskId)).data.status != 'APPROVED_COMPLETED' &&
+              incoming().entryType in ['OFFICER_PROGRESS', 'FIELD_REPORT', 'STATUS_CHANGE'])
+          );
+        allow update: if false;
+        allow delete: if isFullControlAdmin() && isValidId(taskId) && isValidId(updateId);
+      }
+    }
+
+    // --- 11E. ARCHIVED AUTOMATIC & ANALYTICAL REPORTS ---
+    match /generated_reports/{reportId} {
+      allow get: if isVerifiedUser() && isValidId(reportId) && (
+        isFullControlAdmin() ||
+        (resource == null && hasActiveUser()) ||
+        (resource != null && (
+          isLgaAdminFor(existing().lgaId) ||
+          (hasActiveUser() && existing().generatedByUid == request.auth.uid) ||
+          (hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && (
+            callerDoc().assignedLgaId == '' || existing().lgaId == callerDoc().assignedLgaId
+          )) ||
+          (hasActiveUser() && callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId)
+        ))
+      );
+      allow list: if isVerifiedUser() && (
+        isFullControlAdmin() ||
+        isLgaAdminFor(existing().lgaId) ||
+        (hasActiveUser() && existing().generatedByUid == request.auth.uid) ||
+        (hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && (
+          callerDoc().assignedLgaId == '' || existing().lgaId == callerDoc().assignedLgaId
+        )) ||
+        (hasActiveUser() && callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && existing().wardId == callerDoc().assignedWardId)
+      );
+      allow create: if isVerifiedUser() && isValidId(reportId) &&
+        isValidGeneratedReport(incoming()) &&
+        incoming().generatedByUid == request.auth.uid &&
+        incoming().createdAt == request.time && (
+          isFullControlAdmin() ||
+          isLgaAdminFor(incoming().lgaId) ||
+          (hasActiveUser() && callerDoc().role == 'VERIFICATION_OFFICER' && (
+            callerDoc().assignedLgaId == '' || incoming().lgaId == callerDoc().assignedLgaId
+          )) ||
+          (hasActiveUser() && callerDoc().role in ['WARD_COORDINATOR', 'OPERATIONS_OFFICER'] && callerDoc().assignedWardId.size() > 0 && incoming().wardId == callerDoc().assignedWardId)
+        );
+      allow update: if isVerifiedUser() && isValidId(reportId) &&
+        isValidGeneratedReport(incoming()) &&
+        incoming().createdAt == existing().createdAt && (
+          isFullControlAdmin() ||
+          (isLgaAdminFor(existing().lgaId) && incoming().lgaId == existing().lgaId && incoming().generatedByUid == request.auth.uid)
+        );
+      allow delete: if isFullControlAdmin() && isValidId(reportId);
     }
 
     // --- 12. IMMUTABLE AUDIT LOGS (ADMIN ONLY READ) ---

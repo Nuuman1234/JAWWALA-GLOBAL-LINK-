@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, type User as FirebaseUser } from 'firebase/auth';
-import { AppShell, NAV_ITEMS, type NavSectionId } from './components/AppShell';
+import './print.css';
+import { AppShell } from './components/AppShell';
 import { AuthGate } from './components/AuthGate';
 import { OperationalNotesPanel } from './components/OperationalNotesPanel';
+import { useNavigationHistory } from './hooks/useNavigationHistory';
 import { AuditLogsPage } from './pages/AuditLogsPage';
 import { DataManagementPage } from './pages/DataManagementPage';
 import { EmergencyAssistancePage } from './pages/EmergencyAssistancePage';
+import { EnhancedReportsPage } from './pages/EnhancedReportsPage';
 import { FieldOpsPage } from './pages/FieldOpsPage';
+import { FullAdminHomePage } from './pages/FullAdminHomePage';
 import { IncidentsPage } from './pages/IncidentsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
+import { OperationsOfficersPage } from './pages/OperationsOfficersPage';
 import { PartyManagementPage } from './pages/PartyManagementPage';
 import { PollingUnitsDirectoryPage } from './pages/PollingUnitsDirectoryPage';
 import { PublicPortalPage } from './pages/PublicPortalPage';
-import { ReportsCenterPage } from './pages/ReportsCenterPage';
 import { ResultsPage } from './pages/ResultsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SituationRoomPage } from './pages/SituationRoomPage';
+import { TaskAssignmentPage } from './pages/TaskAssignmentPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { UserAccessControlPage } from './pages/UserAccessControlPage';
 import { VerificationCenterPage } from './pages/VerificationCenterPage';
@@ -24,23 +29,26 @@ import { auth, testFirestoreConnection, type ConnectionCheckStatus } from './lib
 import {
   checkUserAndBootstrapState,
   completeApprovedPasswordReset,
-  getEphemeralOfflinePassword,
+  hasStoredOfflineRegistrationKey,
   initializeFullControlAdmin,
   registerPendingAccount,
-  registerWithPhoneAndPassword,
+  registerWithEmailAndPhone,
+  resolvePendingOfflinePassword,
+  sendEmailPasswordReset,
   signInWithGoogle,
-  signInWithPhoneAndPassword,
+  signInWithIdentifierAndPassword,
   signOutSession,
   submitPasswordResetRequest,
   subscribeToGlobalSettings,
   subscribeToUserAccount,
   syncPendingOfflineRegistration,
+  updateUserBatteryStatus,
   type RegistrationLocationSelection,
 } from './services/authService';
 import { observeReportAttachments } from './services/dataManagementService';
 import {
   canManageDirectory,
-  fetchPublicLocationCatalog,
+  fetchPublicLocationCatalogWithStatus,
   observeAuditLogs,
   observePasswordResetRequests,
   observePollingUnits,
@@ -50,6 +58,7 @@ import {
   subscribeToPublicLocationCatalog,
   syncLocationCatalogFromLiveDirectory,
 } from './services/directoryService';
+import { buildBundledLocationCatalog } from './services/officialDirectory';
 import { observeEmergencyContacts } from './services/emergencyService';
 import {
   buildMergedOperationalNotes,
@@ -79,6 +88,8 @@ import {
   syncSingleQueuedItem,
 } from './services/operationsService';
 import { observePartyConfigs } from './services/partyService';
+import { observeGeneratedReports } from './services/reportArchiveService';
+import { observeOperationalTasks } from './services/taskService';
 import {
   IncidentUrgency,
   UserRole,
@@ -89,12 +100,14 @@ import {
   type ApprovedPuResult,
   type AuditLog,
   type EmergencyContact,
+  type GeneratedReportRecord,
   type GlobalSettings,
   type IncidentReport,
   type LocationCatalogLga,
   type NotificationItem,
   type OfflineQueuedItem,
   type OperationalNote,
+  type OperationalTask,
   type PartyCode,
   type PartyConfig,
   type PasswordResetRequest,
@@ -159,9 +172,14 @@ export default function App() {
   const [reportAttachments, setReportAttachments] = useState<ReportAttachment[]>([]);
   const [serverNotes, setServerNotes] = useState<OperationalNote[]>([]);
   const [mergedNotes, setMergedNotes] = useState<OperationalNote[]>([]);
+  const [operationalTasks, setOperationalTasks] = useState<OperationalTask[]>([]);
+  const [generatedReports, setGeneratedReports] = useState<GeneratedReportRecord[]>([]);
   const [queuedItems, setQueuedItems] = useState<OfflineQueuedItem[]>([]);
 
-  const [locationCatalog, setLocationCatalog] = useState<LocationCatalogLga[]>([]);
+  const [locationCatalog, setLocationCatalog] = useState<LocationCatalogLga[]>(() =>
+    buildBundledLocationCatalog()
+  );
+  const [directoryStatus, setDirectoryStatus] = useState<'offline' | 'updated'>('offline');
   const [refreshingLocations, setRefreshingLocations] = useState(false);
   const [pendingOfflineRegistrations, setPendingOfflineRegistrations] = useState<
     PendingOfflineRegistration[]
@@ -173,12 +191,12 @@ export default function App() {
   );
   const [loadingData, setLoadingData] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<NavSectionId>('overview');
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [syncingNow, setSyncingNow] = useState(false);
   const [syncNonce, setSyncNonce] = useState(0);
 
   const isFlushingRef = useRef(false);
+  const syncingOfflineRegsRef = useRef(false);
   const wasOfflineRef = useRef(!isOnline);
   const startupPrunedRef = useRef(false);
   const lastCatalogSignatureRef = useRef('');
@@ -194,7 +212,15 @@ export default function App() {
       });
     }
 
-    const unsubCatalog = subscribeToPublicLocationCatalog(setLocationCatalog);
+    const unsubCatalog = subscribeToPublicLocationCatalog(
+      setLocationCatalog,
+      undefined,
+      (source) => {
+        if (source === 'live') {
+          setDirectoryStatus('updated');
+        }
+      }
+    );
 
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -251,10 +277,11 @@ export default function App() {
         setReportAttachments([]);
         setServerNotes([]);
         setMergedNotes([]);
+        setOperationalTasks([]);
+        setGeneratedReports([]);
         setQueuedItems([]);
         setPasswordResetRequests([]);
         setLastUpdatedAt(null);
-        setActiveSection('overview');
         void getPendingOfflineRegistrations().then(setPendingOfflineRegistrations);
         window.history.replaceState({ fdmisLocked: true }, '', '/');
       }
@@ -289,17 +316,25 @@ export default function App() {
 
   const activeAuthorized = isAuthorizedActive(account);
 
+  const {
+    activeSection,
+    visitedSections,
+    canGoBack,
+    previousSectionLabel,
+    navigateTo,
+    goBack,
+    resetNavigation,
+  } = useNavigationHistory(account, activeAuthorized);
+
   // Guard browser history navigation after logout or revocation so Back cannot restore protected routes
   useEffect(() => {
     if (firebaseUser && activeAuthorized) {
-      window.history.replaceState({ fdmisAuthenticated: true }, '', window.location.pathname || '/');
       return;
     }
 
     window.history.replaceState({ fdmisLocked: true }, '', '/');
     const handlePopState = () => {
       window.history.replaceState({ fdmisLocked: true }, '', '/');
-      setActiveSection('overview');
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -325,6 +360,8 @@ export default function App() {
       setEmergencyContacts([]);
       setReportAttachments([]);
       setServerNotes([]);
+      setOperationalTasks([]);
+      setGeneratedReports([]);
       setPasswordResetRequests([]);
       return;
     }
@@ -368,6 +405,8 @@ export default function App() {
         cAttach,
         cNotes,
         cResetReqs,
+        cTasks,
+        cReports,
       ] = await Promise.all([
         getDeletedTombstones(),
         loadCollectionSnapshot<Record<PartyCode, PartyConfig | null>>(uid, 'partyConfigs'),
@@ -388,6 +427,8 @@ export default function App() {
         loadCollectionSnapshot<ReportAttachment[]>(uid, 'reportAttachments'),
         loadCollectionSnapshot<OperationalNote[]>(uid, 'operationalNotes'),
         loadCollectionSnapshot<PasswordResetRequest[]>(uid, 'passwordResetRequests'),
+        loadCollectionSnapshot<OperationalTask[]>(uid, 'operationalTasks'),
+        loadCollectionSnapshot<GeneratedReportRecord[]>(uid, 'generatedReports'),
       ]);
 
       if (cancelled) return;
@@ -432,6 +473,12 @@ export default function App() {
       }
       if (!liveLoaded.has('passwordResetRequests') && cResetReqs) {
         setPasswordResetRequests(cResetReqs);
+      }
+      if (!liveLoaded.has('operationalTasks') && cTasks) {
+        setOperationalTasks(filterOutTombstones(cTasks, tombstones));
+      }
+      if (!liveLoaded.has('generatedReports') && cReports) {
+        setGeneratedReports(filterOutTombstones(cReports, tombstones));
       }
       if (!navigator.onLine) {
         setLoadingData(false);
@@ -662,6 +709,34 @@ export default function App() {
       },
       handleSubError
     );
+    const unsubTasks = observeOperationalTasks(
+      account,
+      (items) => {
+        liveLoaded.add('operationalTasks');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setOperationalTasks(clean);
+          void saveCollectionSnapshot(account.uid, 'operationalTasks', clean);
+          markSynced();
+        });
+      },
+      handleSubError
+    );
+    const unsubGeneratedReports = observeGeneratedReports(
+      account,
+      (items) => {
+        liveLoaded.add('generatedReports');
+        void getDeletedTombstones().then((tombstones) => {
+          if (cancelled) return;
+          const clean = filterOutTombstones(items, tombstones);
+          setGeneratedReports(clean);
+          void saveCollectionSnapshot(account.uid, 'generatedReports', clean);
+          markSynced();
+        });
+      },
+      handleSubError
+    );
 
     return () => {
       cancelled = true;
@@ -683,6 +758,8 @@ export default function App() {
       unsubAttachments();
       unsubNotes();
       unsubResetReqs();
+      unsubTasks();
+      unsubGeneratedReports();
     };
   }, [authReady, firebaseUser, account, activeAuthorized, syncNonce]);
 
@@ -725,34 +802,70 @@ export default function App() {
     void syncLocationCatalogFromLiveDirectory(account, wards, pollingUnits);
   }, [account, activeAuthorized, isOnline, wards, pollingUnits, locationCatalog]);
 
-  // 4c. Attempt automatic sync of queued offline registrations when internet returns while signed out
-  useEffect(() => {
-    if (!isOnline || firebaseUser || pendingOfflineRegistrations.length === 0) return;
-    const queued = pendingOfflineRegistrations.filter((r) => r.status === 'QUEUED_OFFLINE');
-    if (queued.length === 0) return;
+  // 4c. Automatic background sync for pending offline registrations + directory updates on reconnect/focus/startup
+  const runPendingOfflineRegistrationSync = useCallback(async () => {
+    if (!isOnline || firebaseUser || syncingOfflineRegsRef.current) return;
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
-    let active = true;
-    void (async () => {
-      for (const reg of queued) {
-        if (!active) break;
-        const cachedPw = getEphemeralOfflinePassword(reg.id);
-        if (!cachedPw) continue;
+    syncingOfflineRegsRef.current = true;
+    try {
+      const currentList = await getPendingOfflineRegistrations();
+      const candidates = currentList.filter((r) => r.status === 'QUEUED_OFFLINE');
+      if (candidates.length === 0) return;
+
+      for (const reg of candidates) {
+        const storedPw = await resolvePendingOfflinePassword(reg);
+        if (!storedPw) continue;
         try {
-          await syncPendingOfflineRegistration(reg, cachedPw);
+          await syncPendingOfflineRegistration(reg, storedPw);
+          // Once synced, Firebase signs the new Ordinary User account directly into ACTIVE status scoped to their selected location.
+          break;
         } catch {
-          // Recorded on the offline registration item cleanly
+          // Recorded cleanly on the pending offline registration record; retry on next trigger if transient
         }
       }
-      if (active) {
-        const refreshed = await getPendingOfflineRegistrations();
-        setPendingOfflineRegistrations(refreshed);
-      }
-    })();
 
-    return () => {
-      active = false;
+      const refreshed = await getPendingOfflineRegistrations();
+      setPendingOfflineRegistrations(refreshed);
+    } finally {
+      syncingOfflineRegsRef.current = false;
+    }
+  }, [isOnline, firebaseUser]);
+
+  useEffect(() => {
+    if (!isOnline) {
+      setDirectoryStatus('offline');
+      return;
+    }
+    void fetchPublicLocationCatalogWithStatus().then((res) => {
+      setLocationCatalog(res.catalog);
+      if (res.updatedFromServer) {
+        setDirectoryStatus('updated');
+      }
+    });
+  }, [isOnline]);
+
+  useEffect(() => {
+    if (!isOnline || firebaseUser) return;
+    if (pendingOfflineRegistrations.some((r) => r.status === 'QUEUED_OFFLINE')) {
+      void runPendingOfflineRegistrationSync();
+    }
+
+    const handleResumeSync = () => {
+      if (document.visibilityState === 'visible') {
+        void runPendingOfflineRegistrationSync();
+      }
     };
-  }, [isOnline, firebaseUser, pendingOfflineRegistrations]);
+    const handleFocusSync = () => {
+      void runPendingOfflineRegistrationSync();
+    };
+    window.addEventListener('focus', handleFocusSync);
+    document.addEventListener('visibilitychange', handleResumeSync);
+    return () => {
+      window.removeEventListener('focus', handleFocusSync);
+      document.removeEventListener('visibilitychange', handleResumeSync);
+    };
+  }, [isOnline, firebaseUser, pendingOfflineRegistrations, runPendingOfflineRegistrationSync]);
 
   // 4b. Merge local offline notes with synced server notes cleanly
   useEffect(() => {
@@ -801,8 +914,14 @@ export default function App() {
           item.status === 'SAVED_LOCALLY' ||
           (includeFailed && item.status === 'SYNC_FAILED');
         if (!isPendingStatus) return false;
-        const isNote = item.reportType === 'NOTE_UPSERT' || item.reportType === 'NOTE_DELETE';
-        return isNote || pollingUnits.length > 0;
+        const isIndependent =
+          item.reportType === 'NOTE_UPSERT' ||
+          item.reportType === 'NOTE_DELETE' ||
+          item.reportType === 'NOTIFICATION_BROADCAST' ||
+          item.reportType === 'TASK_CREATE' ||
+          item.reportType === 'TASK_OFFICER_UPDATE' ||
+          item.reportType === 'REPORT_ARCHIVE';
+        return isIndependent || pollingUnits.length > 0;
       });
 
       if (eligible.length === 0) return;
@@ -844,14 +963,7 @@ export default function App() {
     void executeQueueSync(false);
   }, [queuedItems, executeQueueSync]);
 
-  // 6. Ensure activeSection remains valid for current user's role
-  useEffect(() => {
-    if (!account) return;
-    const item = NAV_ITEMS.find((n) => n.id === activeSection);
-    if (!item || !item.visible(account.role)) {
-      setActiveSection('overview');
-    }
-  }, [account, activeSection]);
+  // 6. Navigation role validation is enforced inside useNavigationHistory
 
   // 7. Configurable inactivity auto-logout timer
   const inactivityMinutes = settings?.inactivityTimeoutMinutes ?? 30;
@@ -941,8 +1053,11 @@ export default function App() {
   const handleRefreshLocations = useCallback(async () => {
     setRefreshingLocations(true);
     try {
-      const items = await fetchPublicLocationCatalog();
-      setLocationCatalog(items);
+      const res = await fetchPublicLocationCatalogWithStatus();
+      setLocationCatalog(res.catalog);
+      if (res.updatedFromServer) {
+        setDirectoryStatus('updated');
+      }
     } finally {
       setRefreshingLocations(false);
     }
@@ -957,20 +1072,21 @@ export default function App() {
     }
   };
 
-  const handlePhoneSignIn = async (phoneNumber: string, password: string) => {
+  const handleIdentifierSignIn = async (identifier: string, password: string) => {
     setAuthError(null);
-    await signInWithPhoneAndPassword(phoneNumber, password);
+    await signInWithIdentifierAndPassword(identifier, password);
   };
 
-  const handlePhoneRegister = async (input: {
+  const handleEmailPhoneRegister = async (input: {
     fullName: string;
+    email: string;
     phone: string;
     password: string;
     confirmPassword: string;
     location: RegistrationLocationSelection;
   }) => {
     setAuthError(null);
-    const res = await registerWithPhoneAndPassword(input);
+    const res = await registerWithEmailAndPhone(input);
     if (res.queuedOffline) {
       const regs = await getPendingOfflineRegistrations();
       setPendingOfflineRegistrations(regs);
@@ -978,16 +1094,24 @@ export default function App() {
     return res;
   };
 
+  const handleBatteryUpdate = useCallback(
+    (levelPercent: number | null, charging: boolean | null) => {
+      if (!account || !activeAuthorized) return;
+      void updateUserBatteryStatus(account, levelPercent, charging);
+    },
+    [account, activeAuthorized]
+  );
+
   const handleSyncPendingOfflineRegistration = async (
     reg: PendingOfflineRegistration,
     password?: string
   ) => {
-    const rawPassword = password || getEphemeralOfflinePassword(reg.id) || '';
-    if (!rawPassword) {
+    const resolved = password || (await resolvePendingOfflinePassword(reg)) || '';
+    if (!resolved) {
       throw new Error('Enter your chosen password to finalize offline registration sync.');
     }
     try {
-      await syncPendingOfflineRegistration(reg, rawPassword);
+      await syncPendingOfflineRegistration(reg, resolved);
     } finally {
       const refreshed = await getPendingOfflineRegistrations();
       setPendingOfflineRegistrations(refreshed);
@@ -1018,8 +1142,8 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
+    resetNavigation();
     await signOutSession(account);
-    setActiveSection('overview');
   };
 
   const handleRecheckProfile = async () => {
@@ -1040,13 +1164,15 @@ export default function App() {
         connectionStatus={connectionStatus}
         isOnline={isOnline}
         locationCatalog={locationCatalog}
+        directoryStatus={directoryStatus}
         refreshingLocations={refreshingLocations}
         onRefreshLocations={handleRefreshLocations}
         pendingOfflineRegistrations={pendingOfflineRegistrations}
-        hasEphemeralOfflinePassword={(regId) => Boolean(getEphemeralOfflinePassword(regId))}
-        onPhoneSignIn={handlePhoneSignIn}
-        onPhoneRegister={handlePhoneRegister}
+        hasStoredSyncKey={(reg) => hasStoredOfflineRegistrationKey(reg)}
+        onIdentifierSignIn={handleIdentifierSignIn}
+        onEmailPhoneRegister={handleEmailPhoneRegister}
         onGoogleSignIn={handleGoogleSignIn}
+        onSendEmailPasswordReset={sendEmailPasswordReset}
         onSubmitPasswordResetRequest={submitPasswordResetRequest}
         onCompleteApprovedPasswordReset={completeApprovedPasswordReset}
         onSyncPendingOfflineRegistration={handleSyncPendingOfflineRegistration}
@@ -1059,11 +1185,17 @@ export default function App() {
     );
   }
 
+  const isSectionMounted = (id: Parameters<typeof navigateTo>[0]) =>
+    activeSection === id || visitedSections.has(id);
+
   return (
     <AppShell
       user={account}
       activeSection={activeSection}
-      onSelectSection={setActiveSection}
+      onSelectSection={navigateTo}
+      canGoBack={canGoBack}
+      previousSectionLabel={previousSectionLabel}
+      onGoBack={goBack}
       onSignOut={handleSignOut}
       inactivityMinutes={inactivityMinutes}
       isOnline={isOnline}
@@ -1074,6 +1206,7 @@ export default function App() {
       lastUpdatedAt={lastUpdatedAt}
       onManualSync={handleManualSync}
       syncingNow={syncingNow}
+      onBatteryUpdate={handleBatteryUpdate}
     >
       {dataError ? (
         <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900 print:hidden">
@@ -1081,187 +1214,304 @@ export default function App() {
         </div>
       ) : null}
 
-      {activeSection === 'overview' ? (
-        <SituationRoomPage
-          user={account}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          checkIns={checkIns}
-          incidents={incidents}
-          results={results}
-          approvedPuResults={approvedPuResults}
-          aggregatedResults={aggregatedResults}
-          partyConfigs={partyConfigs}
-          emergencyContacts={emergencyContacts}
-          settings={settings}
-          loadingData={loadingData}
-          onNavigate={setActiveSection}
-        />
+      {account.role === UserRole.FULL_CONTROL_ADMIN && isSectionMounted('admin_home') ? (
+        <div className={activeSection === 'admin_home' ? 'block' : 'hidden print:hidden'}>
+          <FullAdminHomePage
+            user={account}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            users={users}
+            checkIns={checkIns}
+            incidents={incidents}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            publicResults={publicResults}
+            partyConfigs={partyConfigs}
+            tasks={operationalTasks}
+            notes={mergedNotes}
+            timelineEvents={timelineEvents}
+            notifications={notifications}
+            emergencyContacts={emergencyContacts}
+            generatedReports={generatedReports}
+            reportAttachments={reportAttachments}
+            auditLogs={auditLogs}
+            isOnline={isOnline}
+            lastUpdatedAt={lastUpdatedAt}
+            pendingSyncCount={pendingSyncCount}
+            syncingCount={syncingCount}
+            failedSyncCount={failedSyncCount}
+            syncingNow={syncingNow}
+            onManualSync={() => void handleManualSync()}
+            onNavigate={navigateTo}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'field_ops' ? (
-        <FieldOpsPage
-          user={account}
-          pollingUnits={pollingUnits}
-          checkIns={checkIns}
-          results={results}
-          queuedItems={queuedItems}
-          isOnline={isOnline}
-          onRetryQueueItem={handleRetryQueueItem}
-        />
+      {isSectionMounted('overview') ? (
+        <div
+          data-print-board="true"
+          className={activeSection === 'overview' ? 'block' : 'hidden print:hidden'}
+        >
+          <SituationRoomPage
+            user={account}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            users={users}
+            checkIns={checkIns}
+            incidents={incidents}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            aggregatedResults={aggregatedResults}
+            partyConfigs={partyConfigs}
+            emergencyContacts={emergencyContacts}
+            settings={settings}
+            loadingData={loadingData}
+            onNavigate={navigateTo}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'notes' ? (
-        <OperationalNotesPanel
-          user={account}
-          notes={mergedNotes}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          isOnline={isOnline}
-          onRetrySync={() => void handleManualSync()}
-          syncingNow={syncingNow}
-        />
+      {isSectionMounted('field_ops') ? (
+        <div className={activeSection === 'field_ops' ? 'block' : 'hidden print:hidden'}>
+          <FieldOpsPage
+            user={account}
+            pollingUnits={pollingUnits}
+            checkIns={checkIns}
+            results={results}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            onRetryQueueItem={handleRetryQueueItem}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'incidents' ? (
-        <IncidentsPage
-          user={account}
-          pollingUnits={pollingUnits}
-          incidents={incidents}
-          queuedItems={queuedItems}
-          isOnline={isOnline}
-          onRetrySync={() => void handleManualSync()}
-          syncingNow={syncingNow}
-        />
+      {isSectionMounted('notes') ? (
+        <div className={activeSection === 'notes' ? 'block' : 'hidden print:hidden'}>
+          <OperationalNotesPanel
+            user={account}
+            notes={mergedNotes}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            isOnline={isOnline}
+            onRetrySync={() => void handleManualSync()}
+            syncingNow={syncingNow}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'results' ? (
-        <ResultsPage
-          user={account}
-          pollingUnits={pollingUnits}
-          results={results}
-          approvedPuResults={approvedPuResults}
-          partyConfigs={partyConfigs}
-          queuedItems={queuedItems}
-          isOnline={isOnline}
-          onRetrySync={() => void handleManualSync()}
-          syncingNow={syncingNow}
-        />
+      {isSectionMounted('incidents') ? (
+        <div className={activeSection === 'incidents' ? 'block' : 'hidden print:hidden'}>
+          <IncidentsPage
+            user={account}
+            pollingUnits={pollingUnits}
+            incidents={incidents}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            onRetrySync={() => void handleManualSync()}
+            syncingNow={syncingNow}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'verification' ? (
-        <VerificationCenterPage
-          user={account}
-          results={results}
-          partyConfigs={partyConfigs}
-        />
+      {isSectionMounted('results') ? (
+        <div className={activeSection === 'results' ? 'block' : 'hidden print:hidden'}>
+          <ResultsPage
+            user={account}
+            pollingUnits={pollingUnits}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            partyConfigs={partyConfigs}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            onRetrySync={() => void handleManualSync()}
+            syncingNow={syncingNow}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'timeline' ? (
-        <TimelinePage
-          user={account}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          events={timelineEvents}
-        />
+      {isSectionMounted('verification') ? (
+        <div className={activeSection === 'verification' ? 'block' : 'hidden print:hidden'}>
+          <VerificationCenterPage
+            user={account}
+            results={results}
+            partyConfigs={partyConfigs}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'wards' ? (
-        <WardsDirectoryPage
-          user={account}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          users={users}
-          incidents={incidents}
-          results={results}
-          approvedPuResults={approvedPuResults}
-          partyConfigs={partyConfigs}
-          loading={loadingData}
-        />
+      {isSectionMounted('task_ops') ? (
+        <div className={activeSection === 'task_ops' ? 'block' : 'hidden print:hidden'}>
+          <TaskAssignmentPage
+            currentUser={account}
+            users={users}
+            wards={wards}
+            tasks={operationalTasks}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            syncingNow={syncingNow}
+            onRetrySync={() => void handleManualSync()}
+            onNavigate={navigateTo}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'polling_units' ? (
-        <PollingUnitsDirectoryPage
-          user={account}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          users={users}
-          puAssignments={puAssignments}
-          loading={loadingData}
-        />
+      {isSectionMounted('timeline') ? (
+        <div className={activeSection === 'timeline' ? 'block' : 'hidden print:hidden'}>
+          <TimelinePage
+            user={account}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            events={timelineEvents}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'party_management' ? (
-        <PartyManagementPage user={account} partyConfigs={partyConfigs} />
+      {isSectionMounted('wards') ? (
+        <div className={activeSection === 'wards' ? 'block' : 'hidden print:hidden'}>
+          <WardsDirectoryPage
+            user={account}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            users={users}
+            incidents={incidents}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            partyConfigs={partyConfigs}
+            loading={loadingData}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'reports' ? (
-        <ReportsCenterPage
-          user={account}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          checkIns={checkIns}
-          incidents={incidents}
-          results={results}
-          approvedPuResults={approvedPuResults}
-          partyConfigs={partyConfigs}
-        />
+      {isSectionMounted('polling_units') ? (
+        <div className={activeSection === 'polling_units' ? 'block' : 'hidden print:hidden'}>
+          <PollingUnitsDirectoryPage
+            user={account}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            users={users}
+            puAssignments={puAssignments}
+            loading={loadingData}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'notifications' ? (
-        <NotificationsPage
-          user={account}
-          wards={wards}
-          notifications={notifications}
-          settings={settings}
-        />
+      {isSectionMounted('party_management') ? (
+        <div className={activeSection === 'party_management' ? 'block' : 'hidden print:hidden'}>
+          <PartyManagementPage user={account} partyConfigs={partyConfigs} />
+        </div>
       ) : null}
 
-      {activeSection === 'emergency_assistance' ? (
-        <EmergencyAssistancePage user={account} contacts={emergencyContacts} />
+      {isSectionMounted('reports') ? (
+        <div className={activeSection === 'reports' ? 'block' : 'hidden print:hidden'}>
+          <EnhancedReportsPage
+            user={account}
+            users={users}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            checkIns={checkIns}
+            incidents={incidents}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            partyConfigs={partyConfigs}
+            tasks={operationalTasks}
+            notes={mergedNotes}
+            generatedReports={generatedReports}
+            queuedItems={queuedItems}
+            isOnline={isOnline}
+            lastUpdatedAt={lastUpdatedAt}
+            syncingNow={syncingNow}
+            onRetrySync={() => void handleManualSync()}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'public_portal' ? (
-        <PublicPortalPage
-          publicResults={publicResults}
-          settings={settings}
-          partyConfigs={partyConfigs}
-        />
+      {isSectionMounted('notifications') ? (
+        <div className={activeSection === 'notifications' ? 'block' : 'hidden print:hidden'}>
+          <NotificationsPage
+            user={account}
+            wards={wards}
+            notifications={notifications}
+            settings={settings}
+            isOnline={isOnline}
+            queuedItems={queuedItems}
+            onRetrySync={() => void handleManualSync()}
+            syncingNow={syncingNow}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'users' ? (
-        <UserAccessControlPage
-          currentUser={account}
-          users={users}
-          wards={wards}
-          pollingUnits={pollingUnits}
-          puAssignments={puAssignments}
-          passwordResetRequests={passwordResetRequests}
-          loading={loadingData}
-        />
+      {isSectionMounted('emergency_assistance') ? (
+        <div className={activeSection === 'emergency_assistance' ? 'block' : 'hidden print:hidden'}>
+          <EmergencyAssistancePage user={account} contacts={emergencyContacts} />
+        </div>
       ) : null}
 
-      {activeSection === 'data_management' ? (
-        <DataManagementPage
-          user={account}
-          pollingUnits={pollingUnits}
-          results={results}
-          approvedPuResults={approvedPuResults}
-          incidents={incidents}
-          checkIns={checkIns}
-          notifications={notifications}
-          timelineEvents={timelineEvents}
-          reportAttachments={reportAttachments}
-          notes={mergedNotes}
-        />
+      {isSectionMounted('public_portal') ? (
+        <div className={activeSection === 'public_portal' ? 'block' : 'hidden print:hidden'}>
+          <PublicPortalPage
+            publicResults={publicResults}
+            settings={settings}
+            partyConfigs={partyConfigs}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'audit_logs' ? (
-        <AuditLogsPage logs={auditLogs} loading={loadingData} />
+      {isSectionMounted('users') ? (
+        <div className={activeSection === 'users' ? 'block' : 'hidden print:hidden'}>
+          <UserAccessControlPage
+            currentUser={account}
+            users={users}
+            wards={wards}
+            pollingUnits={pollingUnits}
+            puAssignments={puAssignments}
+            passwordResetRequests={passwordResetRequests}
+            loading={loadingData}
+          />
+        </div>
       ) : null}
 
-      {activeSection === 'settings' ? (
-        <SettingsPage user={account} settings={settings} onSignOut={handleSignOut} />
+      {isSectionMounted('operations_officers') ? (
+        <div className={activeSection === 'operations_officers' ? 'block' : 'hidden print:hidden'}>
+          <OperationsOfficersPage
+            currentUser={account}
+            users={users}
+            wards={wards}
+            checkIns={checkIns}
+            incidents={incidents}
+            notes={mergedNotes}
+            isOnline={isOnline}
+            loading={loadingData}
+          />
+        </div>
+      ) : null}
+
+      {isSectionMounted('data_management') ? (
+        <div className={activeSection === 'data_management' ? 'block' : 'hidden print:hidden'}>
+          <DataManagementPage
+            user={account}
+            pollingUnits={pollingUnits}
+            results={results}
+            approvedPuResults={approvedPuResults}
+            incidents={incidents}
+            checkIns={checkIns}
+            notifications={notifications}
+            timelineEvents={timelineEvents}
+            reportAttachments={reportAttachments}
+            notes={mergedNotes}
+          />
+        </div>
+      ) : null}
+
+      {isSectionMounted('audit_logs') ? (
+        <div className={activeSection === 'audit_logs' ? 'block' : 'hidden print:hidden'}>
+          <AuditLogsPage logs={auditLogs} loading={loadingData} />
+        </div>
+      ) : null}
+
+      {isSectionMounted('settings') ? (
+        <div className={activeSection === 'settings' ? 'block' : 'hidden print:hidden'}>
+          <SettingsPage user={account} settings={settings} onSignOut={handleSignOut} />
+        </div>
       ) : null}
     </AppShell>
   );

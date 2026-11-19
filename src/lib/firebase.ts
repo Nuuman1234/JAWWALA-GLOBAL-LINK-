@@ -30,6 +30,7 @@ function createPersistentFirestore(): Firestore {
   }
 }
 
+export { firebaseConfig };
 export const db = createPersistentFirestore();
 export const auth = getAuth(app);
 export const storage = getStorage(app);

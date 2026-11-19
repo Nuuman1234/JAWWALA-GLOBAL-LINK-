@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   Bell,
   Building2,
   CheckCircle2,
@@ -12,7 +13,9 @@ import {
   FileCheck2,
   Flag,
   Globe,
+  Home,
   LayoutDashboard,
+  ListTodo,
   LogOut,
   MapPin,
   Menu,
@@ -21,21 +24,27 @@ import {
   RefreshCw,
   Settings,
   Shield,
+  ShieldAlert,
   StickyNote,
   Users,
+  Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
+import { BatteryMonitor } from './BatteryMonitor';
 import { PWAInstallButton } from './PWAInstallButton';
 import {
   LGA_DEFINITIONS,
   UserRole,
+  canAccessAnalyticsReports,
   canAccessSettings,
+  canManageOperationsOfficers,
   canManageParties,
   canManageTestData,
   canManageUsers,
   canVerifyResults,
   canViewAuditLogs,
+  canViewTasksModule,
   type LgaId,
   type UserAccount,
 } from '../types/fdmis';
@@ -43,6 +52,7 @@ import { formatAccountIdentifier } from '../utils/phoneAuth';
 import { RoleBadge } from './StatusBadge';
 
 export type NavSectionId =
+  | 'admin_home'
   | 'overview'
   | 'wards'
   | 'polling_units'
@@ -52,6 +62,8 @@ export type NavSectionId =
   | 'results'
   | 'verification'
   | 'party_management'
+  | 'operations_officers'
+  | 'task_ops'
   | 'timeline'
   | 'reports'
   | 'notifications'
@@ -71,6 +83,13 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
+  {
+    id: 'admin_home',
+    label: 'Full Admin Home',
+    shortLabel: 'Home',
+    icon: Home,
+    visible: (role) => role === UserRole.FULL_CONTROL_ADMIN,
+  },
   {
     id: 'overview',
     label: 'Situation Room',
@@ -104,7 +123,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Results & EC8A',
     shortLabel: 'Results',
     icon: ClipboardCheck,
-    visible: () => true,
+    visible: (role) => role !== UserRole.ORDINARY_USER && role !== UserRole.PENDING,
   },
   {
     id: 'verification',
@@ -119,6 +138,20 @@ export const NAV_ITEMS: NavItem[] = [
     shortLabel: 'Parties',
     icon: Flag,
     visible: (role) => canManageParties(role),
+  },
+  {
+    id: 'operations_officers',
+    label: 'Operations Officers',
+    shortLabel: 'Officers',
+    icon: ShieldAlert,
+    visible: (role) => canManageOperationsOfficers(role) || role === UserRole.OPERATIONS_OFFICER,
+  },
+  {
+    id: 'task_ops',
+    label: 'Task Assignment',
+    shortLabel: 'Tasks',
+    icon: ListTodo,
+    visible: (role) => canViewTasksModule(role),
   },
   {
     id: 'timeline',
@@ -146,8 +179,7 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Reports & Exports',
     shortLabel: 'Reports',
     icon: FileBarChart2,
-    visible: (role) =>
-      role !== UserRole.POLLING_UNIT_AGENT && role !== UserRole.PENDING,
+    visible: (role) => canAccessAnalyticsReports(role),
   },
   {
     id: 'notifications',
@@ -204,6 +236,9 @@ interface AppShellProps {
   user: UserAccount;
   activeSection: NavSectionId;
   onSelectSection: (id: NavSectionId) => void;
+  canGoBack?: boolean;
+  previousSectionLabel?: string | null;
+  onGoBack?: () => void;
   onSignOut: () => Promise<void>;
   inactivityMinutes: number;
   isOnline: boolean;
@@ -213,6 +248,7 @@ interface AppShellProps {
   criticalAlertCount: number;
   lastUpdatedAt: Date | null;
   onManualSync: () => void;
+  onBatteryUpdate?: (levelPercent: number | null, charging: boolean | null) => void;
   syncingNow?: boolean;
   children: ReactNode;
 }
@@ -234,10 +270,10 @@ function formatAreaScope(user: UserAccount): string {
     }
     return 'Funtua & Dandume (Constituency)';
   }
-  if (user.role === UserRole.WARD_COORDINATOR) {
+  if (user.role === UserRole.OPERATIONS_OFFICER || user.role === UserRole.WARD_COORDINATOR) {
     return user.assignedWardId ? `Ward ${user.assignedWardId}` : 'Assigned Ward';
   }
-  if (user.role === UserRole.POLLING_UNIT_AGENT) {
+  if (user.role === UserRole.POLLING_UNIT_AGENT || user.role === UserRole.ORDINARY_USER) {
     return user.assignedPollingUnitId ? `PU ${user.assignedPollingUnitId}` : 'Assigned PU';
   }
   return 'Unassigned';
@@ -247,6 +283,9 @@ export function AppShell({
   user,
   activeSection,
   onSelectSection,
+  canGoBack = false,
+  previousSectionLabel = null,
+  onGoBack,
   onSignOut,
   inactivityMinutes,
   isOnline,
@@ -256,6 +295,7 @@ export function AppShell({
   criticalAlertCount,
   lastUpdatedAt,
   onManualSync,
+  onBatteryUpdate,
   syncingNow = false,
   children,
 }: AppShellProps) {
@@ -427,8 +467,8 @@ export function AppShell({
 
       {/* Main Content Area */}
       <div className="flex min-h-screen flex-col lg:pl-64 print:pl-0">
-        <header className="sticky top-0 z-20 flex h-[52px] items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 lg:h-14 lg:px-8 print:hidden">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className="sticky top-0 z-20 flex h-[54px] items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 lg:h-14 lg:px-8 print:hidden">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
@@ -437,46 +477,81 @@ export function AppShell({
             >
               <Menu className="h-5 w-5" aria-hidden="true" />
             </button>
+            {canGoBack && onGoBack ? (
+              <button
+                type="button"
+                onClick={onGoBack}
+                title={previousSectionLabel ? `Back to ${previousSectionLabel}` : 'Go Back'}
+                aria-label={previousSectionLabel ? `Back to ${previousSectionLabel}` : 'Go Back'}
+                className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800 hover:border-[#0b3b24]/40 hover:bg-slate-100"
+              >
+                <ArrowLeft className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+                <span>Back</span>
+                {previousSectionLabel ? (
+                  <span className="hidden max-w-[140px] truncate font-normal text-slate-500 xl:inline">
+                    · {previousSectionLabel}
+                  </span>
+                ) : null}
+              </button>
+            ) : null}
+            {user.role === UserRole.FULL_CONTROL_ADMIN && activeSection !== 'admin_home' ? (
+              <button
+                type="button"
+                onClick={() => handleNavigate('admin_home')}
+                title="Full Admin Home"
+                aria-label="Full Admin Home"
+                className="hidden sm:inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Home className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                <span className="hidden md:inline">Home</span>
+              </button>
+            ) : null}
             <h1 className="truncate font-display text-base font-semibold text-slate-900 lg:text-lg">
               {currentItem?.label}
             </h1>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            <BatteryMonitor onBatteryUpdate={onBatteryUpdate} />
             <PWAInstallButton compact />
             {!isOnline ? (
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900 whitespace-nowrap">
                 <WifiOff className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Offline</span>
+                <span>OFFLINE</span>
               </span>
-            ) : null}
+            ) : (
+              <span className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800 whitespace-nowrap">
+                <Wifi className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                <span>ONLINE</span>
+              </span>
+            )}
             {syncingNow || syncingCount > 0 ? (
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-900 whitespace-nowrap">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-900 whitespace-nowrap">
                 <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
-                <span>Syncing</span>
+                <span>SYNCHRONIZING</span>
               </span>
             ) : failedSyncCount > 0 ? (
               <button
                 type="button"
                 onClick={isOnline ? onManualSync : () => handleNavigate('field_ops')}
-                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-900 hover:bg-red-100 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-red-900 hover:bg-red-100 whitespace-nowrap"
               >
                 <AlertTriangle className="h-3.5 w-3.5 text-red-700" aria-hidden="true" />
-                <span>{failedSyncCount} Failed · Retry</span>
+                <span>{failedSyncCount} SYNC FAILED</span>
               </button>
             ) : pendingSyncCount > 0 ? (
               <button
                 type="button"
                 onClick={isOnline ? onManualSync : () => handleNavigate('field_ops')}
-                className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900 hover:bg-amber-100 whitespace-nowrap"
               >
                 <Clock className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
-                <span>{pendingSyncCount} Pending Sync</span>
+                <span>{pendingSyncCount} PENDING SYNCHRONIZATION</span>
               </button>
             ) : isOnline && lastUpdatedAt ? (
-              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 whitespace-nowrap">
+              <span className="hidden sm:inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800 whitespace-nowrap">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
-                <span>Synced</span>
+                <span>SYNCHRONIZED</span>
               </span>
             ) : null}
             <button

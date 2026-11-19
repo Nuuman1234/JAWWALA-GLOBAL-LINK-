@@ -6,6 +6,7 @@ import { ResultBarChart } from '../components/ResultBarChart';
 import {
   AccountStatus,
   LGA_DEFINITIONS,
+  MIN_OPERATIONS_OFFICERS_PER_WARD,
   UserRole,
   VerificationStatus,
   getAuthorizedLgas,
@@ -21,7 +22,11 @@ import {
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
-import { assignWardCoordinator, createWard } from '../services/directoryService';
+import {
+  assignWardCoordinator,
+  computeWardOperationsCoverage,
+  createWard,
+} from '../services/directoryService';
 import { buildWardSummary, getCanonicalApprovedPuResults } from '../utils/aggregationEngine';
 
 interface WardsDirectoryPageProps {
@@ -68,6 +73,19 @@ export function WardsDirectoryPage({
     () => getCanonicalApprovedPuResults(approvedPuResults, results),
     [approvedPuResults, results]
   );
+
+  const opsCoverageByWard = useMemo(() => {
+    const map = new Map<string, { activeCount: number; isCompliant: boolean }>();
+    computeWardOperationsCoverage(wards, users, MIN_OPERATIONS_OFFICERS_PER_WARD).forEach(
+      (item) => {
+        map.set(item.wardId, {
+          activeCount: item.activeCount,
+          isCompliant: item.isCompliant,
+        });
+      }
+    );
+    return map;
+  }, [wards, users]);
 
   const filteredWards = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -231,6 +249,7 @@ export function WardsDirectoryPage({
                   <th className="px-4 py-3 text-right">Active Incidents</th>
                   <th className="px-4 py-3 text-right">Results (Ver/Sub)</th>
                   <th className="px-4 py-3">Verified Party Tallies</th>
+                  <th className="px-4 py-3 text-right">Ops Officers</th>
                   <th className="px-4 py-3">Ward Coordinator</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
@@ -300,6 +319,25 @@ export function WardsDirectoryPage({
                         ) : (
                           <span className="text-xs text-slate-400">No verified votes</span>
                         )}
+                      </td>
+                      <td className="px-4 py-3.5 text-right">
+                        {(() => {
+                          const cov = opsCoverageByWard.get(ward.id);
+                          const count = cov?.activeCount ?? 0;
+                          const ok = cov?.isCompliant ?? false;
+                          return (
+                            <span
+                              className={`inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                                ok
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                                  : 'border-amber-200 bg-amber-50 text-amber-900'
+                              }`}
+                              title={`Active Operations Officers vs minimum ${MIN_OPERATIONS_OFFICERS_PER_WARD}`}
+                            >
+                              {count} / {MIN_OPERATIONS_OFFICERS_PER_WARD}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3.5">
                         {ward.coordinatorName ? (

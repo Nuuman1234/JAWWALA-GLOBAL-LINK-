@@ -176,7 +176,7 @@ export function IncidentsPage({
       setSubmitting(false);
       setFeedback({
         type: 'warn',
-        text: 'Offline: Incident queued locally as Pending Sync and will transmit automatically upon reconnection.',
+        text: 'OFFLINE: Incident queued locally as PENDING SYNCHRONIZATION and will transmit automatically upon reconnection.',
       });
       return;
     }
@@ -525,8 +525,9 @@ export function IncidentsPage({
                   <div className="min-w-0">
                     <p className="text-xs font-semibold text-slate-900">{titleText}</p>
                     <p className="text-[11px] text-slate-600">
-                      {item.puCode} · {item.puName} · {categoryText} · Queued{' '}
+                      {item.puCode} · {item.puName} · {categoryText} · Original:{' '}
                       {formatFirestoreTime(item.createdAtIso)}
+                      {item.syncedAtIso ? ` · Server Synced: ${formatFirestoreTime(item.syncedAtIso)}` : ''}
                     </p>
                     {item.errorMessage ? (
                       <p className="mt-0.5 text-[11px] text-red-700">{item.errorMessage}</p>
@@ -570,7 +571,17 @@ export function IncidentsPage({
                     <span aria-hidden="true">·</span>
                     <span>{inc.category}</span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">{formatFirestoreTime(inc.createdAt)}</span>
+                    <span className="font-mono tabular-nums">
+                      Orig: {formatFirestoreTime(inc.clientCreatedAtIso || inc.createdAt)}
+                    </span>
+                    {inc.serverSyncedAt ? (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums text-slate-400">
+                          Synced: {formatFirestoreTime(inc.serverSyncedAt)}
+                        </span>
+                      </>
+                    ) : null}
                   </div>
                   <h3 className="mt-1.5 flex items-center gap-2 font-display text-base font-semibold text-slate-900">
                     {inc.urgency === IncidentUrgency.CRITICAL ? (
@@ -627,6 +638,12 @@ export function IncidentsPage({
             </div>
 
             <div className="mt-4 space-y-3 text-sm text-slate-700">
+              <div className="flex flex-wrap gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-600">
+                <span>Original Submission: {formatFirestoreTime(selectedIncident.clientCreatedAtIso || selectedIncident.createdAt)}</span>
+                {selectedIncident.serverSyncedAt ? (
+                  <span>· Server Synced: {formatFirestoreTime(selectedIncident.serverSyncedAt)}</span>
+                ) : null}
+              </div>
               <p>{selectedIncident.description}</p>
               {selectedIncident.evidenceBase64 ? (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">

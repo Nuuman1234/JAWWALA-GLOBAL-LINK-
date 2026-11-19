@@ -52,11 +52,11 @@ function describeUserScope(user: UserAccount): string {
     }
     return 'Constituency-wide Verification Scope';
   }
-  if (user.role === UserRole.WARD_COORDINATOR) {
+  if (user.role === UserRole.OPERATIONS_OFFICER || user.role === UserRole.WARD_COORDINATOR) {
     return user.assignedWardId ? `Ward ${user.assignedWardId}` : 'Assigned Ward';
   }
-  if (user.role === UserRole.POLLING_UNIT_AGENT) {
-    return user.assignedPollingUnitId ? `Polling Unit ${user.assignedPollingUnitId}` : 'Unassigned PU';
+  if (user.role === UserRole.POLLING_UNIT_AGENT || user.role === UserRole.ORDINARY_USER) {
+    return user.assignedPollingUnitId ? `Polling Unit ${user.assignedPollingUnitId}` : 'Assigned PU';
   }
   return 'Unassigned';
 }
@@ -174,18 +174,36 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
       setFeedback({ type: 'err', text: 'New password and confirmation do not match.' });
       return;
     }
+    if (currentPassword === newPassword) {
+      setFeedback({
+        type: 'err',
+        text: 'New password must be different from your current password.',
+      });
+      return;
+    }
     setSavingPassword(true);
     try {
       await changeAccountPassword(currentPassword, newPassword);
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
-      setFeedback({ type: 'ok', text: 'Account password updated successfully.' });
-    } catch (err) {
       setFeedback({
-        type: 'err',
-        text: err instanceof Error ? err.message : 'Unable to update password.',
+        type: 'ok',
+        text: 'Account password updated successfully. Your role, geographic assignments, and records remain intact.',
       });
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code || '')
+          : '';
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setFeedback({ type: 'err', text: 'Current password is incorrect.' });
+      } else {
+        setFeedback({
+          type: 'err',
+          text: err instanceof Error ? err.message : 'Unable to update password.',
+        });
+      }
     } finally {
       setSavingPassword(false);
     }
@@ -409,6 +427,29 @@ export function SettingsPage({ user, settings, onSignOut }: SettingsPageProps) {
             <h3 className="font-display text-sm font-semibold text-slate-900">
               Account Security &amp; Authentication
             </h3>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <span>
+              Device Battery:{' '}
+              <strong className="text-slate-900">
+                {typeof user.batteryLevel === 'number'
+                  ? `${user.batteryLevel}%${user.batteryCharging ? ' (Charging)' : ''}`
+                  : 'N/A'}
+              </strong>
+            </span>
+            {user.lastPasswordChangedAt ? (
+              <span>
+                · Password Updated:{' '}
+                <strong className="text-slate-900">
+                  {String(
+                    typeof user.lastPasswordChangedAt === 'string'
+                      ? new Date(user.lastPasswordChangedAt).toLocaleString('en-NG')
+                      : 'Recorded'
+                  )}
+                </strong>
+              </span>
+            ) : null}
           </div>
 
           {authSummary.hasPasswordProvider ? (

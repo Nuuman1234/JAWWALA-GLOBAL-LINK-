@@ -75,13 +75,16 @@ export function ResultsPage({
 }: ResultsPageProps) {
   const isPuAgent = user.role === UserRole.POLLING_UNIT_AGENT;
 
-  // Strictly scope selectable polling units for PU agents to their single assigned PU
+  // Strictly scope selectable polling units for PU agents to their single assigned PU; Ordinary Users cannot submit results
   const selectablePus = useMemo(() => {
+    if (user.role === UserRole.ORDINARY_USER) {
+      return [];
+    }
     if (isPuAgent) {
       return pollingUnits.filter((p) => p.id === user.assignedPollingUnitId);
     }
     return pollingUnits;
-  }, [pollingUnits, isPuAgent, user.assignedPollingUnitId]);
+  }, [pollingUnits, isPuAgent, user.assignedPollingUnitId, user.role]);
 
   const defaultPuId =
     selectablePus.find((p) => p.id === user.assignedPollingUnitId)?.id ||
@@ -973,7 +976,8 @@ export function ResultsPage({
                   </p>
                   <p className="text-[11px] text-slate-600">{item.summary}</p>
                   <p className="text-[11px] text-slate-500">
-                    Queued {formatFirestoreTime(item.createdAtIso)}
+                    Original Created: {formatFirestoreTime(item.createdAtIso)}
+                    {item.syncedAtIso ? ` · Server Synced: ${formatFirestoreTime(item.syncedAtIso)}` : ''}
                   </p>
                   {item.errorMessage ? (
                     <p className="mt-0.5 text-[11px] text-red-700">{item.errorMessage}</p>
@@ -1022,7 +1026,8 @@ export function ResultsPage({
                     </h3>
                     <p className="text-xs text-slate-500">
                       {res.wardName} · {LGA_DEFINITIONS[res.lgaId]?.shortName} · Submitted by{' '}
-                      {res.submittedByName} · {formatFirestoreTime(res.updatedAt)}
+                      {res.submittedByName} · Orig: {formatFirestoreTime(res.clientCreatedAtIso || res.createdAt)} · Synced:{' '}
+                      {formatFirestoreTime(res.serverSyncedAt || res.updatedAt)}
                     </p>
                   </div>
 

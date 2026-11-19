@@ -53,10 +53,10 @@
         "email": { "type": "string", "description": "User email or phone auth alias." },
         "displayName": { "type": "string", "description": "Full operational name." },
         "phone": { "type": "string", "description": "Operational contact phone." },
-        "authMethod": { "type": "string", "enum": ["GOOGLE", "PHONE_PASSWORD"] },
+        "authMethod": { "type": "string", "enum": ["GOOGLE", "PHONE_PASSWORD", "EMAIL_PASSWORD"] },
         "role": {
           "type": "string",
-          "enum": ["FULL_CONTROL_ADMIN", "FUNTUA_SUPER_ADMIN", "DANDUME_SUPER_ADMIN", "VERIFICATION_OFFICER", "WARD_COORDINATOR", "POLLING_UNIT_AGENT", "PENDING"]
+          "enum": ["FULL_CONTROL_ADMIN", "FUNTUA_SUPER_ADMIN", "DANDUME_SUPER_ADMIN", "VERIFICATION_OFFICER", "OPERATIONS_OFFICER", "WARD_COORDINATOR", "POLLING_UNIT_AGENT", "ORDINARY_USER", "PENDING"]
         },
         "status": {
           "type": "string",
@@ -73,6 +73,10 @@
         "requestedPollingUnitName": { "type": "string", "description": "Polling Unit name requested during self-registration." },
         "sessionRevoked": { "type": "boolean", "description": "Emergency session revocation flag." },
         "revokedReason": { "type": "string", "description": "Reason for emergency revocation or suspension." },
+        "batteryLevel": { "type": "integer", "description": "Last reported device battery percentage (0-100) or null." },
+        "batteryCharging": { "type": "boolean", "description": "Last reported device charging status or null." },
+        "batteryUpdatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last battery update." },
+        "lastPasswordChangedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last password change." },
         "lastLoginAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last login." },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
         "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
@@ -103,6 +107,7 @@
       "properties": {
         "phoneHash": { "type": "string" },
         "ownerUidHash": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["PHONE_PASSWORD", "EMAIL_PASSWORD"] },
         "authSeq": { "type": "integer" },
         "pendingNextAuthSeq": { "type": "integer" },
         "resetPinSalt": { "type": "string" },
@@ -288,6 +293,8 @@
         "latitude": { "type": "number", "description": "Optional coarse latitude if permitted." },
         "longitude": { "type": "number", "description": "Optional coarse longitude if permitted." },
         "clientSubmissionId": { "type": "string", "description": "Idempotency key for offline sync deduplication." },
+        "clientCreatedAtIso": { "type": "string", "description": "Original client-side ISO timestamp." },
+        "serverSyncedAt": { "type": "string", "format": "date-time", "description": "Server sync timestamp." },
         "isTestData": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
       },
@@ -316,6 +323,8 @@
         "escalatedTo": { "type": "string" },
         "reviewedByUid": { "type": "string" },
         "clientSubmissionId": { "type": "string" },
+        "clientCreatedAtIso": { "type": "string" },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
         "isTestData": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -357,6 +366,8 @@
         "reviewedAt": { "type": "string", "format": "date-time" },
         "version": { "type": "integer" },
         "clientSubmissionId": { "type": "string" },
+        "clientCreatedAtIso": { "type": "string" },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
         "isTestData": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
@@ -558,10 +569,177 @@
         "isPinned": { "type": "boolean" },
         "isTestData": { "type": "boolean" },
         "revision": { "type": "integer" },
+        "clientCreatedAtIso": { "type": "string" },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["clientNoteId", "title", "content", "category", "lgaId", "wardId", "puId", "puCode", "puName", "authorUid", "authorName", "isPinned", "isTestData", "revision", "createdAt", "updatedAt"]
+    },
+    "OperationalTask": {
+      "title": "OperationalTask",
+      "description": "Field operations task assigned by Full Control Admin to a ward-scoped Operations Officer.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 160 },
+        "description": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "status": {
+          "type": "string",
+          "enum": ["ASSIGNED", "ACKNOWLEDGED", "IN_PROGRESS", "AWAITING_REVIEW", "REVISION_REQUIRED", "APPROVED_COMPLETED", "OVERDUE"]
+        },
+        "lgaId": { "type": "string", "enum": ["funtua", "dandume"] },
+        "wardId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "wardName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "assignedOfficerUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "assignedOfficerName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "assignedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "assignedByName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "startDateIso": { "type": "string", "maxLength": 40 },
+        "dueDateIso": { "type": "string", "maxLength": 40 },
+        "progressPercent": { "type": "integer" },
+        "acknowledgedAtIso": { "type": "string", "maxLength": 64 },
+        "submittedForReviewAtIso": { "type": "string", "maxLength": 64 },
+        "completedAtIso": { "type": "string", "maxLength": 64 },
+        "latestFieldReport": { "type": "string", "maxLength": 2000 },
+        "delayReason": { "type": "string", "maxLength": 1000 },
+        "evidenceBase64": { "type": "string", "maxLength": 350000 },
+        "evidenceFileName": { "type": "string", "maxLength": 120 },
+        "adminFeedback": { "type": "string", "maxLength": 1500 },
+        "updateRequestedAtIso": { "type": "string", "maxLength": 64 },
+        "updateRequestNote": { "type": "string", "maxLength": 600 },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewedByName": { "type": "string", "maxLength": 120 },
+        "clientSubmissionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "clientCreatedAtIso": { "type": "string", "maxLength": 64 },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
+        "isTestData": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title",
+        "description",
+        "priority",
+        "status",
+        "lgaId",
+        "wardId",
+        "wardName",
+        "assignedOfficerUid",
+        "assignedOfficerName",
+        "assignedByUid",
+        "assignedByName",
+        "startDateIso",
+        "dueDateIso",
+        "progressPercent",
+        "acknowledgedAtIso",
+        "submittedForReviewAtIso",
+        "completedAtIso",
+        "latestFieldReport",
+        "delayReason",
+        "adminFeedback",
+        "updateRequestedAtIso",
+        "updateRequestNote",
+        "reviewedByUid",
+        "reviewedByName",
+        "clientSubmissionId",
+        "isTestData",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TaskUpdateEntry": {
+      "title": "TaskUpdateEntry",
+      "description": "Immutable field report, progress update, admin update request, or review entry on an operational task.",
+      "type": "object",
+      "properties": {
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "entryType": {
+          "type": "string",
+          "enum": ["OFFICER_PROGRESS", "FIELD_REPORT", "UPDATE_REQUEST", "ADMIN_REVIEW", "STATUS_CHANGE"]
+        },
+        "statusSnapshot": {
+          "type": "string",
+          "enum": ["ASSIGNED", "ACKNOWLEDGED", "IN_PROGRESS", "AWAITING_REVIEW", "REVISION_REQUIRED", "APPROVED_COMPLETED", "OVERDUE"]
+        },
+        "progressPercent": { "type": "integer" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "delayReason": { "type": "string", "maxLength": 1000 },
+        "evidenceBase64": { "type": "string", "maxLength": 350000 },
+        "evidenceFileName": { "type": "string", "maxLength": 120 },
+        "actorUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "actorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "actorRole": { "type": "string", "maxLength": 40 },
+        "clientSubmissionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "clientCreatedAtIso": { "type": "string", "maxLength": 64 },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "taskId",
+        "entryType",
+        "statusSnapshot",
+        "progressPercent",
+        "summary",
+        "delayReason",
+        "actorUid",
+        "actorName",
+        "actorRole",
+        "clientSubmissionId",
+        "createdAt"
+      ]
+    },
+    "GeneratedReport": {
+      "title": "GeneratedReport",
+      "description": "Archived automatic daily or on-demand analytical report snapshot compiled strictly from live FDMIS database records.",
+      "type": "object",
+      "properties": {
+        "reportCategory": {
+          "type": "string",
+          "enum": ["DAILY_SITUATION", "WARD_PERFORMANCE", "LGA_SUMMARY", "ELECTION_INCIDENT", "AGENT_ACTIVITY", "OFFICER_PERFORMANCE", "TASK_COMPLETION"]
+        },
+        "reportTitle": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "reportingPeriodStartIso": { "type": "string", "maxLength": 40 },
+        "reportingPeriodEndIso": { "type": "string", "maxLength": 40 },
+        "lgaId": { "type": "string", "enum": ["all", "funtua", "dandume"] },
+        "wardId": { "type": "string", "maxLength": 128 },
+        "puId": { "type": "string", "maxLength": 128 },
+        "officerUid": { "type": "string", "maxLength": 128 },
+        "scopeLabel": { "type": "string", "maxLength": 160 },
+        "generatedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "generatedByName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "generationMode": { "type": "string", "enum": ["AUTOMATIC_DAILY", "ON_DEMAND"] },
+        "dataStatus": { "type": "string", "maxLength": 160 },
+        "dataCompletenessNotice": { "type": "string", "maxLength": 600 },
+        "rowCount": { "type": "integer" },
+        "headers": { "type": "array" },
+        "summaryMetrics": { "type": "object" },
+        "clientSubmissionId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "clientCreatedAtIso": { "type": "string", "maxLength": 64 },
+        "serverSyncedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "reportCategory",
+        "reportTitle",
+        "reportingPeriodStartIso",
+        "reportingPeriodEndIso",
+        "lgaId",
+        "wardId",
+        "puId",
+        "officerUid",
+        "scopeLabel",
+        "generatedByUid",
+        "generatedByName",
+        "generationMode",
+        "dataStatus",
+        "dataCompletenessNotice",
+        "rowCount",
+        "headers",
+        "summaryMetrics",
+        "clientSubmissionId",
+        "createdAt"
+      ]
     },
     "AuditLog": {
       "title": "AuditLog",
@@ -681,6 +859,18 @@
     "/operational_notes/{noteId}": {
       "schema": { "$ref": "#/entities/OperationalNote" },
       "description": "Operational notes and short field messages with offline sync deduplication."
+    },
+    "/operational_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/OperationalTask" },
+      "description": "Field operations task assignments managed by Full Control Admin for Operations Officers."
+    },
+    "/operational_tasks/{taskId}/updates/{updateId}": {
+      "schema": { "$ref": "#/entities/TaskUpdateEntry" },
+      "description": "Immutable officer progress updates, field reports, evidence attachments, and admin review history."
+    },
+    "/generated_reports/{reportId}": {
+      "schema": { "$ref": "#/entities/GeneratedReport" },
+      "description": "Archived automatic daily and on-demand FDMIS analytical report snapshots."
     },
     "/audit_logs/{logId}": {
       "schema": { "$ref": "#/entities/AuditLog" },

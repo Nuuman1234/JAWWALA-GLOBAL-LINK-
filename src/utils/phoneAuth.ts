@@ -203,8 +203,43 @@ export function validatePasswordStrength(password: string): string | null {
   return null;
 }
 
+export function validateEmailAddress(rawEmail: string): {
+  valid: boolean;
+  normalized: string;
+  error?: string;
+} {
+  const normalized = rawEmail.trim().toLowerCase();
+  if (!normalized) {
+    return { valid: false, normalized: '', error: 'Email address is required.' };
+  }
+  if (normalized.length > 200) {
+    return {
+      valid: false,
+      normalized,
+      error: 'Email address must not exceed 200 characters.',
+    };
+  }
+  if (normalized.endsWith('@fdmis.local')) {
+    return {
+      valid: false,
+      normalized,
+      error: 'Enter your personal or official email address (not an @fdmis.local alias).',
+    };
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalized)) {
+    return {
+      valid: false,
+      normalized,
+      error: 'Enter a valid email address (e.g. name@example.com).',
+    };
+  }
+  return { valid: true, normalized };
+}
+
 export function validateRegistrationInputs(input: {
   fullName: string;
+  email?: string;
+  requireEmail?: boolean;
   phone: string;
   password: string;
   confirmPassword: string;
@@ -218,6 +253,13 @@ export function validateRegistrationInputs(input: {
   }
   if (cleanName.length > 110) {
     return 'Full Name must not exceed 110 characters.';
+  }
+
+  if (input.requireEmail !== false || (input.email && input.email.trim().length > 0)) {
+    const emailRes = validateEmailAddress(input.email || '');
+    if (!emailRes.valid) {
+      return emailRes.error || 'Enter a valid email address.';
+    }
   }
 
   const normalizedPhone = normalizePhoneNumber(input.phone);

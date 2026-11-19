@@ -155,10 +155,10 @@ export function OperationalNotesPanel({
         type: 'success',
         text:
           result.mode === 'offline'
-            ? 'Note saved offline on this device. It will synchronize automatically when internet returns.'
+            ? 'Note saved offline on this device (PENDING SYNCHRONIZATION). It will synchronize automatically when internet returns.'
             : editingNote
-              ? 'Note updated and synchronized.'
-              : 'Note saved and synchronized.',
+              ? 'Note updated and SYNCHRONIZED.'
+              : 'Note saved and SYNCHRONIZED.',
       });
     } catch (err) {
       setFeedback({
@@ -557,7 +557,11 @@ export function OperationalNotesPanel({
 
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-2.5 text-[11px] text-slate-500">
                     <span>
-                      {note.authorName} · {formatFirestoreTime(note.updatedAt || note.createdAt)}
+                      {note.authorName} · Orig:{' '}
+                      {formatFirestoreTime(note.clientCreatedAtIso || note.createdAt)} ·{' '}
+                      {note.syncState && note.syncState !== 'SYNCED'
+                        ? 'PENDING SYNCHRONIZATION'
+                        : `Synced: ${formatFirestoreTime(note.serverSyncedAt || note.updatedAt)}`}
                     </span>
 
                     {editable ? (

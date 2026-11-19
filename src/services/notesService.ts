@@ -67,7 +67,10 @@ function buildNotesQuery(user: UserAccount): Query | null {
     }
     return base;
   }
-  if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     return query(base, where('wardId', '==', user.assignedWardId));
   }
   return query(base, where('authorUid', '==', user.uid));
@@ -202,6 +205,11 @@ export async function syncNoteUpsertToFirestore(
     throw new Error('Note message cannot be empty.');
   }
 
+  const clientCreatedAtIso = (
+    note.clientCreatedAtIso ||
+    (typeof note.createdAt === 'string' ? note.createdAt : new Date().toISOString())
+  ).slice(0, 64);
+
   if (existingSnap.exists()) {
     const existing = existingSnap.data() as OperationalNote;
     const nextRevision = Math.max(Number(note.revision) || 1, (Number(existing.revision) || 1));
@@ -220,6 +228,8 @@ export async function syncNoteUpsertToFirestore(
       isPinned: Boolean(note.isPinned),
       isTestData: Boolean(existing.isTestData ?? note.isTestData),
       revision: nextRevision,
+      clientCreatedAtIso: existing.clientCreatedAtIso || clientCreatedAtIso,
+      serverSyncedAt: serverTimestamp(),
       createdAt: existing.createdAt || serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -239,6 +249,8 @@ export async function syncNoteUpsertToFirestore(
       isPinned: Boolean(note.isPinned),
       isTestData: Boolean(note.isTestData),
       revision: Math.max(1, Math.floor(note.revision || 1)),
+      clientCreatedAtIso,
+      serverSyncedAt: serverTimestamp(),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -276,6 +288,8 @@ export async function saveOperationalNote(
     isPinned: Boolean(input.isPinned),
     isTestData: Boolean(input.isTestData),
     revision: nextRevision,
+    clientCreatedAtIso:
+      typeof input.existingCreatedAt === 'string' ? input.existingCreatedAt : nowIso,
     createdAt: input.existingCreatedAt || nowIso,
     updatedAt: nowIso,
     syncState: 'PENDING_SYNC',

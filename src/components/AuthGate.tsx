@@ -18,6 +18,7 @@ import {
   Trash2,
   UserCheck,
   UserPlus,
+  Wifi,
   WifiOff,
 } from 'lucide-react';
 import {
@@ -31,11 +32,12 @@ import type {
   PhoneRegistrationResult,
   RegistrationLocationSelection,
 } from '../services/authService';
+import { buildBundledLocationCatalog } from '../services/officialDirectory';
 import { formatAccountIdentifier } from '../utils/phoneAuth';
 import { AccountStatusBadge, RoleBadge } from './StatusBadge';
 
 type WelcomeMode = 'signin' | 'signup' | 'forgot';
-type ForgotSubMode = 'request' | 'complete';
+type ForgotSubMode = 'email_reset' | 'request' | 'complete';
 
 interface AuthGateProps {
   firebaseUser: FirebaseUser | null;
@@ -47,19 +49,22 @@ interface AuthGateProps {
   connectionStatus: 'checking' | 'connected' | 'offline';
   isOnline: boolean;
   locationCatalog: LocationCatalogLga[];
+  directoryStatus: 'offline' | 'updated';
   refreshingLocations: boolean;
   onRefreshLocations: () => Promise<void>;
   pendingOfflineRegistrations: PendingOfflineRegistration[];
-  hasEphemeralOfflinePassword: (regId: string) => boolean;
-  onPhoneSignIn: (phone: string, password: string) => Promise<void>;
-  onPhoneRegister: (input: {
+  hasStoredSyncKey: (reg: PendingOfflineRegistration) => boolean;
+  onIdentifierSignIn: (identifier: string, password: string) => Promise<void>;
+  onEmailPhoneRegister: (input: {
     fullName: string;
+    email: string;
     phone: string;
     password: string;
     confirmPassword: string;
     location: RegistrationLocationSelection;
   }) => Promise<PhoneRegistrationResult>;
   onGoogleSignIn: () => Promise<void>;
+  onSendEmailPasswordReset: (email: string) => Promise<string>;
   onSubmitPasswordResetRequest: (input: {
     phone: string;
     fullName: string;
@@ -100,13 +105,15 @@ export function AuthGate({
   connectionStatus,
   isOnline,
   locationCatalog,
+  directoryStatus,
   refreshingLocations,
   onRefreshLocations,
   pendingOfflineRegistrations,
-  hasEphemeralOfflinePassword,
-  onPhoneSignIn,
-  onPhoneRegister,
+  hasStoredSyncKey,
+  onIdentifierSignIn,
+  onEmailPhoneRegister,
   onGoogleSignIn,
+  onSendEmailPasswordReset,
   onSubmitPasswordResetRequest,
   onCompleteApprovedPasswordReset,
   onSyncPendingOfflineRegistration,
@@ -117,15 +124,16 @@ export function AuthGate({
   onRecheckProfile,
 }: AuthGateProps) {
   const [welcomeMode, setWelcomeMode] = useState<WelcomeMode>('signin');
-  const [forgotSubMode, setForgotSubMode] = useState<ForgotSubMode>('request');
+  const [forgotSubMode, setForgotSubMode] = useState<ForgotSubMode>('email_reset');
 
   // Sign-in form state
-  const [signInPhone, setSignInPhone] = useState('');
+  const [signInIdentifier, setSignInIdentifier] = useState('');
   const [signInPassword, setSignInPassword] = useState('');
   const [showSignInPassword, setShowSignInPassword] = useState(false);
 
   // Registration form state
   const [regFullName, setRegFullName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
@@ -135,6 +143,7 @@ export function AuthGate({
   const [selectedPuId, setSelectedPuId] = useState('');
 
   // Forgot password state
+  const [forgotEmail, setForgotEmail] = useState('');
   const [forgotPhone, setForgotPhone] = useState('');
   const [forgotName, setForgotName] = useState('');
   const [forgotLgaId, setForgotLgaId] = useState('');
@@ -168,10 +177,16 @@ export function AuthGate({
     }
   }, [firebaseUser?.displayName, displayName]);
 
-  // Dynamic LGA -> Ward -> Polling Unit options strictly from synchronized catalog
+  // Official directory catalog is bundled on install and updated live when online
+  const effectiveCatalog = useMemo(
+    () => (locationCatalog.length > 0 ? locationCatalog : buildBundledLocationCatalog()),
+    [locationCatalog]
+  );
+
+  // Dynamic LGA -> Ward -> Polling Unit options strictly from official bundled/synchronized catalog
   const selectedLgaObj = useMemo(
-    () => locationCatalog.find((l) => l.lgaId === selectedLgaId) || null,
-    [locationCatalog, selectedLgaId]
+    () => effectiveCatalog.find((l) => l.lgaId === selectedLgaId) || null,
+    [effectiveCatalog, selectedLgaId]
   );
 
   const availableWards = useMemo(() => {
@@ -185,8 +200,8 @@ export function AuthGate({
   }, [selectedLgaObj, selectedWardId]);
 
   const forgotLgaObj = useMemo(
-    () => locationCatalog.find((l) => l.lgaId === forgotLgaId) || null,
-    [locationCatalog, forgotLgaId]
+    () => effectiveCatalog.find((l) => l.lgaId === forgotLgaId) || null,
+    [effectiveCatalog, forgotLgaId]
   );
 
   const forgotAvailableWards = useMemo(
@@ -227,13 +242,13 @@ export function AuthGate({
     }
   };
 
-  const handlePhoneSignInSubmit = async (e: FormEvent) => {
+  const handleIdentifierSignInSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLocalError(null);
     setLocalInfo(null);
     setSubmitting(true);
     try {
-      await onPhoneSignIn(signInPhone, signInPassword);
+      await onIdentifierSignIn(signInIdentifier, signInPassword);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Unable to sign in.');
     } finally {
@@ -241,7 +256,7 @@ export function AuthGate({
     }
   };
 
-  const handlePhoneRegisterSubmit = async (e: FormEvent) => {
+  const handleEmailPhoneRegisterSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLocalError(null);
     setLocalInfo(null);
@@ -256,8 +271,9 @@ export function AuthGate({
 
     setSubmitting(true);
     try {
-      const res = await onPhoneRegister({
+      const res = await onEmailPhoneRegister({
         fullName: regFullName,
+        email: regEmail,
         phone: regPhone,
         password: regPassword,
         confirmPassword: regConfirmPassword,
@@ -269,12 +285,31 @@ export function AuthGate({
       setRegConfirmPassword('');
       if (res.queuedOffline) {
         setLocalInfo(
-          'Registration saved offline on this device. Connect to the internet to submit it for administrator verification and activation.'
+          'Registration saved securely offline with status: PENDING SYNCHRONIZATION. It will submit automatically when internet returns and activate as a standard Ordinary User.'
         );
         setWelcomeMode('signin');
       }
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : 'Registration failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSendEmailResetSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setLocalError(null);
+    setLocalInfo(null);
+    setSubmitting(true);
+    try {
+      const sentEmail = await onSendEmailPasswordReset(forgotEmail);
+      setLocalInfo(
+        `Password reset email sent to ${sentEmail}. Check your inbox (and spam folder) and follow the secure link to set a new password.`
+      );
+    } catch (err) {
+      setLocalError(
+        err instanceof Error ? err.message : 'Unable to send password reset email.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -377,114 +412,117 @@ export function AuthGate({
   };
 
   const renderLocationSelectors = (optional = false) => {
-    const emptyCatalog = locationCatalog.length === 0;
+    const isDirectoryUpdated = directoryStatus === 'updated' && isOnline;
     return (
       <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3.5">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
             <span className="text-xs font-semibold text-slate-800">
               Official Constituency Location {optional ? '(Optional)' : '*'}
             </span>
           </div>
-          <button
-            type="button"
-            disabled={refreshingLocations || !isOnline}
-            onClick={() => void onRefreshLocations()}
-            className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-3 w-3 ${refreshingLocations ? 'animate-spin' : ''}`}
-              aria-hidden="true"
-            />
-            <span>Sync</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${
+                isDirectoryUpdated
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                  : 'border-slate-200 bg-white text-slate-700'
+              }`}
+            >
+              {isDirectoryUpdated ? 'Updated' : 'Available Offline'}
+            </span>
+            {isOnline ? (
+              <button
+                type="button"
+                disabled={refreshingLocations}
+                onClick={() => void onRefreshLocations()}
+                className="inline-flex items-center gap-1 rounded border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3 w-3 ${refreshingLocations ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>Sync</span>
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        {emptyCatalog ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
-            Synchronized LGA, Ward, and Polling Unit records are not cached on this device yet. Connect
-            to the internet and tap <span className="font-semibold">Sync</span> once an administrator
-            has published the official directory.
-          </div>
-        ) : (
-          <>
-            <div>
-              <label htmlFor="loc-lga" className="block text-xs font-medium text-slate-700">
-                Local Government Area {!optional ? '*' : ''}
-              </label>
-              <select
-                id="loc-lga"
-                required={!optional}
-                value={selectedLgaId}
-                onChange={(e) => {
-                  setSelectedLgaId(e.target.value);
-                  setSelectedWardId('');
-                  setSelectedPuId('');
-                }}
-                className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
-              >
-                <option value="">Select Local Government Area...</option>
-                {locationCatalog.map((lga) => (
-                  <option key={lga.lgaId} value={lga.lgaId}>
-                    {lga.lgaName} ({lga.wardCount} Wards · {lga.puCount} PUs)
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div>
+          <label htmlFor="loc-lga" className="block text-xs font-medium text-slate-700">
+            Local Government Area {!optional ? '*' : ''}
+          </label>
+          <select
+            id="loc-lga"
+            required={!optional}
+            value={selectedLgaId}
+            onChange={(e) => {
+              setSelectedLgaId(e.target.value);
+              setSelectedWardId('');
+              setSelectedPuId('');
+            }}
+            className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+          >
+            <option value="">Select Local Government Area...</option>
+            {effectiveCatalog.map((lga) => (
+              <option key={lga.lgaId} value={lga.lgaId}>
+                {lga.lgaName} ({lga.wardCount} Wards · {lga.puCount} PUs)
+              </option>
+            ))}
+          </select>
+        </div>
 
-            <div>
-              <label htmlFor="loc-ward" className="block text-xs font-medium text-slate-700">
-                Ward {!optional ? '*' : ''}
-              </label>
-              <select
-                id="loc-ward"
-                required={!optional && Boolean(selectedLgaId)}
-                disabled={!selectedLgaId}
-                value={selectedWardId}
-                onChange={(e) => {
-                  setSelectedWardId(e.target.value);
-                  setSelectedPuId('');
-                }}
-                className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
-              >
-                <option value="">
-                  {!selectedLgaId ? 'Select LGA first...' : `Select Ward (${availableWards.length})...`}
-                </option>
-                {availableWards.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name} ({w.wardCode})
-                  </option>
-                ))}
-              </select>
-            </div>
+        <div>
+          <label htmlFor="loc-ward" className="block text-xs font-medium text-slate-700">
+            Ward {!optional ? '*' : ''}
+          </label>
+          <select
+            id="loc-ward"
+            required={!optional && Boolean(selectedLgaId)}
+            disabled={!selectedLgaId}
+            value={selectedWardId}
+            onChange={(e) => {
+              setSelectedWardId(e.target.value);
+              setSelectedPuId('');
+            }}
+            className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
+          >
+            <option value="">
+              {!selectedLgaId ? 'Select LGA first...' : `Select Ward (${availableWards.length})...`}
+            </option>
+            {availableWards.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name} ({w.wardCode})
+              </option>
+            ))}
+          </select>
+        </div>
 
-            <div>
-              <label htmlFor="loc-pu" className="block text-xs font-medium text-slate-700">
-                Polling Unit {!optional ? '*' : ''}
-              </label>
-              <select
-                id="loc-pu"
-                required={!optional && Boolean(selectedWardId)}
-                disabled={!selectedWardId}
-                value={selectedPuId}
-                onChange={(e) => setSelectedPuId(e.target.value)}
-                className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
-              >
-                <option value="">
-                  {!selectedWardId
-                    ? 'Select Ward first...'
-                    : `Select Polling Unit (${availablePollingUnits.length})...`}
-                </option>
-                {availablePollingUnits.map((pu) => (
-                  <option key={pu.id} value={pu.id}>
-                    {pu.puCode} · {pu.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </>
-        )}
+        <div>
+          <label htmlFor="loc-pu" className="block text-xs font-medium text-slate-700">
+            Polling Unit {!optional ? '*' : ''}
+          </label>
+          <select
+            id="loc-pu"
+            required={!optional && Boolean(selectedWardId)}
+            disabled={!selectedWardId}
+            value={selectedPuId}
+            onChange={(e) => setSelectedPuId(e.target.value)}
+            className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
+          >
+            <option value="">
+              {!selectedWardId
+                ? 'Select Ward first...'
+                : `Select Polling Unit (${availablePollingUnits.length})...`}
+            </option>
+            {availablePollingUnits.map((pu) => (
+              <option key={pu.id} value={pu.id}>
+                {pu.puCode} · {pu.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
     );
   };
@@ -523,11 +561,16 @@ export function AuthGate({
             </div>
             <div className="flex items-center gap-2">
               {!isOnline ? (
-                <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-900">
+                <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
                   <WifiOff className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Offline</span>
+                  <span>OFFLINE</span>
                 </span>
-              ) : null}
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                  <Wifi className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
+                  <span>ONLINE</span>
+                </span>
+              )}
               <span className="hidden text-xs font-medium text-slate-600 sm:inline">
                 2027 Election Cycle · Katsina State
               </span>
@@ -555,9 +598,9 @@ export function AuthGate({
                 <div className="mt-6 space-y-2.5 rounded-lg border border-white/15 bg-white/5 p-4 text-xs leading-relaxed text-emerald-50/90">
                   <p className="font-semibold text-white">Dual Authentication &amp; Role Security</p>
                   <p>
-                    Existing verified operators sign in with Google or Phone &amp; Password. New
-                    accounts start with zero permissions until approved and assigned by an
-                    authorized administrator.
+                    Existing verified operators sign in with Email, Phone &amp; Password, or Google.
+                    New accounts receive automatic standard access scoped to their selected Polling
+                    Unit—elevated roles require administrator assignment.
                   </p>
                 </div>
               </div>
@@ -680,16 +723,16 @@ export function AuthGate({
               {/* Queued Offline Registrations awaiting Server Sync */}
               {pendingOfflineRegistrations.length > 0 ? (
                 <div className="mt-4 space-y-2.5 rounded-lg border border-amber-300 bg-amber-50/70 p-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-xs font-semibold text-amber-950">
-                      Queued Offline Account Registrations ({pendingOfflineRegistrations.length})
+                      Offline Registrations ({pendingOfflineRegistrations.length})
                     </p>
-                    <span className="text-[11px] font-medium text-amber-800">
-                      Unverified until server sync
+                    <span className="rounded border border-amber-300 bg-white px-2 py-0.5 text-[10px] font-bold tracking-wide text-amber-900 uppercase">
+                      PENDING SYNCHRONIZATION
                     </span>
                   </div>
                   {pendingOfflineRegistrations.map((reg) => {
-                    const hasCachedPw = hasEphemeralOfflinePassword(reg.id);
+                    const hasSyncKey = hasStoredSyncKey(reg);
                     const isBusy = syncingRegId === reg.id;
                     return (
                       <div
@@ -698,15 +741,32 @@ export function AuthGate({
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div>
-                            <p className="font-semibold text-slate-900">
-                              {reg.displayName} · {reg.phoneE164}
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-semibold text-slate-900">
+                                {reg.displayName} · {reg.email ? `${reg.email} · ` : ''}{reg.phoneE164}
+                              </p>
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                                  reg.status === 'SYNC_FAILED'
+                                    ? 'bg-red-100 text-red-800'
+                                    : 'bg-amber-100 text-amber-900'
+                                }`}
+                              >
+                                {reg.status === 'SYNC_FAILED'
+                                  ? 'SYNC FAILED'
+                                  : 'PENDING SYNCHRONIZATION'}
+                              </span>
+                            </div>
                             <p className="mt-0.5 text-slate-600">
                               {reg.requestedLgaName} · {reg.requestedWardName} · {reg.requestedPollingUnitCode}
                             </p>
                             {reg.errorMessage ? (
                               <p className="mt-1 text-red-700">{reg.errorMessage}</p>
-                            ) : null}
+                            ) : (
+                              <p className="mt-1 text-[11px] text-slate-500">
+                                Automatically submits when internet returns and activates as a standard Ordinary User.
+                              </p>
+                            )}
                           </div>
                           <button
                             type="button"
@@ -721,7 +781,7 @@ export function AuthGate({
 
                         {isOnline ? (
                           <div className="mt-2.5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                            {!hasCachedPw ? (
+                            {!hasSyncKey ? (
                               <input
                                 type="password"
                                 value={offlineSyncPasswords[reg.id] || ''}
@@ -737,7 +797,7 @@ export function AuthGate({
                             ) : null}
                             <button
                               type="button"
-                              disabled={isBusy || (!hasCachedPw && !offlineSyncPasswords[reg.id])}
+                              disabled={isBusy || (!hasSyncKey && !offlineSyncPasswords[reg.id])}
                               onClick={() => void handleManualSyncOfflineReg(reg)}
                               className="inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded bg-[#0b3b24] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-50"
                             >
@@ -745,7 +805,7 @@ export function AuthGate({
                                 className={`h-3.5 w-3.5 ${isBusy ? 'animate-spin' : ''}`}
                                 aria-hidden="true"
                               />
-                              <span>{isBusy ? 'Uploading...' : 'Sync Registration'}</span>
+                              <span>{isBusy ? 'Synchronizing...' : 'Sync Now'}</span>
                             </button>
                           </div>
                         ) : null}
@@ -762,23 +822,23 @@ export function AuthGate({
                     Sign In to FDMIS
                   </h2>
                   <p className="mt-1 text-xs text-slate-600">
-                    Sign in using your registered Phone Number and Password, or use Google for
+                    Sign in using your Email Address or Phone Number and Password, or use Google for
                     verified Google-linked operators and administrators.
                   </p>
 
-                  <form onSubmit={handlePhoneSignInSubmit} className="mt-4 space-y-4">
+                  <form onSubmit={handleIdentifierSignInSubmit} className="mt-4 space-y-4">
                     <div>
-                      <label htmlFor="signin-phone" className="block text-xs font-medium text-slate-700">
-                        Phone Number *
+                      <label htmlFor="signin-identifier" className="block text-xs font-medium text-slate-700">
+                        Email Address or Phone Number *
                       </label>
                       <input
-                        id="signin-phone"
-                        type="tel"
+                        id="signin-identifier"
+                        type="text"
                         required
-                        autoComplete="tel"
-                        value={signInPhone}
-                        onChange={(e) => setSignInPhone(e.target.value)}
-                        placeholder="e.g. 0803 123 4567 or +2348031234567"
+                        autoComplete="username"
+                        value={signInIdentifier}
+                        onChange={(e) => setSignInIdentifier(e.target.value)}
+                        placeholder="e.g. name@example.com or 0803 123 4567"
                         className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
                       />
                     </div>
@@ -795,7 +855,12 @@ export function AuthGate({
                           type="button"
                           onClick={() => {
                             setWelcomeMode('forgot');
-                            setForgotPhone(signInPhone);
+                            if (signInIdentifier.includes('@')) {
+                              setForgotEmail(signInIdentifier.trim());
+                              setForgotSubMode('email_reset');
+                            } else if (signInIdentifier.trim()) {
+                              setForgotPhone(signInIdentifier.trim());
+                            }
                             setLocalError(null);
                             setLocalInfo(null);
                           }}
@@ -870,28 +935,45 @@ export function AuthGate({
               {welcomeMode === 'signup' ? (
                 <div className="mt-5">
                   <h2 className="font-display text-lg font-semibold text-slate-900">
-                    Create New Operator Account
+                    Create New Account
                   </h2>
                   <p className="mt-1 text-xs text-slate-600">
-                    All newly registered accounts remain <span className="font-semibold">Unverified / Pending Approval</span> until reviewed and assigned by an authorized administrator.
+                    Valid registrations automatically activate with standard <span className="font-semibold">Ordinary User</span> permissions scoped to your selected Polling Unit. Elevated roles require administrator approval.
                   </p>
 
-                  <form onSubmit={handlePhoneRegisterSubmit} className="mt-4 space-y-3.5">
+                  <form onSubmit={handleEmailPhoneRegisterSubmit} className="mt-4 space-y-3.5">
+                    <div>
+                      <label htmlFor="reg-fullname" className="block text-xs font-medium text-slate-700">
+                        Full Name *
+                      </label>
+                      <input
+                        id="reg-fullname"
+                        type="text"
+                        required
+                        minLength={2}
+                        maxLength={110}
+                        autoComplete="name"
+                        value={regFullName}
+                        onChange={(e) => setRegFullName(e.target.value)}
+                        placeholder="Enter official full name"
+                        className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                      />
+                    </div>
+
                     <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                       <div>
-                        <label htmlFor="reg-fullname" className="block text-xs font-medium text-slate-700">
-                          Full Name *
+                        <label htmlFor="reg-email-addr" className="block text-xs font-medium text-slate-700">
+                          Email Address *
                         </label>
                         <input
-                          id="reg-fullname"
-                          type="text"
+                          id="reg-email-addr"
+                          type="email"
                           required
-                          minLength={2}
-                          maxLength={110}
-                          autoComplete="name"
-                          value={regFullName}
-                          onChange={(e) => setRegFullName(e.target.value)}
-                          placeholder="Enter official full name"
+                          maxLength={200}
+                          autoComplete="email"
+                          value={regEmail}
+                          onChange={(e) => setRegEmail(e.target.value)}
+                          placeholder="name@example.com"
                           className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
                         />
                       </div>
@@ -969,15 +1051,15 @@ export function AuthGate({
 
                     <button
                       type="submit"
-                      disabled={submitting || locationCatalog.length === 0}
+                      disabled={submitting}
                       className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#115233] disabled:opacity-60"
                     >
                       <UserPlus className="h-4 w-4" aria-hidden="true" />
                       <span>
                         {submitting
-                          ? 'Creating Account...'
+                          ? 'Saving Account...'
                           : isOnline
-                            ? 'Create Operator Account'
+                            ? 'Create Account'
                             : 'Save Registration Offline'}
                       </span>
                     </button>
@@ -1008,7 +1090,21 @@ export function AuthGate({
                     </button>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
+                  <div className="mt-3 grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setForgotSubMode('email_reset');
+                        setLocalError(null);
+                      }}
+                      className={`min-h-[38px] rounded-md px-2 text-xs font-semibold ${
+                        forgotSubMode === 'email_reset'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600'
+                      }`}
+                    >
+                      Email Reset
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -1021,7 +1117,7 @@ export function AuthGate({
                           : 'text-slate-600'
                       }`}
                     >
-                      1. Request Recovery
+                      Phone Reset Req
                     </button>
                     <button
                       type="button"
@@ -1035,11 +1131,45 @@ export function AuthGate({
                           : 'text-slate-600'
                       }`}
                     >
-                      2. Enter Reset PIN
+                      Enter Reset PIN
                     </button>
                   </div>
 
-                  {forgotSubMode === 'request' ? (
+                  {forgotSubMode === 'email_reset' ? (
+                    <form onSubmit={handleSendEmailResetSubmit} className="mt-4 space-y-3.5">
+                      <p className="text-xs leading-relaxed text-slate-600">
+                        Enter the verified Email Address linked to your FDMIS account to receive a
+                        secure Firebase password reset link directly in your inbox.
+                      </p>
+                      <div>
+                        <label htmlFor="fg-email" className="block text-xs font-medium text-slate-700">
+                          Registered Email Address *
+                        </label>
+                        <input
+                          id="fg-email"
+                          type="email"
+                          required
+                          value={forgotEmail}
+                          onChange={(e) => setForgotEmail(e.target.value)}
+                          placeholder="name@example.com"
+                          className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 px-3 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={submitting || !isOnline}
+                        className="inline-flex min-h-[46px] w-full items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                      >
+                        <span>
+                          {submitting
+                            ? 'Sending Reset Email...'
+                            : !isOnline
+                              ? 'Internet Required to Send Email'
+                              : 'Send Password Reset Email'}
+                        </span>
+                      </button>
+                    </form>
+                  ) : forgotSubMode === 'request' ? (
                     <form onSubmit={handleForgotSubmitRequest} className="mt-4 space-y-3.5">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
@@ -1089,7 +1219,7 @@ export function AuthGate({
                             className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs"
                           >
                             <option value="">Select LGA...</option>
-                            {locationCatalog.map((l) => (
+                            {effectiveCatalog.map((l) => (
                               <option key={l.lgaId} value={l.lgaId}>
                                 {l.lgaName}
                               </option>
@@ -1470,14 +1600,14 @@ export function AuthGate({
               />
             </div>
 
-            {locationCatalog.length > 0 ? renderLocationSelectors(true) : null}
+            {renderLocationSelectors(false)}
 
             <button
               type="submit"
               disabled={submitting}
               className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#115233] disabled:opacity-60"
             >
-              <span>{submitting ? 'Submitting Registration...' : 'Submit Access Request'}</span>
+              <span>{submitting ? 'Activating Account...' : 'Complete Standard Account Setup'}</span>
             </button>
           </form>
         </div>
@@ -1604,8 +1734,8 @@ export function AuthGate({
           </div>
         ) : null}
 
-        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-          Account Status: Awaiting role &amp; area assignment by an authorized administrator.
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+          <span className="font-semibold">Status:</span> UNVERIFIED / PENDING ADMIN APPROVAL — awaiting role &amp; area assignment by an authorized administrator.
         </div>
 
         <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">

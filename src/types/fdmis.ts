@@ -82,13 +82,17 @@ export const FIXED_PARTY_MAP: Record<PartyCode, FixedPartyDefinition> = {
   OTHERS: FIXED_PARTIES[3],
 };
 
+export const MIN_OPERATIONS_OFFICERS_PER_WARD = 5;
+
 export enum UserRole {
   FULL_CONTROL_ADMIN = 'FULL_CONTROL_ADMIN',
   FUNTUA_SUPER_ADMIN = 'FUNTUA_SUPER_ADMIN',
   DANDUME_SUPER_ADMIN = 'DANDUME_SUPER_ADMIN',
   VERIFICATION_OFFICER = 'VERIFICATION_OFFICER',
+  OPERATIONS_OFFICER = 'OPERATIONS_OFFICER',
   WARD_COORDINATOR = 'WARD_COORDINATOR',
   POLLING_UNIT_AGENT = 'POLLING_UNIT_AGENT',
+  ORDINARY_USER = 'ORDINARY_USER',
   PENDING = 'PENDING',
 }
 
@@ -100,7 +104,7 @@ export const USER_ROLE_META: Record<
     label: 'Full Control Admin',
     shortLabel: 'Full Admin',
     description:
-      'Complete constituency authority across Funtua & Dandume LGAs, party logos, users, verifications, public approvals, settings, and audit logs.',
+      'Complete constituency authority across Funtua & Dandume LGAs, party logos, users, operations officers, verifications, public approvals, settings, and audit logs.',
   },
   [UserRole.FUNTUA_SUPER_ADMIN]: {
     label: 'Funtua Super Admin',
@@ -120,6 +124,12 @@ export const USER_ROLE_META: Record<
     description:
       'Dedicated result verification authority scoped to assigned LGA, Ward, or Constituency: reviews Form EC8A sheets, approves, rejects, or requests corrections.',
   },
+  [UserRole.OPERATIONS_OFFICER]: {
+    label: 'Operations Officer',
+    shortLabel: 'Ops Officer',
+    description:
+      'Ward-scoped field operations officer (minimum 5 per ward): monitors assigned ward polling units, check-ins, incident escalations, notes, and schedules.',
+  },
   [UserRole.WARD_COORDINATOR]: {
     label: 'Ward Coordinator',
     shortLabel: 'Ward Coord',
@@ -131,6 +141,12 @@ export const USER_ROLE_META: Record<
     shortLabel: 'PU Agent',
     description:
       'Restricted to assigned polling unit: check-ins, status updates, incident reporting, and Form EC8A result submissions.',
+  },
+  [UserRole.ORDINARY_USER]: {
+    label: 'Ordinary User',
+    shortLabel: 'Standard User',
+    description:
+      'Automatically approved standard operator scoped to registered Polling Unit: field check-ins, incident reports, operational notes, emergency contacts, and public results.',
   },
   [UserRole.PENDING]: {
     label: 'Pending Assignment',
@@ -147,7 +163,7 @@ export enum AccountStatus {
 
 export const ACCOUNT_STATUS_META: Record<AccountStatus, { label: string }> = {
   [AccountStatus.ACTIVE]: { label: 'Active' },
-  [AccountStatus.PENDING_APPROVAL]: { label: 'Pending Approval' },
+  [AccountStatus.PENDING_APPROVAL]: { label: 'Unverified / Pending Admin Approval' },
   [AccountStatus.SUSPENDED]: { label: 'Suspended / Revoked' },
 };
 
@@ -287,7 +303,11 @@ export type OfflineReportType =
   | 'INCIDENT_REPORT'
   | 'RESULT_SUBMISSION'
   | 'NOTE_UPSERT'
-  | 'NOTE_DELETE';
+  | 'NOTE_DELETE'
+  | 'NOTIFICATION_BROADCAST'
+  | 'TASK_CREATE'
+  | 'TASK_OFFICER_UPDATE'
+  | 'REPORT_ARCHIVE';
 
 export interface OfflinePruneReport {
   prunedQueueItems: number;
@@ -303,6 +323,7 @@ export interface OfflinePruneReport {
 
 export interface PendingOfflineRegistration {
   id: string;
+  email?: string;
   phoneE164: string;
   phoneDigits: string;
   phoneHash: string;
@@ -318,10 +339,13 @@ export interface PendingOfflineRegistration {
   requestedPollingUnitName: string;
   recoveryKeySalt: string;
   recoveryKeyHash: string;
+  wrappedPasswordCipher?: string;
+  wrappedPasswordIv?: string;
   status: 'QUEUED_OFFLINE' | 'SYNC_FAILED' | 'SYNCED';
   errorMessage?: string;
   createdAtIso: string;
   updatedAtIso: string;
+  serverSyncedAtIso?: string;
 }
 
 export type OperationalNoteCategory =
@@ -347,6 +371,8 @@ export interface OperationalNote {
   isPinned: boolean;
   isTestData: boolean;
   revision: number;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
   syncState?: OfflineQueueStatus;
@@ -409,7 +435,7 @@ export interface UserAccount {
   email: string;
   displayName: string;
   phone?: string | null;
-  authMethod?: 'GOOGLE' | 'PHONE_PASSWORD';
+  authMethod?: 'GOOGLE' | 'PHONE_PASSWORD' | 'EMAIL_PASSWORD';
   role: UserRole;
   status: AccountStatus;
   assignedLgaId: string;
@@ -423,6 +449,10 @@ export interface UserAccount {
   requestedPollingUnitName?: string | null;
   sessionRevoked: boolean;
   revokedReason?: string | null;
+  batteryLevel?: number | null;
+  batteryCharging?: boolean | null;
+  batteryUpdatedAt?: FirestoreTime;
+  lastPasswordChangedAt?: FirestoreTime;
   lastLoginAt?: FirestoreTime;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
@@ -553,6 +583,8 @@ export interface AgentCheckIn {
   latitude?: number | null;
   longitude?: number | null;
   clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
   isTestData: boolean;
   createdAt?: FirestoreTime;
 }
@@ -577,6 +609,8 @@ export interface IncidentReport {
   escalatedTo: string;
   reviewedByUid: string;
   clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
   isTestData: boolean;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
@@ -614,6 +648,8 @@ export interface ResultSubmission {
   reviewedAt?: FirestoreTime;
   version: number;
   clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
   isTestData: boolean;
   createdAt?: FirestoreTime;
   updatedAt?: FirestoreTime;
@@ -763,6 +799,146 @@ export interface EmergencyContact {
   updatedAt?: FirestoreTime;
 }
 
+export enum TaskPriority {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  CRITICAL = 'CRITICAL',
+}
+
+export const TASK_PRIORITY_META: Record<TaskPriority, { label: string }> = {
+  [TaskPriority.LOW]: { label: 'Low' },
+  [TaskPriority.MEDIUM]: { label: 'Medium' },
+  [TaskPriority.HIGH]: { label: 'High' },
+  [TaskPriority.CRITICAL]: { label: 'Critical' },
+};
+
+export enum TaskStatus {
+  ASSIGNED = 'ASSIGNED',
+  ACKNOWLEDGED = 'ACKNOWLEDGED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  AWAITING_REVIEW = 'AWAITING_REVIEW',
+  REVISION_REQUIRED = 'REVISION_REQUIRED',
+  APPROVED_COMPLETED = 'APPROVED_COMPLETED',
+  OVERDUE = 'OVERDUE',
+}
+
+export const TASK_STATUS_META: Record<TaskStatus, { label: string }> = {
+  [TaskStatus.ASSIGNED]: { label: 'Assigned' },
+  [TaskStatus.ACKNOWLEDGED]: { label: 'Acknowledged' },
+  [TaskStatus.IN_PROGRESS]: { label: 'In Progress' },
+  [TaskStatus.AWAITING_REVIEW]: { label: 'Awaiting Review' },
+  [TaskStatus.REVISION_REQUIRED]: { label: 'Revision Required' },
+  [TaskStatus.APPROVED_COMPLETED]: { label: 'Approved / Completed' },
+  [TaskStatus.OVERDUE]: { label: 'Overdue' },
+};
+
+export type TaskUpdateEntryType =
+  | 'OFFICER_PROGRESS'
+  | 'FIELD_REPORT'
+  | 'UPDATE_REQUEST'
+  | 'ADMIN_REVIEW'
+  | 'STATUS_CHANGE';
+
+export interface OperationalTask {
+  id: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  status: TaskStatus;
+  lgaId: LgaId;
+  wardId: string;
+  wardName: string;
+  assignedOfficerUid: string;
+  assignedOfficerName: string;
+  assignedByUid: string;
+  assignedByName: string;
+  startDateIso: string;
+  dueDateIso: string;
+  progressPercent: number;
+  acknowledgedAtIso: string;
+  submittedForReviewAtIso: string;
+  completedAtIso: string;
+  latestFieldReport: string;
+  delayReason: string;
+  evidenceBase64?: string | null;
+  evidenceFileName?: string | null;
+  adminFeedback: string;
+  updateRequestedAtIso: string;
+  updateRequestNote: string;
+  reviewedByUid: string;
+  reviewedByName: string;
+  clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
+  isTestData: boolean;
+  createdAt?: FirestoreTime;
+  updatedAt?: FirestoreTime;
+}
+
+export interface TaskUpdateEntry {
+  id: string;
+  taskId: string;
+  entryType: TaskUpdateEntryType;
+  statusSnapshot: TaskStatus;
+  progressPercent: number;
+  summary: string;
+  delayReason: string;
+  evidenceBase64?: string | null;
+  evidenceFileName?: string | null;
+  actorUid: string;
+  actorName: string;
+  actorRole: string;
+  clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
+  createdAt?: FirestoreTime;
+}
+
+export type AutomaticReportCategory =
+  | 'DAILY_SITUATION'
+  | 'WARD_PERFORMANCE'
+  | 'LGA_SUMMARY'
+  | 'ELECTION_INCIDENT'
+  | 'AGENT_ACTIVITY'
+  | 'OFFICER_PERFORMANCE'
+  | 'TASK_COMPLETION';
+
+export const AUTOMATIC_REPORT_LABELS: Record<AutomaticReportCategory, string> = {
+  DAILY_SITUATION: 'Daily Situation Report',
+  WARD_PERFORMANCE: 'Ward Performance Report',
+  LGA_SUMMARY: 'LGA Summary Report',
+  ELECTION_INCIDENT: 'Election Incident Report',
+  AGENT_ACTIVITY: 'Agent Activity Report',
+  OFFICER_PERFORMANCE: 'Operations Officer Performance Report',
+  TASK_COMPLETION: 'Task Completion Report',
+};
+
+export interface GeneratedReportRecord {
+  id: string;
+  reportCategory: AutomaticReportCategory;
+  reportTitle: string;
+  reportingPeriodStartIso: string;
+  reportingPeriodEndIso: string;
+  lgaId: 'all' | LgaId;
+  wardId: string;
+  puId: string;
+  officerUid: string;
+  scopeLabel: string;
+  generatedByUid: string;
+  generatedByName: string;
+  generationMode: 'AUTOMATIC_DAILY' | 'ON_DEMAND';
+  dataStatus: string;
+  dataCompletenessNotice: string;
+  rowCount: number;
+  headers: string[];
+  summaryMetrics: Record<string, number | string>;
+  clientSubmissionId: string;
+  clientCreatedAtIso?: string;
+  serverSyncedAt?: FirestoreTime;
+  createdAt?: FirestoreTime;
+}
+
 export interface AuditLog {
   id: string;
   actorUid: string;
@@ -792,6 +968,7 @@ export interface OfflineQueuedItem {
   errorMessage?: string;
   createdAtIso: string;
   updatedAtIso: string;
+  syncedAtIso?: string;
 }
 
 export interface OfficialWardSeed {
@@ -847,6 +1024,14 @@ export function canManageUsers(role: UserRole): boolean {
   );
 }
 
+export function canManageOperationsOfficers(role: UserRole): boolean {
+  return (
+    role === UserRole.FULL_CONTROL_ADMIN ||
+    role === UserRole.FUNTUA_SUPER_ADMIN ||
+    role === UserRole.DANDUME_SUPER_ADMIN
+  );
+}
+
 export function canDeleteUsers(role: UserRole): boolean {
   return role === UserRole.FULL_CONTROL_ADMIN;
 }
@@ -882,9 +1067,11 @@ export function canAssignFieldUsers(role: UserRole): boolean {
 
 export function canReviewIncidents(role: UserRole): boolean {
   return (
-    role !== UserRole.POLLING_UNIT_AGENT &&
-    role !== UserRole.VERIFICATION_OFFICER &&
-    role !== UserRole.PENDING
+    role === UserRole.FULL_CONTROL_ADMIN ||
+    role === UserRole.FUNTUA_SUPER_ADMIN ||
+    role === UserRole.DANDUME_SUPER_ADMIN ||
+    role === UserRole.OPERATIONS_OFFICER ||
+    role === UserRole.WARD_COORDINATOR
   );
 }
 
@@ -927,6 +1114,41 @@ export function canManageTestData(role: UserRole): boolean {
 
 export function canAccessSettings(role: UserRole): boolean {
   return role !== UserRole.PENDING;
+}
+
+export function canManageTasks(role: UserRole): boolean {
+  return role === UserRole.FULL_CONTROL_ADMIN;
+}
+
+export function canViewTasksModule(role: UserRole): boolean {
+  return (
+    role === UserRole.FULL_CONTROL_ADMIN ||
+    role === UserRole.FUNTUA_SUPER_ADMIN ||
+    role === UserRole.DANDUME_SUPER_ADMIN ||
+    role === UserRole.OPERATIONS_OFFICER
+  );
+}
+
+export function canAccessAnalyticsReports(role: UserRole): boolean {
+  return (
+    role === UserRole.FULL_CONTROL_ADMIN ||
+    role === UserRole.FUNTUA_SUPER_ADMIN ||
+    role === UserRole.DANDUME_SUPER_ADMIN ||
+    role === UserRole.VERIFICATION_OFFICER ||
+    role === UserRole.OPERATIONS_OFFICER ||
+    role === UserRole.WARD_COORDINATOR
+  );
+}
+
+export function getEffectiveTaskStatus(task: OperationalTask, nowMs: number = Date.now()): TaskStatus {
+  if (task.status === TaskStatus.APPROVED_COMPLETED) {
+    return TaskStatus.APPROVED_COMPLETED;
+  }
+  const dueMs = Date.parse(task.dueDateIso);
+  if (!Number.isNaN(dueMs) && dueMs < nowMs) {
+    return TaskStatus.OVERDUE;
+  }
+  return task.status;
 }
 
 export function sanitizeTelHref(phone: string): string {

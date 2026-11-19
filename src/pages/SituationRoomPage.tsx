@@ -12,7 +12,9 @@ import {
   PhoneCall,
   Radio,
   Settings,
+  ShieldAlert,
   ShieldCheck,
+  StickyNote,
   Users,
 } from 'lucide-react';
 import type { NavSectionId } from '../components/AppShell';
@@ -31,11 +33,13 @@ import {
   FIXED_PARTIES,
   IncidentUrgency,
   LGA_DEFINITIONS,
+  MIN_OPERATIONS_OFFICERS_PER_WARD,
   PuOperationalStatus,
   TOTAL_EXPECTED_POLLING_UNITS,
   TOTAL_EXPECTED_WARDS,
   UserRole,
   VerificationStatus,
+  canManageOperationsOfficers,
   formatFirestoreTime,
   getAuthorizedLgas,
   isIncidentActive,
@@ -54,6 +58,7 @@ import {
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
+import { computeWardOperationsCoverage } from '../services/directoryService';
 import {
   buildLgaSummary,
   getCanonicalApprovedPuResults,
@@ -64,6 +69,7 @@ interface SituationRoomPageProps {
   user: UserAccount;
   wards: Ward[];
   pollingUnits: PollingUnit[];
+  users?: UserAccount[];
   checkIns: AgentCheckIn[];
   incidents: IncidentReport[];
   results: ResultSubmission[];
@@ -80,6 +86,7 @@ export function SituationRoomPage({
   user,
   wards,
   pollingUnits,
+  users = [],
   checkIns,
   incidents,
   results,
@@ -97,9 +104,32 @@ export function SituationRoomPage({
   const [puFilter, setPuFilter] = useState<string>('all');
 
   const isPuAgent = user.role === UserRole.POLLING_UNIT_AGENT;
+  const isOrdinaryUser = user.role === UserRole.ORDINARY_USER;
+  const isOpsOfficer = user.role === UserRole.OPERATIONS_OFFICER;
   const isVerifier = user.role === UserRole.VERIFICATION_OFFICER;
   const isWardCoord = user.role === UserRole.WARD_COORDINATOR;
   const isFullAdmin = user.role === UserRole.FULL_CONTROL_ADMIN;
+  const canViewOpsCoverage = canManageOperationsOfficers(user.role);
+
+  const opsCoverageSummary = useMemo(() => {
+    if (!canViewOpsCoverage || wards.length === 0) return null;
+    const coverage = computeWardOperationsCoverage(
+      wards,
+      users,
+      MIN_OPERATIONS_OFFICERS_PER_WARD
+    );
+    const compliantWards = coverage.filter((c) => c.isCompliant).length;
+    const vacantWards = coverage.length - compliantWards;
+    const totalVacancies = coverage.reduce((sum, c) => sum + c.vacancyCount, 0);
+    const totalActiveOfficers = coverage.reduce((sum, c) => sum + c.activeCount, 0);
+    return {
+      totalWards: coverage.length,
+      compliantWards,
+      vacantWards,
+      totalVacancies,
+      totalActiveOfficers,
+    };
+  }, [canViewOpsCoverage, wards, users]);
 
   const scopedWards = useMemo(() => {
     return wards.filter((w) => lgaFilter === 'all' || w.lgaId === lgaFilter);
@@ -198,6 +228,124 @@ export function SituationRoomPage({
     }
     return 'Constituency Verified Result Summary (Funtua & Dandume)';
   }, [puFilter, wardFilter, lgaFilter, pollingUnits, wards, authorizedLgas]);
+
+  // --- DEDICATED ORDINARY USER FIELD VIEW ---
+  if (isOrdinaryUser) {
+    const assignedPu =
+      pollingUnits.find((p) => p.id === user.assignedPollingUnitId) || pollingUnits[0] || null;
+    const myCheckIn = checkIns.find((c) => c.puId === (assignedPu?.id || user.assignedPollingUnitId));
+    const myActiveIncidents = incidents.filter((i) => isIncidentActive(i.status));
+
+    return (
+      <div className="space-y-5">
+        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div>
+              <p className="text-xs font-medium text-slate-500">
+                FDMIS Ordinary User Field Terminal · Works Offline
+              </p>
+              <h2 className="font-display text-lg font-bold text-slate-900">
+                {user.displayName}
+              </h2>
+            </div>
+            {assignedPu ? <PuStatusBadge status={assignedPu.operationalStatus} /> : null}
+          </div>
+
+          {assignedPu ? (
+            <div className="grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-xs sm:grid-cols-3">
+              <div>
+                <p className="text-emerald-900/80">Registered Polling Unit</p>
+                <p className="mt-0.5 font-mono text-sm font-bold text-[#0b3b24]">
+                  {assignedPu.puCode}
+                </p>
+                <p className="font-medium text-slate-900">{assignedPu.name}</p>
+              </div>
+              <div>
+                <p className="text-emerald-900/80">Ward &amp; LGA</p>
+                <p className="mt-0.5 font-semibold text-slate-900">
+                  {assignedPu.wardName} · {LGA_DEFINITIONS[assignedPu.lgaId]?.displayName}
+                </p>
+              </div>
+              <div>
+                <p className="text-emerald-900/80">Account Role</p>
+                <p className="mt-0.5 font-semibold text-slate-900">
+                  Ordinary User (Location-Scoped)
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
+              <p className="font-semibold text-slate-900">Registered Location Scope</p>
+              <p className="mt-1">
+                {user.assignedLgaId
+                  ? `${LGA_DEFINITIONS[user.assignedLgaId as LgaId]?.displayName || user.assignedLgaId}`
+                  : 'Constituency'}{' '}
+                {user.requestedWardName ? `· ${user.requestedWardName}` : ''}
+                {user.requestedPollingUnitCode ? ` · ${user.requestedPollingUnitCode}` : ''}
+              </p>
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
+              <p className="text-slate-500">Latest Check-In</p>
+              <p className="mt-1 font-semibold text-slate-900">
+                {myCheckIn ? `Logged (${myCheckIn.arrivalTimeText})` : 'No Check-In Recorded Yet'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
+              <p className="text-slate-500">Active Incidents in Location</p>
+              <p className="mt-1 font-mono text-base font-bold text-slate-900 tabular-nums">
+                {myActiveIncidents.length}
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+            <button
+              type="button"
+              onClick={() => onNavigate('field_ops')}
+              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-3 text-sm font-semibold text-white hover:bg-[#115233]"
+            >
+              <Radio className="h-4 w-4" aria-hidden="true" />
+              <span>Field Check-In</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('notes')}
+              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-[#0b3b24] bg-white px-4 py-3 text-sm font-semibold text-[#0b3b24] hover:bg-emerald-50"
+            >
+              <StickyNote className="h-4 w-4" aria-hidden="true" />
+              <span>Notes &amp; Messages</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('incidents')}
+              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            >
+              <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
+              <span>Report Incident</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('settings')}
+              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            >
+              <Settings className="h-4 w-4 text-slate-600" aria-hidden="true" />
+              <span>Settings &amp; Security</span>
+            </button>
+          </div>
+        </section>
+
+        <EmergencyContactsWidget
+          contacts={emergencyContacts}
+          onOpenDirectory={() => onNavigate('emergency_assistance')}
+        />
+
+        <WhatsAppGroupCard settings={settings} compact />
+      </div>
+    );
+  }
 
   // --- DEDICATED POLLING UNIT AGENT MOBILE-FIRST VIEW ---
   if (isPuAgent) {
@@ -381,7 +529,7 @@ export function SituationRoomPage({
   ).length;
 
   const expectedWardsForView =
-    isWardCoord
+    isWardCoord || isOpsOfficer
       ? 1
       : lgaFilter === 'all'
         ? isFullAdmin
@@ -405,16 +553,20 @@ export function SituationRoomPage({
             <p className="text-xs font-medium text-slate-500">
               {isVerifier
                 ? 'Verification Officer Command Center · Form EC8A Review & Tally Control'
-                : isWardCoord
-                  ? `Ward Coordinator Dashboard · ${wards[0]?.name || user.assignedWardId || 'Assigned Ward'}`
-                  : authorizedLgas.length === 1
-                    ? `${LGA_DEFINITIONS[authorizedLgas[0]].displayName} (${LGA_DEFINITIONS[authorizedLgas[0]].lgaCode}) · Isolated Command View`
-                    : 'Funtua–Dandume Federal Constituency · 2027 Election Cycle'}
+                : isOpsOfficer
+                  ? `Ward Operations Officer Desk · ${wards[0]?.name || user.assignedWardId || 'Assigned Ward'}`
+                  : isWardCoord
+                    ? `Ward Coordinator Dashboard · ${wards[0]?.name || user.assignedWardId || 'Assigned Ward'}`
+                    : authorizedLgas.length === 1
+                      ? `${LGA_DEFINITIONS[authorizedLgas[0]].displayName} (${LGA_DEFINITIONS[authorizedLgas[0]].lgaCode}) · Isolated Command View`
+                      : 'Funtua–Dandume Federal Constituency · 2027 Election Cycle'}
             </p>
             <h2 className="font-display text-lg font-bold text-slate-900">
               {isVerifier
                 ? 'Verification Queue & Verified Tally Telemetry'
-                : 'Live Situation Room Telemetry'}
+                : isOpsOfficer
+                  ? 'Ward Operations & Field Coordination'
+                  : 'Live Situation Room Telemetry'}
             </h2>
           </div>
 
@@ -436,7 +588,7 @@ export function SituationRoomPage({
               </select>
             ) : null}
 
-            {!isWardCoord ? (
+            {!isWardCoord && !isOpsOfficer ? (
               <select
                 aria-label="Filter by Ward"
                 value={wardFilter}
@@ -501,6 +653,54 @@ export function SituationRoomPage({
         </section>
       ) : null}
 
+      {/* Operations Officers Ward Coverage Banner (Admins) */}
+      {opsCoverageSummary ? (
+        <section
+          className={`rounded-xl border p-4 ${
+            opsCoverageSummary.vacantWards > 0
+              ? 'border-amber-200 bg-amber-50/70'
+              : 'border-emerald-200 bg-emerald-50/60'
+          }`}
+        >
+          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert
+                className={`mt-0.5 h-5 w-5 shrink-0 ${
+                  opsCoverageSummary.vacantWards > 0 ? 'text-amber-700' : 'text-[#0b3b24]'
+                }`}
+                aria-hidden="true"
+              />
+              <div>
+                <h3 className="font-display text-sm font-bold text-slate-900">
+                  Ward Operations Officers Coverage (Min {MIN_OPERATIONS_OFFICERS_PER_WARD} per Ward)
+                </h3>
+                <p className="text-xs text-slate-700">
+                  <span className="font-mono font-semibold tabular-nums">
+                    {opsCoverageSummary.compliantWards} / {opsCoverageSummary.totalWards}
+                  </span>{' '}
+                  wards compliant ·{' '}
+                  <span className="font-mono font-semibold tabular-nums">
+                    {opsCoverageSummary.totalActiveOfficers}
+                  </span>{' '}
+                  active officer{opsCoverageSummary.totalActiveOfficers === 1 ? '' : 's'}
+                  {opsCoverageSummary.totalVacancies > 0
+                    ? ` · ${opsCoverageSummary.totalVacancies} remaining ward slot${opsCoverageSummary.totalVacancies === 1 ? '' : 's'} needed across ${opsCoverageSummary.vacantWards} ward${opsCoverageSummary.vacantWards === 1 ? '' : 's'}`
+                    : ' · All wards meet minimum coverage'}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('operations_officers')}
+              className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#115233] whitespace-nowrap"
+            >
+              <span>Manage Operations Officers</span>
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {/* Critical Incidents Spotlight */}
       {criticalIncidents.length > 0 ? (
         <section
@@ -540,8 +740,9 @@ export function SituationRoomPage({
                 </div>
                 <p className="mt-1.5 text-sm font-semibold text-slate-900">{inc.title}</p>
                 <p className="mt-0.5 line-clamp-2 text-slate-600">{inc.description}</p>
-                <p className="mt-1.5 text-slate-500">
-                  {inc.puName} · {formatFirestoreTime(inc.createdAt)}
+                <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+                  {inc.puName} · Orig: {formatFirestoreTime(inc.clientCreatedAtIso || inc.createdAt)}
+                  {inc.serverSyncedAt ? ` · Synced: ${formatFirestoreTime(inc.serverSyncedAt)}` : ''}
                 </p>
               </div>
             ))}
@@ -892,6 +1093,24 @@ export function SituationRoomPage({
                   <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Report Incident</span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('notes')}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <StickyNote className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Notes &amp; Messages</span>
+                </button>
+                {canViewOpsCoverage || isOpsOfficer ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('operations_officers')}
+                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    <ShieldAlert className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                    <span>Operations Officers</span>
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => onNavigate('results')}

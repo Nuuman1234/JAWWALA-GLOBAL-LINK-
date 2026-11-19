@@ -1,8 +1,12 @@
+import { deleteApp, initializeApp } from 'firebase/app';
 import {
   EmailAuthProvider,
   createUserWithEmailAndPassword,
   deleteUser,
+  getAuth,
   reauthenticateWithCredential,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -20,13 +24,15 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { auth, db, googleProvider } from '../lib/firebase';
+import { auth, db, firebaseConfig, googleProvider } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firestoreError';
 import {
   AccountStatus,
   DEFAULT_WHATSAPP_GROUP_NAME,
   DEFAULT_WHATSAPP_GROUP_URL,
   UserRole,
+  canManageOperationsOfficers,
+  canManageUsers,
   type BootstrapLock,
   type GlobalSettings,
   type LgaId,
@@ -43,6 +49,7 @@ import {
   hashSecretPBKDF2,
   normalizePhoneNumber,
   normalizeRecoveryKey,
+  validateEmailAddress,
   validatePasswordStrength,
   validateRegistrationInputs,
   verifySecretPBKDF2,
@@ -50,15 +57,61 @@ import {
 import {
   clearCachedSession,
   deletePendingOfflineRegistration,
+  getPendingOfflineRegistrations,
   loadCachedSession,
   purgeAllUserSnapshots,
   saveCachedSession,
   savePendingOfflineRegistration,
+  unwrapOfflinePassword,
   updatePendingOfflineRegistrationStatus,
+  wrapAndStoreOfflinePassword,
 } from './offlineQueue';
+import { getEffectiveLocationCatalog } from './directoryService';
+import {
+  buildBundledLocationCatalog,
+  isLocationSelectionValidInCatalog,
+} from './officialDirectory';
 
 const LS_ACTIVE_RESET_REQ_KEY = 'fdmis_active_reset_req_id';
+const LS_PHONE_EMAIL_MAP_KEY = 'fdmis_phone_email_map_v1';
 const ephemeralOfflineRegPasswords = new Map<string, string>();
+
+function loadPhoneEmailMap(): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(LS_PHONE_EMAIL_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function recordLocalPhoneEmailMapping(
+  phoneInput: string | null | undefined,
+  emailInput: string | null | undefined
+): Promise<void> {
+  if (typeof window === 'undefined' || !phoneInput || !emailInput) return;
+  const cleanEmail = emailInput.trim().toLowerCase();
+  if (!cleanEmail || cleanEmail.endsWith('@fdmis.local')) return;
+  const norm = normalizePhoneNumber(phoneInput);
+  if (!norm.valid) return;
+  try {
+    const hash = await computePhoneBlindHash(norm.digits);
+    const map = loadPhoneEmailMap();
+    map[hash] = cleanEmail;
+    window.localStorage.setItem(LS_PHONE_EMAIL_MAP_KEY, JSON.stringify(map));
+  } catch {
+    // Storage restricted
+  }
+}
+
+function lookupLocalPhoneEmailMapping(phoneHash: string): string | null {
+  const map = loadPhoneEmailMap();
+  const hit = map[phoneHash];
+  return typeof hit === 'string' && hit.includes('@') ? hit : null;
+}
 
 export function cacheEphemeralOfflinePassword(regId: string, password: string): void {
   ephemeralOfflineRegPasswords.set(regId, password);
@@ -70,6 +123,21 @@ export function getEphemeralOfflinePassword(regId: string): string | undefined {
 
 export function clearEphemeralOfflinePassword(regId: string): void {
   ephemeralOfflineRegPasswords.delete(regId);
+}
+
+export function hasStoredOfflineRegistrationKey(reg: PendingOfflineRegistration): boolean {
+  return Boolean(
+    ephemeralOfflineRegPasswords.has(reg.id) ||
+      (reg.wrappedPasswordCipher && reg.wrappedPasswordIv)
+  );
+}
+
+export async function resolvePendingOfflinePassword(
+  reg: PendingOfflineRegistration
+): Promise<string | null> {
+  const mem = ephemeralOfflineRegPasswords.get(reg.id);
+  if (mem) return mem;
+  return unwrapOfflinePassword(reg);
 }
 
 export interface ProfileCheckResult {
@@ -105,6 +173,8 @@ function isOfflineOrNetworkError(error: unknown): boolean {
     msg.includes('offline') ||
     msg.includes('unavailable') ||
     msg.includes('network-request-failed') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('timeout') ||
     msg.includes('failed to get document')
   );
 }
@@ -122,7 +192,7 @@ function mapFirebaseAuthError(error: unknown, fallback: string): Error {
       : '';
   if (code === 'auth/email-already-in-use') {
     return new Error(
-      'This phone number is already registered in FDMIS. Sign in with your password or use Forgot Password to recover access.'
+      'This email address or phone number is already registered in FDMIS. Sign in directly or use Forgot Password to recover access.'
     );
   }
   if (
@@ -130,7 +200,10 @@ function mapFirebaseAuthError(error: unknown, fallback: string): Error {
     code === 'auth/wrong-password' ||
     code === 'auth/user-not-found'
   ) {
-    return new Error('Invalid phone number or password.');
+    return new Error('Invalid email/phone number or password.');
+  }
+  if (code === 'auth/invalid-email') {
+    return new Error('Enter a valid email address.');
   }
   if (code === 'auth/too-many-requests') {
     return new Error(
@@ -241,6 +314,7 @@ export async function checkUserAndBootstrapState(
     const account = userSnap.data() as UserAccount;
     if (account.status === AccountStatus.ACTIVE && !account.sessionRevoked) {
       saveCachedSession(account);
+      void recordLocalPhoneEmailMapping(account.phone, account.email);
 
       if (typeof navigator === 'undefined' || navigator.onLine) {
         try {
@@ -447,6 +521,9 @@ export async function registerPendingAccount(
     formattedPhone = norm.e164;
   }
 
+  const hasValidLocation = Boolean(
+    location && location.lgaId && location.wardId && location.puId
+  );
   const isPhoneUser = user.email?.endsWith('@fdmis.local') ?? false;
   const userRef = doc(db, 'users', user.uid);
   const payload: Record<string, unknown> = {
@@ -454,11 +531,11 @@ export async function registerPendingAccount(
     email: user.email || '',
     displayName: cleanName,
     authMethod: isPhoneUser ? 'PHONE_PASSWORD' : 'GOOGLE',
-    role: UserRole.PENDING,
-    status: AccountStatus.PENDING_APPROVAL,
-    assignedLgaId: '',
-    assignedWardId: '',
-    assignedPollingUnitId: '',
+    role: hasValidLocation ? UserRole.ORDINARY_USER : UserRole.PENDING,
+    status: hasValidLocation ? AccountStatus.ACTIVE : AccountStatus.PENDING_APPROVAL,
+    assignedLgaId: hasValidLocation && location ? location.lgaId : '',
+    assignedWardId: hasValidLocation && location ? location.wardId : '',
+    assignedPollingUnitId: hasValidLocation && location ? location.puId : '',
     requestedLgaId: location?.lgaId || '',
     requestedWardId: location?.wardId || '',
     requestedWardName: location?.wardName || '',
@@ -482,19 +559,26 @@ export async function registerPendingAccount(
 
   try {
     const snap = await getDoc(userRef);
-    return snap.data() as UserAccount;
+    const createdAccount = snap.data() as UserAccount;
+    if (createdAccount.status === AccountStatus.ACTIVE && !createdAccount.sessionRevoked) {
+      saveCachedSession(createdAccount);
+      void recordLocalPhoneEmailMapping(createdAccount.phone, createdAccount.email);
+    }
+    return createdAccount;
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
   }
 }
 
-// ---------- PHONE + PASSWORD REGISTRATION, SIGN-IN & OFFLINE SYNC ----------
+// ---------- EMAIL + PHONE + PASSWORD REGISTRATION, SIGN-IN & OFFLINE SYNC ----------
 
 async function commitPhoneAccountDocuments(params: {
   firebaseUser: FirebaseUser;
   displayName: string;
+  email: string;
   phoneE164: string;
   phoneHash: string;
+  authMethod: 'EMAIL_PASSWORD' | 'PHONE_PASSWORD';
   passwordSalt: string;
   passwordHash: string;
   recoveryKeySalt: string;
@@ -514,15 +598,15 @@ async function commitPhoneAccountDocuments(params: {
   const batch = writeBatch(db);
   batch.set(userRef, {
     uid: firebaseUser.uid,
-    email: firebaseUser.email || '',
+    email: params.email || firebaseUser.email || '',
     displayName: params.displayName.trim().slice(0, 110),
     phone: params.phoneE164,
-    authMethod: 'PHONE_PASSWORD',
-    role: UserRole.PENDING,
-    status: AccountStatus.PENDING_APPROVAL,
-    assignedLgaId: '',
-    assignedWardId: '',
-    assignedPollingUnitId: '',
+    authMethod: params.authMethod,
+    role: UserRole.ORDINARY_USER,
+    status: AccountStatus.ACTIVE,
+    assignedLgaId: params.location.lgaId.slice(0, 32),
+    assignedWardId: params.location.wardId.slice(0, 128),
+    assignedPollingUnitId: params.location.puId.slice(0, 128),
     requestedLgaId: params.location.lgaId.slice(0, 32),
     requestedWardId: params.location.wardId.slice(0, 128),
     requestedWardName: params.location.wardName.slice(0, 120),
@@ -550,6 +634,7 @@ async function commitPhoneAccountDocuments(params: {
   batch.set(phoneIndexRef, {
     phoneHash: params.phoneHash,
     ownerUidHash,
+    accountType: params.authMethod,
     authSeq: 0,
     pendingNextAuthSeq: 0,
     resetPinSalt: '',
@@ -563,8 +648,8 @@ async function commitPhoneAccountDocuments(params: {
   batch.set(auditRef, {
     actorUid: firebaseUser.uid,
     actorName: params.displayName.trim().slice(0, 110),
-    actorEmail: params.phoneE164,
-    actorRole: UserRole.PENDING,
+    actorEmail: params.email || params.phoneE164,
+    actorRole: UserRole.ORDINARY_USER,
     action: params.auditAction,
     affectedEntity: 'users',
     affectedId: firebaseUser.uid,
@@ -587,11 +672,69 @@ async function commitPhoneAccountDocuments(params: {
   if (!snap.exists()) {
     throw new Error('Account registered, but profile confirmation could not be loaded.');
   }
-  return snap.data() as UserAccount;
+  const account = snap.data() as UserAccount;
+  saveCachedSession(account);
+  await recordLocalPhoneEmailMapping(params.phoneE164, params.email);
+  return account;
 }
 
-export async function registerWithPhoneAndPassword(input: {
+async function queueOfflineRegistrationRecord(params: {
+  cleanName: string;
+  email?: string;
+  phoneE164: string;
+  phoneDigits: string;
+  phoneHash: string;
+  password: string;
+  passwordSalt: string;
+  passwordHash: string;
+  recoveryKeySalt: string;
+  recoveryKeyHash: string;
+  location: RegistrationLocationSelection;
+}): Promise<PendingOfflineRegistration> {
+  const now = new Date().toISOString();
+  const regId = `offreg_${params.phoneHash.slice(0, 16)}_${Date.now()}`;
+  const wrapped = await wrapAndStoreOfflinePassword(regId, params.password);
+
+  const offlineRecord: PendingOfflineRegistration = {
+    id: regId,
+    displayName: params.cleanName,
+    ...(params.email ? { email: params.email } : {}),
+    phoneE164: params.phoneE164,
+    phoneDigits: params.phoneDigits,
+    phoneHash: params.phoneHash,
+    passwordSalt: params.passwordSalt,
+    passwordHash: params.passwordHash,
+    recoveryKeySalt: params.recoveryKeySalt,
+    recoveryKeyHash: params.recoveryKeyHash,
+    ...(wrapped
+      ? {
+          wrappedPasswordCipher: wrapped.cipherHex,
+          wrappedPasswordIv: wrapped.ivHex,
+        }
+      : {}),
+    requestedLgaId: params.location.lgaId,
+    requestedLgaName: params.location.lgaName,
+    requestedWardId: params.location.wardId,
+    requestedWardName: params.location.wardName,
+    requestedPollingUnitId: params.location.puId,
+    requestedPollingUnitCode: params.location.puCode,
+    requestedPollingUnitName: params.location.puName,
+    status: 'QUEUED_OFFLINE',
+    createdAtIso: now,
+    updatedAtIso: now,
+  };
+
+  await savePendingOfflineRegistration(offlineRecord);
+  cacheEphemeralOfflinePassword(regId, params.password);
+  if (params.email) {
+    await recordLocalPhoneEmailMapping(params.phoneE164, params.email);
+  }
+  return offlineRecord;
+}
+
+export async function registerWithEmailAndPhone(input: {
   fullName: string;
+  email: string;
   phone: string;
   password: string;
   confirmPassword: string;
@@ -599,6 +742,8 @@ export async function registerWithPhoneAndPassword(input: {
 }): Promise<PhoneRegistrationResult> {
   const validationError = validateRegistrationInputs({
     fullName: input.fullName,
+    email: input.email,
+    requireEmail: true,
     phone: input.phone,
     password: input.password,
     confirmPassword: input.confirmPassword,
@@ -610,6 +755,22 @@ export async function registerWithPhoneAndPassword(input: {
     throw new Error(validationError);
   }
 
+  const emailCheck = validateEmailAddress(input.email);
+  if (!emailCheck.valid) {
+    throw new Error(emailCheck.error || 'Enter a valid email address.');
+  }
+
+  // Strictly validate LGA -> Ward -> Polling Unit against the official/synced directory
+  const effectiveCatalog = await getEffectiveLocationCatalog();
+  const locationValid =
+    isLocationSelectionValidInCatalog(effectiveCatalog, input.location) ||
+    isLocationSelectionValidInCatalog(buildBundledLocationCatalog(), input.location);
+  if (!locationValid) {
+    throw new Error(
+      'Selected LGA, Ward, or Polling Unit could not be verified in the official directory. Reselect from the dropdown lists.'
+    );
+  }
+
   const normalized = normalizePhoneNumber(input.phone);
   if (!normalized.valid) {
     throw new Error(normalized.error || 'Enter a valid phone number.');
@@ -617,37 +778,187 @@ export async function registerWithPhoneAndPassword(input: {
 
   const cleanName = input.fullName.trim().slice(0, 110);
   const phoneHash = await computePhoneBlindHash(normalized.digits);
+
+  // Prevent duplicate pending registrations on this device for the same phone number or email
+  const existingQueue = await getPendingOfflineRegistrations();
+  const duplicatePending = existingQueue.find(
+    (r) =>
+      (r.phoneHash === phoneHash ||
+        (r.email && r.email.toLowerCase() === emailCheck.normalized)) &&
+      (r.status === 'QUEUED_OFFLINE' || r.status === 'SYNC_FAILED')
+  );
+  if (duplicatePending) {
+    throw new Error(
+      'A registration for this email or phone number is already saved offline on this device (PENDING SYNCHRONIZATION).'
+    );
+  }
+
   const passwordHashed = await hashSecretPBKDF2(input.password);
   const recoveryKey = generateRecoveryKey();
   const recoveryHashed = await hashSecretPBKDF2(normalizeRecoveryKey(recoveryKey));
 
   const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
   if (!onlineNow) {
-    const now = new Date().toISOString();
-    const regId = `offreg_${phoneHash.slice(0, 16)}_${Date.now()}`;
-    const offlineRecord: PendingOfflineRegistration = {
-      id: regId,
-      displayName: cleanName,
+    const offlineRecord = await queueOfflineRegistrationRecord({
+      cleanName,
+      email: emailCheck.normalized,
       phoneE164: normalized.e164,
       phoneDigits: normalized.digits,
       phoneHash,
+      password: input.password,
       passwordSalt: passwordHashed.saltHex,
       passwordHash: passwordHashed.hashHex,
       recoveryKeySalt: recoveryHashed.saltHex,
       recoveryKeyHash: recoveryHashed.hashHex,
-      requestedLgaId: input.location.lgaId,
-      requestedLgaName: input.location.lgaName,
-      requestedWardId: input.location.wardId,
-      requestedWardName: input.location.wardName,
-      requestedPollingUnitId: input.location.puId,
-      requestedPollingUnitCode: input.location.puCode,
-      requestedPollingUnitName: input.location.puName,
-      status: 'QUEUED_OFFLINE',
-      createdAtIso: now,
-      updatedAtIso: now,
+      location: input.location,
+    });
+    return {
+      queuedOffline: true,
+      offlineRegistration: offlineRecord,
+      recoveryKey,
     };
-    await savePendingOfflineRegistration(offlineRecord);
-    cacheEphemeralOfflinePassword(regId, input.password);
+  }
+
+  try {
+    const existingIdx = await getDoc(doc(db, 'phone_index', phoneHash));
+    if (existingIdx.exists()) {
+      throw new Error(
+        'This phone number is already registered in FDMIS. Sign in with your email/phone and password, or use Forgot Password to recover access.'
+      );
+    }
+
+    const cred = await createUserWithEmailAndPassword(auth, emailCheck.normalized, input.password);
+    void sendEmailVerification(cred.user).catch(() => {
+      // Non-blocking verification email dispatch
+    });
+    const account = await commitPhoneAccountDocuments({
+      firebaseUser: cred.user,
+      displayName: cleanName,
+      email: emailCheck.normalized,
+      phoneE164: normalized.e164,
+      phoneHash,
+      authMethod: 'EMAIL_PASSWORD',
+      passwordSalt: passwordHashed.saltHex,
+      passwordHash: passwordHashed.hashHex,
+      recoveryKeySalt: recoveryHashed.saltHex,
+      recoveryKeyHash: recoveryHashed.hashHex,
+      location: input.location,
+      auditAction: 'EMAIL_PHONE_ACCOUNT_REGISTERED',
+      auditDetails: `Auto-approved standard account for ${cleanName} (${emailCheck.normalized}, ${normalized.maskedPhone}) scoped to ${input.location.lgaId.toUpperCase()} / ${input.location.wardName} / ${input.location.puCode}.`,
+    });
+
+    return {
+      queuedOffline: false,
+      account,
+      recoveryKey,
+    };
+  } catch (error) {
+    if (isOfflineOrNetworkError(error)) {
+      const offlineRecord = await queueOfflineRegistrationRecord({
+        cleanName,
+        email: emailCheck.normalized,
+        phoneE164: normalized.e164,
+        phoneDigits: normalized.digits,
+        phoneHash,
+        password: input.password,
+        passwordSalt: passwordHashed.saltHex,
+        passwordHash: passwordHashed.hashHex,
+        recoveryKeySalt: recoveryHashed.saltHex,
+        recoveryKeyHash: recoveryHashed.hashHex,
+        location: input.location,
+      });
+      return {
+        queuedOffline: true,
+        offlineRegistration: offlineRecord,
+        recoveryKey,
+      };
+    }
+    throw mapFirebaseAuthError(error, 'Unable to create FDMIS operator account.');
+  }
+}
+
+export async function registerWithPhoneAndPassword(input: {
+  fullName: string;
+  email?: string;
+  phone: string;
+  password: string;
+  confirmPassword: string;
+  location: RegistrationLocationSelection;
+}): Promise<PhoneRegistrationResult> {
+  if (input.email && input.email.trim().length > 0) {
+    return registerWithEmailAndPhone({
+      fullName: input.fullName,
+      email: input.email,
+      phone: input.phone,
+      password: input.password,
+      confirmPassword: input.confirmPassword,
+      location: input.location,
+    });
+  }
+  const validationError = validateRegistrationInputs({
+    fullName: input.fullName,
+    requireEmail: false,
+    phone: input.phone,
+    password: input.password,
+    confirmPassword: input.confirmPassword,
+    lgaId: input.location.lgaId,
+    wardId: input.location.wardId,
+    pollingUnitId: input.location.puId,
+  });
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  // Strictly validate LGA -> Ward -> Polling Unit against the official/synced directory
+  const effectiveCatalog = await getEffectiveLocationCatalog();
+  const locationValid =
+    isLocationSelectionValidInCatalog(effectiveCatalog, input.location) ||
+    isLocationSelectionValidInCatalog(buildBundledLocationCatalog(), input.location);
+  if (!locationValid) {
+    throw new Error(
+      'Selected LGA, Ward, or Polling Unit could not be verified in the official directory. Reselect from the dropdown lists.'
+    );
+  }
+
+  const normalized = normalizePhoneNumber(input.phone);
+  if (!normalized.valid) {
+    throw new Error(normalized.error || 'Enter a valid phone number.');
+  }
+
+  const cleanName = input.fullName.trim().slice(0, 110);
+  const phoneHash = await computePhoneBlindHash(normalized.digits);
+
+  // Prevent duplicate pending registrations on this device for the same phone number
+  const existingQueue = await getPendingOfflineRegistrations();
+  const duplicatePending = existingQueue.find(
+    (r) =>
+      r.phoneHash === phoneHash &&
+      (r.status === 'QUEUED_OFFLINE' || r.status === 'SYNC_FAILED')
+  );
+  if (duplicatePending) {
+    throw new Error(
+      'A registration for this phone number is already saved offline on this device (PENDING SYNCHRONIZATION).'
+    );
+  }
+
+  const passwordHashed = await hashSecretPBKDF2(input.password);
+  const recoveryKey = generateRecoveryKey();
+  const recoveryHashed = await hashSecretPBKDF2(normalizeRecoveryKey(recoveryKey));
+
+  const onlineNow = typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (!onlineNow) {
+    const offlineRecord = await queueOfflineRegistrationRecord({
+      cleanName,
+      phoneE164: normalized.e164,
+      phoneDigits: normalized.digits,
+      phoneHash,
+      password: input.password,
+      passwordSalt: passwordHashed.saltHex,
+      passwordHash: passwordHashed.hashHex,
+      recoveryKeySalt: recoveryHashed.saltHex,
+      recoveryKeyHash: recoveryHashed.hashHex,
+      location: input.location,
+    });
     return {
       queuedOffline: true,
       offlineRegistration: offlineRecord,
@@ -668,15 +979,17 @@ export async function registerWithPhoneAndPassword(input: {
     const account = await commitPhoneAccountDocuments({
       firebaseUser: cred.user,
       displayName: cleanName,
+      email: syntheticEmail,
       phoneE164: normalized.e164,
       phoneHash,
+      authMethod: 'PHONE_PASSWORD',
       passwordSalt: passwordHashed.saltHex,
       passwordHash: passwordHashed.hashHex,
       recoveryKeySalt: recoveryHashed.saltHex,
       recoveryKeyHash: recoveryHashed.hashHex,
       location: input.location,
       auditAction: 'PHONE_ACCOUNT_REGISTERED',
-      auditDetails: `Registered pending operator ${cleanName} (${normalized.maskedPhone}) requesting ${input.location.lgaId.toUpperCase()} / ${input.location.wardName} / ${input.location.puCode}.`,
+      auditDetails: `Auto-approved standard account for ${cleanName} (${normalized.maskedPhone}) scoped to ${input.location.lgaId.toUpperCase()} / ${input.location.wardName} / ${input.location.puCode}.`,
     });
 
     return {
@@ -686,31 +999,18 @@ export async function registerWithPhoneAndPassword(input: {
     };
   } catch (error) {
     if (isOfflineOrNetworkError(error)) {
-      const now = new Date().toISOString();
-      const regId = `offreg_${phoneHash.slice(0, 16)}_${Date.now()}`;
-      const offlineRecord: PendingOfflineRegistration = {
-        id: regId,
-        displayName: cleanName,
+      const offlineRecord = await queueOfflineRegistrationRecord({
+        cleanName,
         phoneE164: normalized.e164,
         phoneDigits: normalized.digits,
         phoneHash,
+        password: input.password,
         passwordSalt: passwordHashed.saltHex,
         passwordHash: passwordHashed.hashHex,
         recoveryKeySalt: recoveryHashed.saltHex,
         recoveryKeyHash: recoveryHashed.hashHex,
-        requestedLgaId: input.location.lgaId,
-        requestedLgaName: input.location.lgaName,
-        requestedWardId: input.location.wardId,
-        requestedWardName: input.location.wardName,
-        requestedPollingUnitId: input.location.puId,
-        requestedPollingUnitCode: input.location.puCode,
-        requestedPollingUnitName: input.location.puName,
-        status: 'QUEUED_OFFLINE',
-        createdAtIso: now,
-        updatedAtIso: now,
-      };
-      await savePendingOfflineRegistration(offlineRecord);
-      cacheEphemeralOfflinePassword(regId, input.password);
+        location: input.location,
+      });
       return {
         queuedOffline: true,
         offlineRegistration: offlineRecord,
@@ -752,13 +1052,23 @@ export async function syncPendingOfflineRegistration(
       );
     }
 
-    const syntheticEmail = getSyntheticEmailForPhoneDigits(reg.phoneDigits, 0);
-    const cred = await createUserWithEmailAndPassword(auth, syntheticEmail, rawPassword);
+    const hasPersonalEmail = Boolean(reg.email && !reg.email.endsWith('@fdmis.local'));
+    const authEmail = hasPersonalEmail
+      ? reg.email!.trim().toLowerCase()
+      : getSyntheticEmailForPhoneDigits(reg.phoneDigits, 0);
+    const cred = await createUserWithEmailAndPassword(auth, authEmail, rawPassword);
+    if (hasPersonalEmail) {
+      void sendEmailVerification(cred.user).catch(() => {
+        // Non-blocking verification email
+      });
+    }
     const account = await commitPhoneAccountDocuments({
       firebaseUser: cred.user,
       displayName: reg.displayName,
+      email: authEmail,
       phoneE164: reg.phoneE164,
       phoneHash: reg.phoneHash,
+      authMethod: hasPersonalEmail ? 'EMAIL_PASSWORD' : 'PHONE_PASSWORD',
       passwordSalt: reg.passwordSalt,
       passwordHash: reg.passwordHash,
       recoveryKeySalt: reg.recoveryKeySalt,
@@ -772,8 +1082,8 @@ export async function syncPendingOfflineRegistration(
         puCode: reg.requestedPollingUnitCode,
         puName: reg.requestedPollingUnitName,
       },
-      auditAction: 'OFFLINE_PHONE_ACCOUNT_SYNCED',
-      auditDetails: `Synchronized offline registration for ${reg.displayName} (${reg.phoneE164}) requesting ${reg.requestedLgaId.toUpperCase()} / ${reg.requestedWardName} / ${reg.requestedPollingUnitCode}.`,
+      auditAction: 'OFFLINE_ACCOUNT_SYNCED',
+      auditDetails: `Synchronized offline registration (created ${reg.createdAtIso}) for ${reg.displayName} (${reg.phoneE164}) and auto-approved to ${reg.requestedLgaId.toUpperCase()} / ${reg.requestedWardName} / ${reg.requestedPollingUnitCode}.`,
     });
 
     await deletePendingOfflineRegistration(reg.id);
@@ -781,9 +1091,43 @@ export async function syncPendingOfflineRegistration(
     return account;
   } catch (error) {
     const mapped = mapFirebaseAuthError(error, 'Failed to sync queued registration.');
-    await updatePendingOfflineRegistrationStatus(reg.id, 'SYNC_FAILED', mapped.message);
+    const nextStatus = isOfflineOrNetworkError(error) ? 'QUEUED_OFFLINE' : 'SYNC_FAILED';
+    await updatePendingOfflineRegistrationStatus(reg.id, nextStatus, mapped.message);
     throw mapped;
   }
+}
+
+export async function signInWithIdentifierAndPassword(
+  identifier: string,
+  password: string
+): Promise<FirebaseUser> {
+  const trimmed = identifier.trim();
+  if (!trimmed) {
+    throw new Error('Email address or phone number is required.');
+  }
+  if (!password) {
+    throw new Error('Password is required.');
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error(
+      'Internet connection is unavailable. New sign-ins require connectivity; previously signed-in sessions remain accessible offline.'
+    );
+  }
+
+  if (trimmed.includes('@')) {
+    const emailCheck = validateEmailAddress(trimmed);
+    if (!emailCheck.valid) {
+      throw new Error(emailCheck.error || 'Enter a valid email address.');
+    }
+    try {
+      const cred = await signInWithEmailAndPassword(auth, emailCheck.normalized, password);
+      return cred.user;
+    } catch (error) {
+      throw mapFirebaseAuthError(error, 'Invalid email address or password.');
+    }
+  }
+
+  return signInWithPhoneAndPassword(trimmed, password);
 }
 
 export async function signInWithPhoneAndPassword(
@@ -804,25 +1148,48 @@ export async function signInWithPhoneAndPassword(
   }
 
   const phoneHash = await computePhoneBlindHash(normalized.digits);
-  let authSeq = 0;
 
+  // Check device-local verified email mapping first for EMAIL_PASSWORD users
+  const mappedLocalEmail = lookupLocalPhoneEmailMapping(phoneHash);
+  if (mappedLocalEmail) {
+    try {
+      const cred = await signInWithEmailAndPassword(auth, mappedLocalEmail, password);
+      return cred.user;
+    } catch (error) {
+      throw mapFirebaseAuthError(error, 'Invalid phone number or password.');
+    }
+  }
+
+  let authSeq = 0;
   try {
     const idxSnap = await getDoc(doc(db, 'phone_index', phoneHash));
     if (!idxSnap.exists()) {
       throw new Error(
-        'No operator account was found for this phone number. Check the number or create a new account.'
+        'No operator account was found for this phone number. Check the number or sign in with your email address.'
       );
     }
-    const idxData = idxSnap.data() as { authSeq?: number };
+    const idxData = idxSnap.data() as {
+      authSeq?: number;
+      accountType?: 'EMAIL_PASSWORD' | 'PHONE_PASSWORD';
+    };
+    if (idxData.accountType === 'EMAIL_PASSWORD') {
+      throw new Error(
+        'This account is registered with a personal email address. Sign in using your Email Address + Password (phone sign-in resumes automatically on this device afterward).'
+      );
+    }
     if (typeof idxData.authSeq === 'number' && idxData.authSeq > 0) {
       authSeq = idxData.authSeq;
     }
   } catch (error) {
-    if (error instanceof Error && error.message.includes('No operator account')) {
+    if (
+      error instanceof Error &&
+      (error.message.includes('No operator account') ||
+        error.message.includes('registered with a personal email'))
+    ) {
       throw error;
     }
     if (isOfflineOrNetworkError(error)) {
-      throw new Error('Network connection required to verify phone credentials.');
+      throw new Error('Network connection required to verify credentials.');
     }
   }
 
@@ -832,6 +1199,213 @@ export async function signInWithPhoneAndPassword(
     return cred.user;
   } catch (error) {
     throw mapFirebaseAuthError(error, 'Invalid phone number or password.');
+  }
+}
+
+export async function sendEmailPasswordReset(emailInput: string): Promise<string> {
+  const emailCheck = validateEmailAddress(emailInput);
+  if (!emailCheck.valid) {
+    throw new Error(emailCheck.error || 'Enter a valid registered email address.');
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Internet connection required to send a password reset email.');
+  }
+  try {
+    await sendPasswordResetEmail(auth, emailCheck.normalized);
+    return emailCheck.normalized;
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    if (code === 'auth/user-not-found') {
+      throw new Error('No registered FDMIS email account matches that address.');
+    }
+    throw mapFirebaseAuthError(error, 'Unable to dispatch password reset email.');
+  }
+}
+
+export async function adminInitiateUserPasswordReset(
+  actor: UserAccount,
+  target: UserAccount
+): Promise<string> {
+  if (!canManageUsers(actor.role)) {
+    throw new Error('Only authorized administrators can initiate password resets.');
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Internet connection required to dispatch password reset instructions.');
+  }
+  if (!target.email || target.email.endsWith('@fdmis.local')) {
+    throw new Error(
+      'This legacy account has no real email address. Approve its Reset PIN in the Phone Recovery Queue below.'
+    );
+  }
+  try {
+    await sendPasswordResetEmail(auth, target.email);
+  } catch (error) {
+    throw mapFirebaseAuthError(error, 'Unable to send password reset email.');
+  }
+
+  try {
+    await setDoc(doc(collection(db, 'audit_logs')), {
+      actorUid: actor.uid,
+      actorName: actor.displayName,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'ADMIN_PASSWORD_RESET_EMAIL_SENT',
+      affectedEntity: 'users',
+      affectedId: target.uid,
+      details: `Initiated password reset email to ${target.email} (${target.displayName}).`,
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking audit log
+  }
+  return target.email;
+}
+
+export async function provisionOperationsOfficerAccount(
+  actor: UserAccount,
+  input: {
+    fullName: string;
+    email: string;
+    phone: string;
+    password: string;
+    lgaId: LgaId;
+    wardId: string;
+    wardName: string;
+  }
+): Promise<UserAccount> {
+  if (!canManageOperationsOfficers(actor.role) || actor.role !== UserRole.FULL_CONTROL_ADMIN) {
+    throw new Error(
+      'Only Full Control Admin can provision brand-new Operations Officer credentials directly. LGA admins can assign Operations Officer role to existing registered users.'
+    );
+  }
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    throw new Error('Internet connection required to create an Operations Officer account.');
+  }
+
+  const cleanName = input.fullName.trim().slice(0, 110);
+  if (cleanName.length < 2) {
+    throw new Error('Officer full name must be at least 2 characters.');
+  }
+  const emailCheck = validateEmailAddress(input.email);
+  if (!emailCheck.valid) {
+    throw new Error(emailCheck.error || 'Enter a valid email address.');
+  }
+  const normalizedPhone = normalizePhoneNumber(input.phone);
+  if (!normalizedPhone.valid) {
+    throw new Error(normalizedPhone.error || 'Enter a valid phone number.');
+  }
+  const pwIssue = validatePasswordStrength(input.password);
+  if (pwIssue) {
+    throw new Error(pwIssue);
+  }
+  if (!input.lgaId || !input.wardId) {
+    throw new Error('Select both LGA and Ward for this Operations Officer.');
+  }
+
+  const phoneHash = await computePhoneBlindHash(normalizedPhone.digits);
+  const existingIdx = await getDoc(doc(db, 'phone_index', phoneHash));
+  if (existingIdx.exists()) {
+    throw new Error(
+      'This phone number is already registered in FDMIS. Promote the existing user record instead of creating a duplicate.'
+    );
+  }
+
+  const passwordHashed = await hashSecretPBKDF2(input.password);
+  const recoveryKey = generateRecoveryKey();
+  const recoveryHashed = await hashSecretPBKDF2(normalizeRecoveryKey(recoveryKey));
+
+  const secondaryApp = initializeApp(
+    firebaseConfig,
+    `fdmis-officer-provision-${Date.now()}`
+  );
+  const secondaryAuth = getAuth(secondaryApp);
+
+  let createdUid = '';
+  try {
+    const cred = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      emailCheck.normalized,
+      input.password
+    );
+    createdUid = cred.user.uid;
+    void sendEmailVerification(cred.user).catch(() => {
+      // Non-blocking verification email
+    });
+
+    const ownerUidHash = await computeUidBlindHash(createdUid);
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users', createdUid), {
+      uid: createdUid,
+      email: emailCheck.normalized,
+      displayName: cleanName,
+      phone: normalizedPhone.e164,
+      authMethod: 'EMAIL_PASSWORD',
+      role: UserRole.OPERATIONS_OFFICER,
+      status: AccountStatus.ACTIVE,
+      assignedLgaId: input.lgaId,
+      assignedWardId: input.wardId,
+      assignedPollingUnitId: '',
+      requestedLgaId: input.lgaId,
+      requestedWardId: input.wardId,
+      requestedWardName: input.wardName.slice(0, 120),
+      sessionRevoked: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'user_credentials', createdUid), {
+      uid: createdUid,
+      phoneHash,
+      passwordSalt: passwordHashed.saltHex,
+      passwordHash: passwordHashed.hashHex,
+      passwordAlgorithm: PBKDF2_ALGORITHM_LABEL,
+      recoveryKeySalt: recoveryHashed.saltHex,
+      recoveryKeyHash: recoveryHashed.hashHex,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(db, 'phone_index', phoneHash), {
+      phoneHash,
+      ownerUidHash,
+      accountType: 'EMAIL_PASSWORD',
+      authSeq: 0,
+      pendingNextAuthSeq: 0,
+      resetPinSalt: '',
+      resetPinHash: '',
+      recoveryKeySalt: recoveryHashed.saltHex,
+      recoveryKeyHash: recoveryHashed.hashHex,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(doc(collection(db, 'audit_logs')), {
+      actorUid: actor.uid,
+      actorName: actor.displayName,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action: 'OPERATIONS_OFFICER_CREATED',
+      affectedEntity: 'users',
+      affectedId: createdUid,
+      details: `Created active Operations Officer ${cleanName} (${emailCheck.normalized}, ${normalizedPhone.maskedPhone}) for ${input.lgaId.toUpperCase()} / ${input.wardName}.`,
+      createdAt: serverTimestamp(),
+    });
+
+    await batch.commit();
+    const createdSnap = await getDoc(doc(db, 'users', createdUid));
+    return createdSnap.data() as UserAccount;
+  } catch (error) {
+    if (createdUid && secondaryAuth.currentUser) {
+      try {
+        await deleteUser(secondaryAuth.currentUser);
+      } catch {
+        // Ignore rollback failure
+      }
+    }
+    throw mapFirebaseAuthError(error, 'Unable to create Operations Officer account.');
+  } finally {
+    await signOut(secondaryAuth).catch(() => {});
+    await deleteApp(secondaryApp).catch(() => {});
   }
 }
 
@@ -1218,6 +1792,67 @@ export async function changeAccountPassword(
     }
   } catch {
     // Non-blocking if credential shadow doc is absent for legacy password accounts
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', fbUser.uid), {
+      lastPasswordChangedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking profile password-change timestamp update
+  }
+
+  try {
+    await setDoc(doc(collection(db, 'audit_logs')), {
+      actorUid: fbUser.uid,
+      actorName: fbUser.displayName || fbUser.email || 'Operator',
+      actorEmail: fbUser.email || '',
+      actorRole: 'SELF',
+      action: 'PASSWORD_CHANGED',
+      affectedEntity: 'users',
+      affectedId: fbUser.uid,
+      details: 'User re-authenticated and updated account password in Settings & Security.',
+      createdAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking audit entry
+  }
+}
+
+export async function updateUserBatteryStatus(
+  user: UserAccount,
+  level: number | null,
+  charging: boolean | null
+): Promise<void> {
+  const safeLevel =
+    typeof level === 'number' && Number.isFinite(level)
+      ? Math.max(0, Math.min(100, Math.round(level)))
+      : null;
+  const safeCharging = typeof charging === 'boolean' ? charging : null;
+
+  saveCachedSession({
+    ...user,
+    batteryLevel: safeLevel,
+    batteryCharging: safeCharging,
+    batteryUpdatedAt: new Date().toISOString(),
+  });
+
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+  const fbUser = auth.currentUser;
+  if (!fbUser || fbUser.uid !== user.uid || user.status !== AccountStatus.ACTIVE || user.sessionRevoked) {
+    return;
+  }
+
+  try {
+    await updateDoc(doc(db, 'users', user.uid), {
+      batteryLevel: safeLevel,
+      batteryCharging: safeCharging,
+      batteryUpdatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch {
+    // Non-blocking telemetry persistence
   }
 }
 

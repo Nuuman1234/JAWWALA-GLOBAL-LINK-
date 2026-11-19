@@ -195,7 +195,7 @@ export function FieldOpsPage({
       setSubmittingCheckIn(false);
       setFeedback({
         type: 'warn',
-        text: 'Device is offline. Check-in saved locally as Pending Sync and will transmit automatically when connectivity returns.',
+        text: 'OFFLINE: Check-in saved locally as PENDING SYNCHRONIZATION and will transmit automatically when connectivity returns.',
       });
       return;
     }
@@ -256,7 +256,7 @@ export function FieldOpsPage({
       setSubmittingStatus(false);
       setFeedback({
         type: 'warn',
-        text: 'Offline: Polling unit status queued locally as Pending Sync.',
+        text: 'OFFLINE: Polling unit status queued locally as PENDING SYNCHRONIZATION.',
       });
       return;
     }
@@ -565,7 +565,9 @@ export function FieldOpsPage({
                 <div>
                   <p className="text-sm font-medium text-slate-900">{item.summary}</p>
                   <p className="text-xs text-slate-500">
-                    {item.reportType.replace(/_/g, ' ')} · Queued {formatFirestoreTime(item.createdAtIso)}
+                    {item.reportType.replace(/_/g, ' ')} · Original Created:{' '}
+                    {formatFirestoreTime(item.createdAtIso)}
+                    {item.syncedAtIso ? ` · Server Synced: ${formatFirestoreTime(item.syncedAtIso)}` : ''}
                     {item.retryCount ? ` · Retries: ${item.retryCount}` : ''}
                   </p>
                   {item.errorMessage ? (
@@ -638,8 +640,13 @@ export function FieldOpsPage({
                     <td className="px-4 py-3 text-xs text-slate-700">
                       {chk.comments || '—'}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500 tabular-nums whitespace-nowrap">
-                      {formatFirestoreTime(chk.createdAt)}
+                    <td className="px-4 py-3 font-mono text-[11px] text-slate-600 tabular-nums whitespace-nowrap">
+                      <div>Orig: {formatFirestoreTime(chk.clientCreatedAtIso || chk.createdAt)}</div>
+                      {chk.serverSyncedAt ? (
+                        <div className="text-slate-400">
+                          Sync: {formatFirestoreTime(chk.serverSyncedAt)}
+                        </div>
+                      ) : null}
                     </td>
                   </tr>
                 ))}

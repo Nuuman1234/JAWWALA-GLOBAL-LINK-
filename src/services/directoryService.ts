@@ -52,9 +52,11 @@ import {
 } from '../utils/phoneAuth';
 import { loadGlobalSnapshot, saveGlobalSnapshot } from './offlineQueue';
 import {
+  buildBundledLocationCatalog,
   getOfficialDirectoryDataset,
   getPuDocId,
   getWardDocId,
+  sortLocationCatalog,
   toValidDocId,
   validateOfficialDirectory,
 } from './officialDirectory';
@@ -111,7 +113,10 @@ export function observeWards(
   } else if (user.role === UserRole.DANDUME_SUPER_ADMIN) {
     q = query(base, where('lgaId', '==', 'dandume'));
   } else if (
-    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.POLLING_UNIT_AGENT) &&
+    (user.role === UserRole.WARD_COORDINATOR ||
+      user.role === UserRole.OPERATIONS_OFFICER ||
+      user.role === UserRole.POLLING_UNIT_AGENT ||
+      user.role === UserRole.ORDINARY_USER) &&
     user.assignedLgaId
   ) {
     q = query(base, where('lgaId', '==', user.assignedLgaId));
@@ -129,7 +134,12 @@ export function observeWards(
           if (user.role === UserRole.VERIFICATION_OFFICER && user.assignedWardId) {
             return w.id === user.assignedWardId;
           }
-          if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+          if (
+            (user.role === UserRole.WARD_COORDINATOR ||
+              user.role === UserRole.OPERATIONS_OFFICER ||
+              user.role === UserRole.ORDINARY_USER) &&
+            user.assignedWardId
+          ) {
             return w.id === user.assignedWardId;
           }
           return true;
@@ -157,6 +167,34 @@ export function observePollingUnits(
   onData: (units: PollingUnit[]) => void,
   onError: (err: Error) => void
 ): Unsubscribe {
+  if (user.role === UserRole.ORDINARY_USER) {
+    if (!user.assignedPollingUnitId) {
+      onData([]);
+      return () => {};
+    }
+    return onSnapshot(
+      doc(db, 'polling_units', user.assignedPollingUnitId),
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          onData([]);
+          return;
+        }
+        onData([{ id: snapshot.id, ...(snapshot.data() as Omit<PollingUnit, 'id'>) }]);
+      },
+      (error) => {
+        try {
+          handleFirestoreError(
+            error,
+            OperationType.GET,
+            `polling_units/${user.assignedPollingUnitId}`
+          );
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    );
+  }
+
   const base = collection(db, 'polling_units');
   let q: Query;
 
@@ -174,7 +212,10 @@ export function observePollingUnits(
     q = query(base, where('lgaId', '==', 'funtua'));
   } else if (user.role === UserRole.DANDUME_SUPER_ADMIN) {
     q = query(base, where('lgaId', '==', 'dandume'));
-  } else if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  } else if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     q = query(base, where('wardId', '==', user.assignedWardId));
   } else if (user.role === UserRole.POLLING_UNIT_AGENT) {
     q = query(base, where('assignedAgentUid', '==', user.uid));
@@ -228,7 +269,10 @@ export function observePuAssignments(
     q = query(base, where('lgaId', '==', 'funtua'));
   } else if (user.role === UserRole.DANDUME_SUPER_ADMIN) {
     q = query(base, where('lgaId', '==', 'dandume'));
-  } else if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  } else if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     q = query(base, where('wardId', '==', user.assignedWardId));
   } else if (user.role === UserRole.POLLING_UNIT_AGENT) {
     q = query(base, where('agentUid', '==', user.uid));
@@ -339,7 +383,10 @@ export function observeUsers(
     };
   }
 
-  if (user.role === UserRole.WARD_COORDINATOR && user.assignedWardId) {
+  if (
+    (user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER) &&
+    user.assignedWardId
+  ) {
     const q = query(base, where('assignedWardId', '==', user.assignedWardId));
     return onSnapshot(
       q,
@@ -996,13 +1043,15 @@ export async function updateUserRoleAndScope(
     if (
       ![
         UserRole.VERIFICATION_OFFICER,
+        UserRole.OPERATIONS_OFFICER,
         UserRole.WARD_COORDINATOR,
         UserRole.POLLING_UNIT_AGENT,
+        UserRole.ORDINARY_USER,
         UserRole.PENDING,
       ].includes(updates.role)
     ) {
       throw new Error(
-        'LGA Super Admins can only assign Verification Officer, Ward Coordinator, Polling Unit Agent, or Pending roles.'
+        'LGA Super Admins can only assign Verification Officer, Operations Officer, Ward Coordinator, Polling Unit Agent, Ordinary User, or Pending roles.'
       );
     }
   }
@@ -1018,22 +1067,36 @@ export async function updateUserRoleAndScope(
 
   const normalizedWard =
     updates.role === UserRole.WARD_COORDINATOR ||
+    updates.role === UserRole.OPERATIONS_OFFICER ||
     updates.role === UserRole.POLLING_UNIT_AGENT ||
-    updates.role === UserRole.VERIFICATION_OFFICER
+    updates.role === UserRole.VERIFICATION_OFFICER ||
+    updates.role === UserRole.ORDINARY_USER
       ? updates.assignedWardId
       : '';
 
+  if (updates.role === UserRole.OPERATIONS_OFFICER) {
+    if (!normalizedLga || !normalizedWard) {
+      throw new Error('Operations Officer role requires both LGA and Ward assignment.');
+    }
+  }
+
   const normalizedPu =
-    updates.role === UserRole.POLLING_UNIT_AGENT ? updates.assignedPollingUnitId : '';
+    updates.role === UserRole.POLLING_UNIT_AGENT || updates.role === UserRole.ORDINARY_USER
+      ? updates.assignedPollingUnitId
+      : '';
+
+  // Only Polling Unit Agent holds exclusive pu_assignments 1-to-1 lock
+  const exclusiveLockPuId =
+    updates.role === UserRole.POLLING_UNIT_AGENT ? normalizedPu : '';
 
   const userRef = doc(db, 'users', target.uid);
 
   try {
     await runTransaction(db, async (tx) => {
-      // If a PU is being assigned to this user, ensure atomic 1-to-1 availability!
-      if (normalizedPu) {
-        const nextPuRef = doc(db, 'polling_units', normalizedPu);
-        const nextAssignRef = doc(db, 'pu_assignments', normalizedPu);
+      // If a PU is being exclusively assigned to a Polling Unit Agent, ensure atomic 1-to-1 availability!
+      if (exclusiveLockPuId) {
+        const nextPuRef = doc(db, 'polling_units', exclusiveLockPuId);
+        const nextAssignRef = doc(db, 'pu_assignments', exclusiveLockPuId);
         const [nextPuSnap, nextAssignSnap] = await Promise.all([
           tx.get(nextPuRef),
           tx.get(nextAssignRef),
@@ -1414,11 +1477,6 @@ export async function updateGlobalSettings(
 
 // ---------- PUBLIC DYNAMIC LOCATION CATALOG (FOR REGISTRATION & APK SYNC) ----------
 
-function sortLocationCatalog(items: LocationCatalogLga[]): LocationCatalogLga[] {
-  const order: Record<string, number> = { funtua: 0, dandume: 1 };
-  return [...items].sort((a, b) => (order[a.lgaId] ?? 9) - (order[b.lgaId] ?? 9));
-}
-
 export async function syncLocationCatalogFromLiveDirectory(
   actor: UserAccount,
   wardsList: Ward[],
@@ -1541,29 +1599,83 @@ export async function rebuildAndSyncLocationCatalog(
   }
 }
 
+function isCatalogEntryValid(entry: unknown): entry is LocationCatalogLga {
+  if (!entry || typeof entry !== 'object') return false;
+  const e = entry as Partial<LocationCatalogLga>;
+  return (
+    (e.lgaId === 'funtua' || e.lgaId === 'dandume') &&
+    Array.isArray(e.wards) &&
+    e.wards.length > 0 &&
+    Array.isArray(e.pollingUnits) &&
+    e.pollingUnits.length > 0
+  );
+}
+
+function mergeLocationCatalog(
+  base: LocationCatalogLga[],
+  incoming: LocationCatalogLga[]
+): LocationCatalogLga[] {
+  const byLga = new Map<LgaId, LocationCatalogLga>();
+  base.forEach((item) => {
+    if (isCatalogEntryValid(item)) {
+      byLga.set(item.lgaId, item);
+    }
+  });
+  incoming.forEach((item) => {
+    if (isCatalogEntryValid(item)) {
+      byLga.set(item.lgaId, item);
+    }
+  });
+  return sortLocationCatalog(Array.from(byLga.values()));
+}
+
+export async function getEffectiveLocationCatalog(): Promise<LocationCatalogLga[]> {
+  const bundled = buildBundledLocationCatalog();
+  const cached = await loadGlobalSnapshot<LocationCatalogLga[]>('locationCatalog');
+  if (Array.isArray(cached) && cached.some(isCatalogEntryValid)) {
+    return mergeLocationCatalog(bundled, cached);
+  }
+  return bundled;
+}
+
 export function subscribeToPublicLocationCatalog(
   onData: (catalog: LocationCatalogLga[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  onSourceChange?: (source: 'bundled' | 'cached' | 'live') => void
 ): Unsubscribe {
   let receivedLive = false;
+  let currentCatalog = buildBundledLocationCatalog();
+
+  onData(currentCatalog);
+  if (onSourceChange) onSourceChange('bundled');
 
   void loadGlobalSnapshot<LocationCatalogLga[]>('locationCatalog').then((cached) => {
-    if (!receivedLive && Array.isArray(cached) && cached.length > 0) {
-      onData(sortLocationCatalog(cached));
+    if (!receivedLive && Array.isArray(cached) && cached.some(isCatalogEntryValid)) {
+      currentCatalog = mergeLocationCatalog(currentCatalog, cached);
+      onData(currentCatalog);
+      if (onSourceChange) onSourceChange('cached');
+    } else if (!cached || !Array.isArray(cached) || cached.length === 0) {
+      // Seed persistent offline snapshot on first install so local snapshot is immediately durable
+      void saveGlobalSnapshot('locationCatalog', currentCatalog);
     }
   });
 
   return onSnapshot(
     collection(db, 'location_catalog'),
     (snapshot) => {
-      receivedLive = true;
-      const items = sortLocationCatalog(
-        snapshot.docs.map((d) => d.data() as LocationCatalogLga)
+      const serverItems = sortLocationCatalog(
+        snapshot.docs
+          .map((d) => d.data() as LocationCatalogLga)
+          .filter(isCatalogEntryValid)
       );
-      if (items.length > 0) {
-        void saveGlobalSnapshot('locationCatalog', items);
+      if (serverItems.length > 0) {
+        receivedLive = true;
+        currentCatalog = mergeLocationCatalog(currentCatalog, serverItems);
+        void saveGlobalSnapshot('locationCatalog', currentCatalog);
+        onData(currentCatalog);
+        if (onSourceChange) onSourceChange('live');
       }
-      onData(items);
+      // If server collection is empty or stale offline, NEVER erase local bundled/cached directory!
     },
     (error) => {
       if (onError) {
@@ -1573,22 +1685,31 @@ export function subscribeToPublicLocationCatalog(
   );
 }
 
-export async function fetchPublicLocationCatalog(): Promise<LocationCatalogLga[]> {
+export async function fetchPublicLocationCatalogWithStatus(): Promise<{
+  catalog: LocationCatalogLga[];
+  updatedFromServer: boolean;
+}> {
+  const baseline = await getEffectiveLocationCatalog();
   try {
     const snap = await getDocs(collection(db, 'location_catalog'));
-    const items = sortLocationCatalog(
-      snap.docs.map((d) => d.data() as LocationCatalogLga)
+    const serverItems = sortLocationCatalog(
+      snap.docs.map((d) => d.data() as LocationCatalogLga).filter(isCatalogEntryValid)
     );
-    if (items.length > 0) {
-      await saveGlobalSnapshot('locationCatalog', items);
-      return items;
+    if (serverItems.length > 0) {
+      const merged = mergeLocationCatalog(baseline, serverItems);
+      await saveGlobalSnapshot('locationCatalog', merged);
+      return { catalog: merged, updatedFromServer: true };
     }
   } catch {
-    // Fall back to cached snapshot when offline or unavailable
+    // Preserve existing local/bundled directory silently when offline or server unreachable
   }
 
-  const cached = await loadGlobalSnapshot<LocationCatalogLga[]>('locationCatalog');
-  return Array.isArray(cached) ? sortLocationCatalog(cached) : [];
+  return { catalog: baseline, updatedFromServer: false };
+}
+
+export async function fetchPublicLocationCatalog(): Promise<LocationCatalogLga[]> {
+  const res = await fetchPublicLocationCatalogWithStatus();
+  return res.catalog;
 }
 
 // ---------- PASSWORD RECOVERY REQUEST REVIEW (ADMIN) ----------
@@ -1756,6 +1877,96 @@ export async function rejectPasswordResetRequest(
     request.id,
     `Rejected password reset for ${request.applicantName} (${request.maskedPhone}). Reason: ${cleanReason}`
   );
+}
+
+export interface WardOperationsCoverageItem {
+  wardId: string;
+  wardCode: string;
+  wardName: string;
+  lgaId: LgaId;
+  activeCount: number;
+  suspendedCount: number;
+  minimumRequired: number;
+  vacancyCount: number;
+  isCompliant: boolean;
+  officers: UserAccount[];
+}
+
+export function computeWardOperationsCoverage(
+  wards: Ward[],
+  users: UserAccount[],
+  minimumRequired = 5
+): WardOperationsCoverageItem[] {
+  const officersByWard = new Map<string, UserAccount[]>();
+  const seenUidByWard = new Set<string>();
+
+  users.forEach((u) => {
+    if (u.role !== UserRole.OPERATIONS_OFFICER || !u.assignedWardId) return;
+    const dedupeKey = `${u.assignedWardId}::${u.uid}`;
+    if (seenUidByWard.has(dedupeKey)) return;
+    seenUidByWard.add(dedupeKey);
+    const list = officersByWard.get(u.assignedWardId) || [];
+    list.push(u);
+    officersByWard.set(u.assignedWardId, list);
+  });
+
+  return [...wards]
+    .sort(
+      (a, b) =>
+        a.lgaId.localeCompare(b.lgaId) ||
+        a.wardCode.localeCompare(b.wardCode) ||
+        a.name.localeCompare(b.name)
+    )
+    .map((ward) => {
+      const officers = (officersByWard.get(ward.id) || []).sort((a, b) =>
+        a.displayName.localeCompare(b.displayName)
+      );
+      const activeCount = officers.filter(
+        (o) => o.status === AccountStatus.ACTIVE && !o.sessionRevoked
+      ).length;
+      const suspendedCount = officers.length - activeCount;
+      const vacancyCount = Math.max(0, minimumRequired - activeCount);
+      return {
+        wardId: ward.id,
+        wardCode: ward.wardCode,
+        wardName: ward.name,
+        lgaId: ward.lgaId,
+        activeCount,
+        suspendedCount,
+        minimumRequired,
+        vacancyCount,
+        isCompliant: activeCount >= minimumRequired,
+        officers,
+      };
+    });
+}
+
+export async function assignOperationsOfficerToWard(
+  actor: UserAccount,
+  target: UserAccount,
+  lgaId: LgaId,
+  wardId: string
+): Promise<void> {
+  if (!wardId.trim()) {
+    throw new Error('Select a target Ward before assigning an Operations Officer.');
+  }
+  if (
+    target.role === UserRole.OPERATIONS_OFFICER &&
+    target.assignedLgaId === lgaId &&
+    target.assignedWardId === wardId &&
+    target.status === AccountStatus.ACTIVE
+  ) {
+    throw new Error(
+      `${target.displayName} is already actively assigned as an Operations Officer in this ward.`
+    );
+  }
+  await updateUserRoleAndScope(actor, target, {
+    role: UserRole.OPERATIONS_OFFICER,
+    status: AccountStatus.ACTIVE,
+    assignedLgaId: lgaId,
+    assignedWardId: wardId,
+    assignedPollingUnitId: '',
+  });
 }
 
 export { canManageDirectory };

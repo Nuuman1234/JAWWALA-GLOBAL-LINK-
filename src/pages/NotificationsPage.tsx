@@ -6,9 +6,11 @@ import {
   Lock,
   Mail,
   MessageSquare,
+  RefreshCw,
   Send,
 } from 'lucide-react';
 import { EmptyState } from '../components/EmptyState';
+import { OfflineSyncBadge } from '../components/StatusBadge';
 import { WhatsAppGroupCard } from '../components/WhatsAppGroupCard';
 import {
   LGA_DEFINITIONS,
@@ -16,10 +18,13 @@ import {
   canReviewIncidents,
   formatFirestoreTime,
   type GlobalSettings,
+  type LgaId,
   type NotificationItem,
+  type OfflineQueuedItem,
   type UserAccount,
   type Ward,
 } from '../types/fdmis';
+import { enqueueOfflineSubmission } from '../services/offlineQueue';
 import { sendSituationNotification } from '../services/operationsService';
 
 interface NotificationsPageProps {
@@ -27,6 +32,10 @@ interface NotificationsPageProps {
   wards: Ward[];
   notifications: NotificationItem[];
   settings: GlobalSettings | null;
+  isOnline?: boolean;
+  queuedItems?: OfflineQueuedItem[];
+  onRetrySync?: () => void;
+  syncingNow?: boolean;
 }
 
 export function NotificationsPage({
@@ -34,9 +43,15 @@ export function NotificationsPage({
   wards,
   notifications,
   settings,
+  isOnline = true,
+  queuedItems = [],
+  onRetrySync,
+  syncingNow = false,
 }: NotificationsPageProps) {
   const canBroadcast = canReviewIncidents(user.role);
   const isFullAdmin = user.role === UserRole.FULL_CONTROL_ADMIN;
+  const isWardScopedRole =
+    user.role === UserRole.WARD_COORDINATOR || user.role === UserRole.OPERATIONS_OFFICER;
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -44,16 +59,26 @@ export function NotificationsPage({
     isFullAdmin ? 'all' : user.assignedLgaId || 'all'
   );
   const [targetWardId, setTargetWardId] = useState<string>(
-    user.role === UserRole.WARD_COORDINATOR ? user.assignedWardId : ''
+    isWardScopedRole ? user.assignedWardId : ''
   );
   const [isCritical, setIsCritical] = useState(false);
   const [isTestData, setIsTestData] = useState(false);
   const [sending, setSending] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'ok' | 'warn' | 'err'; text: string } | null>(
+    null
+  );
 
   const wardsInTargetLga = useMemo(
     () => wards.filter((w) => targetLgaId === 'all' || w.lgaId === targetLgaId),
     [wards, targetLgaId]
+  );
+
+  const queuedBroadcasts = useMemo(
+    () =>
+      queuedItems.filter(
+        (item) => item.reportType === 'NOTIFICATION_BROADCAST' && item.status !== 'SYNCED'
+      ),
+    [queuedItems]
   );
 
   const handleBroadcast = async (e: FormEvent) => {
@@ -64,25 +89,79 @@ export function NotificationsPage({
     }
     setSending(true);
     setFeedback(null);
-    try {
-      await sendSituationNotification(user, {
-        title,
-        body,
-        targetLgaId,
-        targetWardId,
-        isCritical,
-        isTestData,
+
+    const payload = {
+      title: title.trim(),
+      body: body.trim(),
+      targetLgaId,
+      targetWardId,
+      isCritical,
+      isTestData,
+    };
+
+    if (!isOnline) {
+      await enqueueOfflineSubmission({
+        ownerUid: user.uid,
+        reportType: 'NOTIFICATION_BROADCAST',
+        puId: '',
+        puCode: '',
+        puName: '',
+        lgaId: (targetLgaId === 'funtua' || targetLgaId === 'dandume'
+          ? targetLgaId
+          : 'all') as LgaId | 'all',
+        wardId: targetWardId,
+        summary: `${isCritical ? '[CRITICAL] ' : ''}${payload.title}`,
+        payload,
+        status: 'PENDING_SYNC',
       });
       setTitle('');
       setBody('');
       setIsCritical(false);
       setIsTestData(false);
-      setFeedback({ type: 'ok', text: 'In-app notification broadcast sent to scoped operators.' });
-    } catch (err) {
+      setSending(false);
       setFeedback({
-        type: 'err',
-        text: err instanceof Error ? err.message : 'Unable to send notification.',
+        type: 'warn',
+        text: 'OFFLINE: Directive saved locally as PENDING SYNCHRONIZATION and will broadcast automatically when internet returns.',
       });
+      return;
+    }
+
+    try {
+      await sendSituationNotification(user, payload);
+      setTitle('');
+      setBody('');
+      setIsCritical(false);
+      setIsTestData(false);
+      setFeedback({
+        type: 'ok',
+        text: 'In-app notification broadcast SYNCHRONIZED and delivered to scoped operators.',
+      });
+    } catch (err) {
+      if (!navigator.onLine) {
+        await enqueueOfflineSubmission({
+          ownerUid: user.uid,
+          reportType: 'NOTIFICATION_BROADCAST',
+          puId: '',
+          puCode: '',
+          puName: '',
+          lgaId: (targetLgaId === 'funtua' || targetLgaId === 'dandume'
+            ? targetLgaId
+            : 'all') as LgaId | 'all',
+          wardId: targetWardId,
+          summary: `${isCritical ? '[CRITICAL] ' : ''}${payload.title}`,
+          payload,
+          status: 'SYNC_FAILED',
+        });
+        setFeedback({
+          type: 'warn',
+          text: 'Connection lost while broadcasting. Directive saved offline for automatic synchronization.',
+        });
+      } else {
+        setFeedback({
+          type: 'err',
+          text: err instanceof Error ? err.message : 'Unable to send notification.',
+        });
+      }
     } finally {
       setSending(false);
     }
@@ -170,7 +249,9 @@ export function NotificationsPage({
               className={`rounded-lg border px-4 py-3 text-sm ${
                 feedback.type === 'ok'
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-                  : 'border-red-200 bg-red-50 text-red-900'
+                  : feedback.type === 'warn'
+                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                    : 'border-red-200 bg-red-50 text-red-900'
               }`}
             >
               {feedback.text}
@@ -220,7 +301,7 @@ export function NotificationsPage({
                 </label>
                 <select
                   id="notif-ward"
-                  disabled={user.role === UserRole.WARD_COORDINATOR}
+                  disabled={isWardScopedRole}
                   value={targetWardId}
                   onChange={(e) => setTargetWardId(e.target.value)}
                   className="mt-1 min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm disabled:bg-slate-100"
@@ -283,14 +364,77 @@ export function NotificationsPage({
               className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
             >
               <Send className="h-4 w-4" aria-hidden="true" />
-              <span>{sending ? 'Sending...' : 'Send Broadcast'}</span>
+              <span>
+                {sending
+                  ? 'Sending...'
+                  : isOnline
+                    ? 'Send Broadcast'
+                    : 'Queue Broadcast Offline'}
+              </span>
             </button>
           </div>
         </form>
       ) : null}
 
+      {/* Pending Offline Broadcasts Queue */}
+      {queuedBroadcasts.length > 0 ? (
+        <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-950">
+                Pending Offline Broadcasts ({queuedBroadcasts.length})
+              </h3>
+              <p className="text-xs text-amber-900">
+                Saved safely on this device and queued for automatic delivery once connected.
+              </p>
+            </div>
+            {onRetrySync ? (
+              <button
+                type="button"
+                disabled={!isOnline || syncingNow}
+                onClick={onRetrySync}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={`h-3.5 w-3.5 ${syncingNow ? 'animate-spin' : ''}`}
+                  aria-hidden="true"
+                />
+                <span>{syncingNow ? 'Syncing...' : 'Retry Sync'}</span>
+              </button>
+            ) : null}
+          </div>
+          <div className="divide-y divide-amber-200/70 rounded-lg border border-amber-200 bg-white">
+            {queuedBroadcasts.map((item) => (
+              <div
+                key={item.clientSubmissionId}
+                className="flex flex-col justify-between gap-2 p-3 sm:flex-row sm:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-900">
+                    {String(item.payload?.title || item.summary)}
+                  </p>
+                  <p className="text-[11px] text-slate-600 line-clamp-2">
+                    {String(item.payload?.body || '')}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Original Created: {formatFirestoreTime(item.createdAtIso)}
+                    {item.syncedAtIso
+                      ? ` · Server Synced: ${formatFirestoreTime(item.syncedAtIso)}`
+                      : ''}
+                  </p>
+                  {item.errorMessage ? (
+                    <p className="mt-0.5 text-[11px] text-red-700">{item.errorMessage}</p>
+                  ) : null}
+                </div>
+                <OfflineSyncBadge status={item.status} />
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {/* Notifications List */}
-      {notifications.length === 0 ? (
+      {notifications.length === 0 && queuedBroadcasts.length === 0 ? (
         <EmptyState
           title="No operational data has been submitted yet."
           description="Operational alerts, agent check-in notices, and verified directives within your assigned scope will appear here."

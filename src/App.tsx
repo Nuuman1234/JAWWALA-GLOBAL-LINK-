@@ -10,7 +10,6 @@ import { DataManagementPage } from './pages/DataManagementPage';
 import { EmergencyAssistancePage } from './pages/EmergencyAssistancePage';
 import { EnhancedReportsPage } from './pages/EnhancedReportsPage';
 import { FieldOpsPage } from './pages/FieldOpsPage';
-import { FullAdminHomePage } from './pages/FullAdminHomePage';
 import { IncidentsPage } from './pages/IncidentsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { OperationsOfficersPage } from './pages/OperationsOfficersPage';
@@ -18,6 +17,7 @@ import { PartyManagementPage } from './pages/PartyManagementPage';
 import { PollingUnitsDirectoryPage } from './pages/PollingUnitsDirectoryPage';
 import { PublicPortalPage } from './pages/PublicPortalPage';
 import { ResultsPage } from './pages/ResultsPage';
+import { RoleHomeDashboardPage } from './pages/RoleHomeDashboardPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SituationRoomPage } from './pages/SituationRoomPage';
 import { TaskAssignmentPage } from './pages/TaskAssignmentPage';
@@ -121,6 +121,7 @@ import {
   type UserAccount,
   type Ward,
 } from './types/fdmis';
+import { countUnreadNotifications } from './utils/roleHomeConfig';
 
 function filterOutTombstones<
   T extends { id?: string; clientNoteId?: string; puId?: string; sourceSubmissionId?: string },
@@ -1020,6 +1021,37 @@ export default function App() {
     [incidents]
   );
 
+  const [lastSeenNotifMs, setLastSeenNotifMs] = useState<number>(0);
+
+  useEffect(() => {
+    if (!account?.uid || typeof window === 'undefined') {
+      setLastSeenNotifMs(0);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(`fdmis_notif_seen_${account.uid}`);
+      setLastSeenNotifMs(stored ? Number(stored) || 0 : 0);
+    } catch {
+      setLastSeenNotifMs(0);
+    }
+  }, [account?.uid]);
+
+  useEffect(() => {
+    if (activeSection !== 'notifications' || !account?.uid) return;
+    const nowMs = Date.now();
+    setLastSeenNotifMs(nowMs);
+    try {
+      window.localStorage.setItem(`fdmis_notif_seen_${account.uid}`, String(nowMs));
+    } catch {
+      // ignore storage quota issues
+    }
+  }, [activeSection, account?.uid, notifications.length]);
+
+  const unreadNotificationCount = useMemo(
+    () => countUnreadNotifications(notifications, lastSeenNotifMs),
+    [notifications, lastSeenNotifMs]
+  );
+
   const handleManualSync = useCallback(async () => {
     if (syncingNow) return;
     setSyncingNow(true);
@@ -1203,6 +1235,7 @@ export default function App() {
       syncingCount={syncingCount}
       failedSyncCount={failedSyncCount}
       criticalAlertCount={criticalAlertCount}
+      unreadNotificationCount={unreadNotificationCount}
       lastUpdatedAt={lastUpdatedAt}
       onManualSync={handleManualSync}
       syncingNow={syncingNow}
@@ -1214,9 +1247,9 @@ export default function App() {
         </div>
       ) : null}
 
-      {account.role === UserRole.FULL_CONTROL_ADMIN && isSectionMounted('admin_home') ? (
-        <div className={activeSection === 'admin_home' ? 'block' : 'hidden print:hidden'}>
-          <FullAdminHomePage
+      {isSectionMounted('home') ? (
+        <div className={activeSection === 'home' ? 'block' : 'hidden print:hidden'}>
+          <RoleHomeDashboardPage
             user={account}
             wards={wards}
             pollingUnits={pollingUnits}
@@ -1240,6 +1273,7 @@ export default function App() {
             pendingSyncCount={pendingSyncCount}
             syncingCount={syncingCount}
             failedSyncCount={failedSyncCount}
+            unreadNotificationCount={unreadNotificationCount}
             syncingNow={syncingNow}
             onManualSync={() => void handleManualSync()}
             onNavigate={navigateTo}

@@ -52,7 +52,7 @@ import { formatAccountIdentifier } from '../utils/phoneAuth';
 import { RoleBadge } from './StatusBadge';
 
 export type NavSectionId =
-  | 'admin_home'
+  | 'home'
   | 'overview'
   | 'wards'
   | 'polling_units'
@@ -84,11 +84,11 @@ export interface NavItem {
 
 export const NAV_ITEMS: NavItem[] = [
   {
-    id: 'admin_home',
-    label: 'Full Admin Home',
+    id: 'home',
+    label: 'Home',
     shortLabel: 'Home',
     icon: Home,
-    visible: (role) => role === UserRole.FULL_CONTROL_ADMIN,
+    visible: (role) => role !== UserRole.PENDING,
   },
   {
     id: 'overview',
@@ -246,6 +246,7 @@ interface AppShellProps {
   syncingCount?: number;
   failedSyncCount?: number;
   criticalAlertCount: number;
+  unreadNotificationCount?: number;
   lastUpdatedAt: Date | null;
   onManualSync: () => void;
   onBatteryUpdate?: (levelPercent: number | null, charging: boolean | null) => void;
@@ -293,6 +294,7 @@ export function AppShell({
   syncingCount = 0,
   failedSyncCount = 0,
   criticalAlertCount,
+  unreadNotificationCount = 0,
   lastUpdatedAt,
   onManualSync,
   onBatteryUpdate,
@@ -333,6 +335,7 @@ export function AppShell({
             const active = item.id === activeSection;
             const showCriticalBadge = item.id === 'incidents' && criticalAlertCount > 0;
             const showSyncBadge = item.id === 'field_ops' && pendingSyncCount > 0;
+            const showNotifBadge = item.id === 'notifications' && unreadNotificationCount > 0;
             return (
               <button
                 key={item.id}
@@ -363,6 +366,14 @@ export function AppShell({
                     }`}
                   >
                     {pendingSyncCount}
+                  </span>
+                ) : showNotifBadge ? (
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                      active ? 'bg-emerald-400 text-slate-950' : 'bg-emerald-100 text-[#0b3b24]'
+                    }`}
+                  >
+                    {unreadNotificationCount}
                   </span>
                 ) : null}
               </button>
@@ -425,19 +436,40 @@ export function AppShell({
               {allowedItems.map((item) => {
                 const Icon = item.icon;
                 const active = item.id === activeSection;
+                const showCriticalBadge = item.id === 'incidents' && criticalAlertCount > 0;
+                const showNotifBadge = item.id === 'notifications' && unreadNotificationCount > 0;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => handleNavigate(item.id)}
-                    className={`flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                    className={`flex min-h-[44px] w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
                       active
                         ? 'bg-[#0b3b24] text-white'
                         : 'text-slate-700 hover:bg-slate-100'
                     }`}
                   >
-                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span className="flex min-w-0 items-center gap-3">
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="truncate">{item.label}</span>
+                    </span>
+                    {showCriticalBadge ? (
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                          active ? 'bg-red-500 text-white' : 'bg-red-100 text-red-800'
+                        }`}
+                      >
+                        {criticalAlertCount}
+                      </span>
+                    ) : showNotifBadge ? (
+                      <span
+                        className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold tabular-nums ${
+                          active ? 'bg-emerald-400 text-slate-950' : 'bg-emerald-100 text-[#0b3b24]'
+                        }`}
+                      >
+                        {unreadNotificationCount}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
@@ -494,12 +526,12 @@ export function AppShell({
                 ) : null}
               </button>
             ) : null}
-            {user.role === UserRole.FULL_CONTROL_ADMIN && activeSection !== 'admin_home' ? (
+            {activeSection !== 'home' ? (
               <button
                 type="button"
-                onClick={() => handleNavigate('admin_home')}
-                title="Full Admin Home"
-                aria-label="Full Admin Home"
+                onClick={() => handleNavigate('home')}
+                title="Home Dashboard"
+                aria-label="Home Dashboard"
                 className="hidden sm:inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
                 <Home className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />

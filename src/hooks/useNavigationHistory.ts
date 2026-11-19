@@ -10,13 +10,20 @@ export interface PersistedNavHistory {
   index: number;
 }
 
+export function normalizeSectionAlias(section: string | null | undefined): string | null {
+  if (!section) return null;
+  if (section === 'admin_home') return 'home';
+  return section;
+}
+
 export function getDefaultHomeSection(role: UserRole | undefined | null): NavSectionId {
-  return role === UserRole.FULL_CONTROL_ADMIN ? 'admin_home' : 'overview';
+  return role && role !== UserRole.PENDING ? 'home' : 'overview';
 }
 
 export function isSectionAllowedForRole(section: string | null | undefined, role: UserRole): section is NavSectionId {
-  if (!section) return false;
-  const item = NAV_ITEMS.find((n) => n.id === section);
+  const normalized = normalizeSectionAlias(section);
+  if (!normalized) return false;
+  const item = NAV_ITEMS.find((n) => n.id === normalized);
   return Boolean(item && item.visible(role));
 }
 
@@ -24,13 +31,13 @@ export function parseSectionFromUrl(search: string, hash: string): string | null
   try {
     const params = new URLSearchParams(search);
     const fromQuery = params.get('section');
-    if (fromQuery) return fromQuery;
+    if (fromQuery) return normalizeSectionAlias(fromQuery);
   } catch {
     // ignore malformed query
   }
   if (hash && hash.startsWith('#/')) {
     const seg = hash.slice(2).split('?')[0].trim();
-    if (seg) return seg;
+    if (seg) return normalizeSectionAlias(seg);
   }
   return null;
 }
@@ -115,9 +122,9 @@ function readPersistedHistory(uid: string, role: UserRole): PersistedNavHistory 
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PersistedNavHistory>;
     if (!Array.isArray(parsed.stack) || parsed.stack.length === 0) return null;
-    const validStack = parsed.stack.filter((s): s is NavSectionId =>
-      isSectionAllowedForRole(s, role)
-    );
+    const validStack = parsed.stack
+      .map((s) => normalizeSectionAlias(s))
+      .filter((s): s is NavSectionId => isSectionAllowedForRole(s, role));
     if (validStack.length === 0) return null;
     const clampedIdx =
       typeof parsed.index === 'number'
@@ -231,7 +238,7 @@ export function useNavigationHistory(
   useEffect(() => {
     if (!account || !activeAuthorized) {
       initializedUidRef.current = null;
-      const fallbackHome: NavSectionId = 'overview';
+      const fallbackHome: NavSectionId = 'home';
       setNavState({ stack: [fallbackHome], index: 0 });
       setVisitedSections(new Set([fallbackHome]));
       scrollBySectionRef.current.clear();

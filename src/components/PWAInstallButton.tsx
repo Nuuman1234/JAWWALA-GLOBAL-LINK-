@@ -21,7 +21,7 @@ export function PWAInstallButton({ compact = false }: { compact?: boolean }) {
       <button
         type="button"
         onClick={() => void handleClick()}
-        className={`inline-flex items-center gap-1.5 rounded-md border border-emerald-700/30 bg-[#0b3b24]/10 font-medium text-[#0b3b24] transition-colors hover:bg-[#0b3b24]/15 whitespace-nowrap ${
+        className={`inline-flex items-center gap-1.5 rounded-md border border-emerald-700/30 bg-[#06452F]/10 font-medium text-[#06452F] transition-colors hover:bg-[#06452F]/15 whitespace-nowrap ${
           compact ? 'min-h-[34px] px-2.5 py-1 text-xs' : 'min-h-[40px] px-3.5 py-2 text-xs'
         }`}
       >
@@ -33,7 +33,7 @@ export function PWAInstallButton({ compact = false }: { compact?: boolean }) {
         <div
           role="dialog"
           aria-label="Install Instructions"
-          className="absolute right-0 top-full z-40 mt-2 w-72 rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-700 shadow-lg"
+          className="absolute right-0 top-full z-40 mt-2 w-72 fdmis-surface p-3 sm:p-3.5 text-xs text-slate-700 shadow-lg"
         >
           <div className="flex items-start justify-between gap-2">
             <p className="font-semibold text-slate-900">Install on Device</p>

@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
-  ArrowUpRight,
-  Bell,
-  Calendar,
+  ArrowRight,
+  BarChart3,
   CheckCircle2,
+  ChevronRight,
   Clock,
+  Layers,
   MapPin,
   RefreshCw,
   Search,
   Shield,
-  Wifi,
   WifiOff,
   X,
 } from 'lucide-react';
@@ -37,11 +37,14 @@ import {
   type Ward,
 } from '../types/fdmis';
 import type { NavSectionId } from '../components/AppShell';
+import { NationalDomeBackdrop } from '../components/FdmisBrandMark';
 import {
   getRoleHomeCards,
   getRoleSummaryMetrics,
   resolveUserLocationScope,
+  type CardTint,
   type CardTone,
+  type RoleHomeCardDef,
   type RoleHomeDataset,
 } from '../utils/roleHomeConfig';
 
@@ -77,27 +80,84 @@ interface RoleHomeDashboardPageProps {
   onNavigate: (section: NavSectionId) => void;
 }
 
-const ICON_SURFACE_BY_TONE: Record<CardTone, string> = {
-  emerald: 'bg-white text-[#0b3b24] ring-1 ring-inset ring-stone-200/80',
-  amber: 'bg-white text-amber-800 ring-1 ring-inset ring-stone-200/80',
-  crimson: 'bg-white text-red-700 ring-1 ring-inset ring-stone-200/80',
-  sky: 'bg-white text-sky-800 ring-1 ring-inset ring-stone-200/80',
-  slate: 'bg-white text-slate-700 ring-1 ring-inset ring-stone-200/80',
+const FIELD_SECTION_IDS = new Set<NavSectionId>([
+  'field_ops',
+  'incidents',
+  'polling_units',
+  'wards',
+  'operations_officers',
+  'task_ops',
+  'results',
+  'verification',
+  'notes',
+]);
+
+const TINT_CARD_CLASSES: Record<
+  CardTint,
+  {
+    surface: string;
+    icon: string;
+    stat: string;
+  }
+> = {
+  mint: {
+    surface: 'bg-[#ECF8F1] border-[#D3ECDD] hover:border-[#168653]/45',
+    icon: 'text-[#168653]',
+    stat: 'text-[#06452F]',
+  },
+  sky: {
+    surface: 'bg-[#ECF4FF] border-[#D2E4FD] hover:border-blue-500/45',
+    icon: 'text-[#1D63DC]',
+    stat: 'text-[#102B3F]',
+  },
+  amber: {
+    surface: 'bg-[#FEF6E6] border-[#F8E2B8] hover:border-[#D99A32]/55',
+    icon: 'text-[#168653]',
+    stat: 'text-[#9A630A]',
+  },
+  violet: {
+    surface: 'bg-[#F4EEFF] border-[#E3D5FC] hover:border-violet-500/45',
+    icon: 'text-[#06452F]',
+    stat: 'text-[#4C1D95]',
+  },
+  coral: {
+    surface: 'bg-[#FEF0EE] border-[#FAD7D2] hover:border-[#DC4C45]/50',
+    icon: 'text-[#DC4C45]',
+    stat: 'text-[#B91C1C]',
+  },
+  slate: {
+    surface: 'bg-[#F3F6FA] border-[#DCE4EE] hover:border-[#06452F]/35',
+    icon: 'text-[#102B3F]',
+    stat: 'text-[#102B3F]',
+  },
 };
 
-const STAT_TEXT_BY_TONE: Record<CardTone, string> = {
-  emerald: 'text-[#0b3b24]',
-  amber: 'text-amber-800',
-  crimson: 'text-red-700',
-  sky: 'text-sky-800',
-  slate: 'text-slate-600',
-};
+function resolveCardTint(card: RoleHomeCardDef, index: number): CardTint {
+  if (card.tint) return card.tint;
+  if (card.sectionId === 'incidents' || card.sectionId === 'emergency_assistance') return 'coral';
+  if (card.sectionId === 'polling_units' || card.sectionId === 'timeline') return 'sky';
+  if (card.sectionId === 'verification' || card.sectionId === 'notifications') return 'amber';
+  if (card.sectionId === 'task_ops' || card.sectionId === 'party_management') return 'violet';
+  if (card.tone === 'crimson') return 'coral';
+  if (card.tone === 'amber') return 'amber';
+  if (card.tone === 'sky') return 'sky';
+  if (card.tone === 'emerald') return 'mint';
+  const fallbackCycle: CardTint[] = ['mint', 'sky', 'amber', 'violet', 'coral', 'slate'];
+  return fallbackCycle[index % fallbackCycle.length];
+}
+
+function resolveMetricTint(tint: CardTint | undefined, tone: CardTone, index: number): CardTint {
+  if (tint) return tint;
+  if (tone === 'crimson') return 'coral';
+  const cycle: CardTint[] = ['mint', 'sky', 'amber', 'violet'];
+  return cycle[index % cycle.length];
+}
 
 function getTimeGreeting(date: Date): string {
   const hour = date.getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
+  if (hour < 12) return 'Good Morning,';
+  if (hour < 17) return 'Good Afternoon,';
+  return 'Good Evening,';
 }
 
 export function RoleHomeDashboardPage({
@@ -133,6 +193,7 @@ export function RoleHomeDashboardPage({
 }: RoleHomeDashboardPageProps) {
   const [now, setNow] = useState(() => new Date());
   const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 60000);
@@ -216,12 +277,30 @@ export function RoleHomeDashboardPage({
     );
   }, [moduleCards, searchQuery]);
 
+  const { fieldCards, adminCards } = useMemo(() => {
+    const field: RoleHomeCardDef[] = [];
+    const admin: RoleHomeCardDef[] = [];
+    for (const card of filteredCards) {
+      const group = card.group ?? (FIELD_SECTION_IDS.has(card.sectionId) ? 'field' : 'admin');
+      if (group === 'field') {
+        field.push(card);
+      } else {
+        admin.push(card);
+      }
+    }
+    // If a role only has a few cards total (e.g., Ordinary User / PU Agent), keep them unified cleanly
+    if (field.length === 0 || (field.length + admin.length <= 9 && admin.length <= 4)) {
+      return { fieldCards: filteredCards, adminCards: [] as RoleHomeCardDef[] };
+    }
+    return { fieldCards: field, adminCards: admin };
+  }, [filteredCards]);
+
   const roleMeta = USER_ROLE_META[user.role];
   const greeting = getTimeGreeting(now);
   const formattedDate = now.toLocaleDateString('en-NG', {
-    weekday: 'long',
+    weekday: 'short',
     day: 'numeric',
-    month: 'long',
+    month: 'short',
     year: 'numeric',
   });
   const formattedSyncTime = lastUpdatedAt
@@ -229,150 +308,180 @@ export function RoleHomeDashboardPage({
         hour: '2-digit',
         minute: '2-digit',
       })
-    : 'Not synced yet';
+    : null;
 
-  const syncStatusSummary =
-    syncingNow || syncingCount > 0
-      ? 'Synchronizing records'
-      : failedSyncCount > 0
-        ? `${failedSyncCount} sync failed`
-        : pendingSyncCount > 0
-          ? `${pendingSyncCount} pending sync`
-          : isOnline
-            ? `Synced at ${formattedSyncTime}`
-            : `Offline cache · Last sync ${formattedSyncTime}`;
+  const isOfflineMode = !isOnline || sessionMode === 'offline_trusted';
+
+  const renderModuleCard = (card: RoleHomeCardDef, index: number) => {
+    const Icon = card.icon;
+    const tint = resolveCardTint(card, index);
+    const palette = TINT_CARD_CLASSES[tint];
+    return (
+      <button
+        key={card.key}
+        type="button"
+        onClick={() => onNavigate(card.sectionId)}
+        className={`group flex h-full min-h-[106px] flex-col justify-between rounded-xl border p-2.5 text-left transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#06452F] sm:min-h-[124px] sm:p-3.5 ${palette.surface}`}
+      >
+        <div className="flex items-start justify-between gap-1.5">
+          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/80 shadow-[0_1px_2px_rgba(16,43,63,0.06)] sm:h-9 sm:w-9 ${palette.icon}`}>
+            <Icon className="h-[18px] w-[18px] sm:h-5 sm:w-5" strokeWidth={2} aria-hidden="true" />
+          </div>
+          <ChevronRight
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#102B3F]/40 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-[#06452F] sm:h-4 sm:w-4"
+            aria-hidden="true"
+          />
+        </div>
+
+        <div className="mt-2 min-w-0">
+          <h4 className="line-clamp-2 font-display text-[11.5px] font-bold leading-tight text-[#102B3F] group-hover:text-[#06452F] sm:text-[13.5px]">
+            {card.title}
+          </h4>
+          <p className="mt-0.5 hidden line-clamp-2 text-[11px] leading-snug text-slate-600 sm:block">
+            {card.description}
+          </p>
+        </div>
+
+        <p className={`mt-1.5 truncate font-mono text-[9.5px] font-semibold tabular-nums sm:text-[11px] ${palette.stat}`}>
+          {card.statText}
+        </p>
+      </button>
+    );
+  };
 
   return (
-    <div className="space-y-6">
-      {/* Top Identity, Welcome & Live Connectivity Masthead */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-2">
-            {/* Brand + Date line */}
-            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500">
-              <span className="inline-flex items-center gap-1.5 font-display font-bold tracking-tight text-[#0b3b24]">
-                <Shield className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>FDMIS 2027</span>
-              </span>
-              <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1">
-                <Calendar className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-                <span>{formattedDate}</span>
-              </span>
-            </div>
+    <div className="space-y-3.5 sm:space-y-4">
+      {/* Compact Forest-Green Welcome Hero Card (Matches Reference Image 1) */}
+      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#043B29] via-[#06452F] to-[#0D6242] p-4 text-white shadow-[0_6px_22px_rgba(4,59,41,0.18)] sm:p-5">
+        <NationalDomeBackdrop className="pointer-events-none absolute -right-4 bottom-0 h-[112%] w-56 opacity-90 sm:right-0 sm:w-72" />
 
-            {/* Welcome heading */}
-            <h2 className="font-display text-xl font-bold tracking-tight text-slate-900 sm:text-2xl [text-wrap:balance]">
-              {greeting}, {user.displayName}
+        <div className="relative z-10 flex flex-col gap-3">
+          <div className="max-w-[76%] sm:max-w-[68%]">
+            <p className="text-[15px] font-medium leading-snug text-emerald-50/95 sm:text-base">
+              {greeting}
+            </p>
+            <h2 className="mt-0.5 truncate font-display text-[22px] font-extrabold leading-tight tracking-tight text-white sm:text-[26px]">
+              {user.displayName}
             </h2>
 
-            {/* Role + Assigned Geographic Scope (unboxed clean metadata) */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-slate-600">
-              <span className="font-semibold text-[#0b3b24]">{roleMeta.label}</span>
-              <span aria-hidden="true" className="text-slate-300">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-emerald-50/90 sm:text-[13px]">
+              <span className="inline-flex items-center gap-1.5 font-semibold text-white">
+                <Shield className="h-3.5 w-3.5 shrink-0 text-[#D8F5E3]" aria-hidden="true" />
+                <span>{roleMeta.label}</span>
+              </span>
+              <span className="hidden text-emerald-200/60 sm:inline" aria-hidden="true">
                 ·
               </span>
-              <span className="inline-flex items-center gap-1 text-slate-600">
-                <MapPin className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden="true" />
-                <span>{locationScope.summaryLine}</span>
+              <span className="hidden truncate text-emerald-100/85 sm:inline">
+                {locationScope.summaryLine}
               </span>
             </div>
+            <p className="mt-0.5 truncate text-[11px] text-emerald-100/80 sm:hidden">
+              {locationScope.summaryLine} · {formattedDate}
+            </p>
           </div>
 
-          {/* Notification Bell + Manual Sync Controls */}
-          <div className="flex items-center gap-2 self-start sm:self-center">
-            <button
-              type="button"
-              onClick={() => onNavigate('notifications')}
-              aria-label={
-                unreadNotificationCount > 0
-                  ? `Open notifications, ${unreadNotificationCount} unread`
-                  : 'Open notifications'
-              }
-              className="relative inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-700 transition-colors hover:border-[#0b3b24]/40 hover:bg-emerald-50/60 hover:text-[#0b3b24] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24]"
-            >
-              <Bell className="h-5 w-5" aria-hidden="true" />
-              {unreadNotificationCount > 0 ? (
-                <span className="ml-1.5 font-mono text-xs font-bold tabular-nums text-red-700">
-                  {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+          {/* Status Pill + Sync Now Action Row */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {isOfflineMode ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-[11.5px] font-semibold text-amber-950 shadow-xs">
+                  <WifiOff className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
+                  <span>Offline • Local Session</span>
+                </span>
+              ) : sessionMode === 'revalidating' ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-3 py-1.5 text-[11.5px] font-semibold text-sky-950 shadow-xs">
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
+                  <span>Online • Verifying</span>
                 </span>
               ) : (
-                <span className="ml-1.5 hidden text-xs font-medium text-slate-600 sm:inline">
-                  Alerts
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-[#D8F5E3] px-3 py-1.5 text-[11.5px] font-semibold text-[#043B29] shadow-xs">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#168653]" aria-hidden="true" />
+                  <span>Online • Server Verified</span>
                 </span>
               )}
-            </button>
+
+              {failedSyncCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('field_ops')}
+                  className="inline-flex items-center gap-1 rounded-full bg-[#DC4C45] px-2.5 py-1 text-[11px] font-semibold text-white"
+                >
+                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                  <span>{failedSyncCount} Failed</span>
+                </button>
+              ) : pendingSyncCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('field_ops')}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-400/95 px-2.5 py-1 text-[11px] font-semibold text-[#043B29]"
+                >
+                  <Clock className="h-3 w-3" aria-hidden="true" />
+                  <span>{pendingSyncCount} Queued</span>
+                </button>
+              ) : null}
+            </div>
 
             <button
               type="button"
               onClick={onManualSync}
-              disabled={syncingNow}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#092f1d] active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24] focus-visible:ring-offset-2 whitespace-nowrap"
+              disabled={syncingNow || syncingCount > 0}
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border border-white/80 bg-[#043B29]/55 px-3.5 py-1.5 text-xs font-semibold text-white backdrop-blur-[2px] transition-colors hover:bg-white/15 active:scale-[0.98] disabled:opacity-65 whitespace-nowrap"
             >
               <RefreshCw
-                className={`h-4 w-4 ${syncingNow ? 'animate-spin' : ''}`}
+                className={`h-3.5 w-3.5 ${syncingNow || syncingCount > 0 ? 'animate-spin' : ''}`}
                 aria-hidden="true"
               />
-              <span>{syncingNow ? 'Syncing' : 'Sync Now'}</span>
+              <span>{syncingNow || syncingCount > 0 ? 'Syncing' : 'Sync Now'}</span>
             </button>
           </div>
-        </div>
 
-        {/* Connectivity & Synchronization Hairline Footer */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-slate-100 pt-3 text-xs">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {!isOnline || sessionMode === 'offline_trusted' ? (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-amber-800">
-                <WifiOff className="h-3.5 w-3.5 text-amber-700" aria-hidden="true" />
-                <span>Offline Mode · Local Trusted Session</span>
-              </span>
-            ) : sessionMode === 'revalidating' ? (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-sky-800">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin text-sky-700" aria-hidden="true" />
-                <span>Online · Revalidating Session</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-800">
-                <Wifi className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
-                <span>Online · Server Verified</span>
-              </span>
-            )}
-            <span aria-hidden="true" className="text-slate-300">
-              ·
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-slate-600 font-mono tabular-nums">
-              {failedSyncCount > 0 ? (
-                <AlertTriangle className="h-3.5 w-3.5 text-red-600" aria-hidden="true" />
-              ) : pendingSyncCount > 0 ? (
-                <Clock className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-hidden="true" />
-              )}
-              <span>{syncStatusSummary}</span>
-            </span>
-          </div>
-
-          {!isOnline || sessionMode === 'offline_trusted' ? (
-            <span className="text-slate-500">
-              {lastServerVerifiedAtMs
-                ? `Last server check ${new Date(lastServerVerifiedAtMs).toLocaleString('en-NG', {
-                    day: 'numeric',
-                    month: 'short',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })} · Auto-revalidates on reconnect`
-                : 'Cached local session · Auto-revalidates on reconnect'}
-            </span>
+          {isOfflineMode && lastServerVerifiedAtMs ? (
+            <p className="text-[10.5px] text-emerald-100/80">
+              Last verified{' '}
+              {new Date(lastServerVerifiedAtMs).toLocaleString('en-NG', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}{' '}
+              · Auto-syncs on reconnect
+            </p>
+          ) : formattedSyncTime ? (
+            <p className="hidden text-[11px] text-emerald-100/75 sm:block">
+              {formattedDate} · Last synced {formattedSyncTime}
+            </p>
           ) : null}
         </div>
       </section>
 
-      {/* Compact Personalized Summary Cards (4 Role-Specific Metrics) */}
-      <section aria-label="Key Operational Summary">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {summaryMetrics.map((metric) => {
+      {/* Key Metrics Section — Strictly 3 columns on mobile & tablet, 4 columns on desktop */}
+      <section aria-label="Key Metrics" className="fdmis-surface p-3 sm:p-4">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-[18px] w-[18px] shrink-0 text-[#06452F]" strokeWidth={2.4} aria-hidden="true" />
+            <h3 className="font-display text-[15px] font-bold tracking-tight text-[#102B3F] sm:text-base">
+              Key Metrics
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('overview')}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-[#06452F] transition-colors hover:bg-[#ECF8F1]"
+          >
+            <span>View All</span>
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="fdmis-metrics-grid gap-2 sm:gap-3">
+          {summaryMetrics.map((metric, idx) => {
             const clickable = Boolean(metric.targetSection);
             const Wrapper = clickable ? 'button' : 'div';
+            const tint = resolveMetricTint(metric.tint, metric.tone, idx);
+            const palette = TINT_CARD_CLASSES[tint];
+            const MetricIcon = metric.icon ?? CheckCircle2;
+
             return (
               <Wrapper
                 key={metric.key}
@@ -382,29 +491,33 @@ export function RoleHomeDashboardPage({
                     ? () => onNavigate(metric.targetSection!)
                     : undefined
                 }
-                className={`group flex flex-col justify-between rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] p-3.5 text-left transition-all duration-150 sm:p-4 ${
+                className={`group flex min-w-0 flex-col justify-between rounded-xl border p-2.5 text-left transition-all duration-150 sm:p-3 ${palette.surface} ${
                   clickable
-                    ? 'hover:border-[#0b3b24]/40 hover:bg-white active:scale-[0.98] active:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24]'
+                    ? 'active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#06452F]'
                     : ''
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-xs font-medium text-slate-500">
+                <div className={`flex h-7 w-7 items-center justify-center rounded-full bg-white/85 shadow-[0_1px_2px_rgba(16,43,63,0.06)] sm:h-8 sm:w-8 ${palette.icon}`}>
+                  <MetricIcon className="h-4 w-4 sm:h-[18px] sm:w-[18px]" strokeWidth={2.2} aria-hidden="true" />
+                </div>
+
+                <p className="mt-2 truncate font-display text-xl font-extrabold leading-none tracking-tight text-[#102B3F] tabular-nums sm:text-2xl">
+                  {metric.value}
+                </p>
+
+                <div className="mt-1.5 flex items-end justify-between gap-1">
+                  <span className="line-clamp-2 text-[11px] font-semibold leading-tight text-[#102B3F]/85 sm:text-xs">
                     {metric.label}
                   </span>
                   {clickable ? (
-                    <ArrowUpRight
-                      className="h-3.5 w-3.5 shrink-0 text-slate-300 transition-colors group-hover:text-[#0b3b24]"
+                    <ChevronRight
+                      className="mb-0.5 h-3.5 w-3.5 shrink-0 text-[#102B3F]/45 transition-transform group-hover:translate-x-0.5 group-hover:text-[#06452F]"
                       aria-hidden="true"
                     />
                   ) : null}
                 </div>
-                <p
-                  className={`mt-2 truncate font-display text-xl font-bold tracking-tight tabular-nums sm:text-2xl ${STAT_TEXT_BY_TONE[metric.tone]}`}
-                >
-                  {metric.value}
-                </p>
-                <p className="mt-1 truncate text-[11px] text-slate-500 sm:text-xs">
+
+                <p className="mt-1 hidden truncate text-[10.5px] text-slate-600 sm:block">
                   {metric.detail}
                 </p>
               </Wrapper>
@@ -413,110 +526,109 @@ export function RoleHomeDashboardPage({
         </div>
       </section>
 
-      {/* Responsive Clickable Module Cards Grid (2 cols mobile, 3 cols tablet, 4-5 cols desktop) */}
-      <section aria-label="Authorized Modules">
-        <div className="mb-3.5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h3 className="font-display text-base font-bold text-slate-900 sm:text-lg">
-              Operational Modules
+      {/* Field Operations Section — Strictly 3 equal-width cards per row on mobile, tablet & desktop */}
+      <section aria-label="Field Operations" className="fdmis-surface p-3 sm:p-4">
+        <div className="mb-2.5 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <MapPin className="h-[18px] w-[18px] shrink-0 text-[#06452F]" strokeWidth={2.4} aria-hidden="true" />
+            <h3 className="font-display text-[15px] font-bold tracking-tight text-[#102B3F] sm:text-base">
+              Field Operations
             </h3>
-            <p className="text-xs text-slate-500">
-              Select a module card below to open its dedicated workspace.
-            </p>
           </div>
 
-          {moduleCards.length >= 10 ? (
-            <div className="relative w-full sm:w-64">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                aria-hidden="true"
-              />
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Filter modules..."
-                aria-label="Filter authorized modules"
-                className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-[#0b3b24] focus:outline-none focus:ring-2 focus:ring-[#0b3b24]/15"
-              />
-              {searchQuery ? (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  aria-label="Clear filter"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              ) : null}
-            </div>
-          ) : null}
+          <div className="flex items-center gap-1.5">
+            {moduleCards.length >= 8 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSearch((v) => !v);
+                  if (showSearch) setSearchQuery('');
+                }}
+                aria-label="Filter modules"
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-[#06452F] transition-colors hover:bg-[#ECF8F1]"
+              >
+                <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Filter</span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onNavigate('field_ops')}
+              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-[#06452F] transition-colors hover:bg-[#ECF8F1]"
+            >
+              <span>More</span>
+              <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
+        {showSearch ? (
+          <div className="relative mb-3">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search your authorized modules..."
+              aria-label="Filter authorized modules"
+              className="min-h-[38px] w-full rounded-xl border border-slate-200 bg-[#F5F7FA] py-1.5 pl-9 pr-9 text-xs text-[#102B3F] placeholder:text-slate-400 focus:border-[#06452F] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#06452F]/15"
+            />
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear filter"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
         {filteredCards.length === 0 ? (
-          <div className="rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] px-6 py-10 text-center">
-            <p className="text-sm font-semibold text-slate-800">
+          <div className="rounded-xl border border-slate-200 bg-[#F5F7FA] px-4 py-7 text-center">
+            <p className="text-xs font-semibold text-[#102B3F]">
               No module matches "{searchQuery}"
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Clear the filter to view all {moduleCards.length} modules assigned to your role.
             </p>
             <button
               type="button"
               onClick={() => setSearchQuery('')}
-              className="mt-4 inline-flex min-h-[40px] items-center rounded-xl border border-stone-200 bg-white px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-stone-50"
+              className="mt-2.5 inline-flex min-h-[34px] items-center rounded-xl bg-[#06452F] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29]"
             >
               Show All Modules
             </button>
           </div>
         ) : (
-          <div className="grid auto-rows-fr grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 2xl:grid-cols-5">
-            {filteredCards.map((card) => {
-              const Icon = card.icon;
-              return (
-                <button
-                  key={card.key}
-                  type="button"
-                  onClick={() => onNavigate(card.sectionId)}
-                  className="group flex h-full min-h-[152px] flex-col justify-between rounded-[18px] border border-stone-200/90 bg-[#F8F8F6] p-3.5 text-left shadow-none transition-all duration-150 hover:border-[#0b3b24]/40 hover:bg-white active:scale-[0.97] active:bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0b3b24] focus-visible:ring-offset-2 sm:min-h-[168px] sm:p-4"
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div
-                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-transform duration-150 group-hover:scale-105 ${ICON_SURFACE_BY_TONE[card.tone]}`}
-                      >
-                        <Icon className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
-                      </div>
-                      <ArrowUpRight
-                        className="h-4 w-4 shrink-0 text-stone-400 transition-transform duration-150 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[#0b3b24]"
-                        strokeWidth={1.75}
-                        aria-hidden="true"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <h4 className="font-display text-sm font-semibold leading-snug text-slate-900 group-hover:text-[#0b3b24] sm:text-[15px]">
-                        {card.title}
-                      </h4>
-                      <p className="line-clamp-2 text-[11px] leading-relaxed text-slate-600 sm:text-xs">
-                        {card.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 border-t border-stone-200/70 pt-2.5">
-                    <p
-                      className={`truncate font-mono text-[11px] font-semibold tabular-nums ${STAT_TEXT_BY_TONE[card.tone]}`}
-                    >
-                      {card.statText}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
+          <div className="fdmis-grid-3 auto-rows-fr gap-2 sm:gap-3">
+            {fieldCards.map((card, index) => renderModuleCard(card, index))}
           </div>
         )}
       </section>
+
+      {/* Governance & Administration Modules (3-column compact grid for roles with admin modules) */}
+      {adminCards.length > 0 ? (
+        <section aria-label="Governance & Administration" className="fdmis-surface p-3 sm:p-4">
+          <div className="mb-2.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Layers className="h-[18px] w-[18px] shrink-0 text-[#06452F]" strokeWidth={2.2} aria-hidden="true" />
+              <h3 className="font-display text-[15px] font-bold tracking-tight text-[#102B3F] sm:text-base">
+                Governance &amp; Administration
+              </h3>
+            </div>
+            <span className="font-mono text-[11px] font-semibold text-slate-500 tabular-nums">
+              {adminCards.length} modules
+            </span>
+          </div>
+
+          <div className="fdmis-grid-3 auto-rows-fr gap-2 sm:gap-3">
+            {adminCards.map((card, index) => renderModuleCard(card, index))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

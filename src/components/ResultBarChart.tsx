@@ -28,11 +28,11 @@ export function ResultBarChart({
     summary.standings.find((s) => s.code === activeParty) || null;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5">
+    <section className="fdmis-surface p-3.5 sm:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <BarChart3 className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <h3 className="font-display text-base font-semibold text-slate-900">{title}</h3>
             <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-900">
               <ShieldCheck className="h-3 w-3 text-emerald-700" aria-hidden="true" />
@@ -49,7 +49,7 @@ export function ResultBarChart({
               onClick={() => setLayoutMode('horizontal')}
               className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 layoutMode === 'horizontal'
-                  ? 'bg-[#0b3b24] text-white'
+                  ? 'bg-[#06452F] text-white'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -60,7 +60,7 @@ export function ResultBarChart({
               onClick={() => setLayoutMode('vertical')}
               className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 layoutMode === 'vertical'
-                  ? 'bg-[#0b3b24] text-white'
+                  ? 'bg-[#06452F] text-white'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -84,7 +84,7 @@ export function ResultBarChart({
           </p>
         </div>
       ) : (
-        <div className="mt-5 grid grid-cols-1 gap-6 xl:grid-cols-12">
+        <div className="mt-5 grid grid-cols-1 gap-3.5 sm:gap-4 xl:grid-cols-12">
           {/* Interactive Bar Chart */}
           <div className="xl:col-span-7">
             {layoutMode === 'horizontal' ? (
@@ -104,7 +104,7 @@ export function ResultBarChart({
                       }
                       className={`block w-full rounded-lg border p-3 text-left transition-colors ${
                         isFocused
-                          ? 'border-[#0b3b24] bg-emerald-50/40'
+                          ? 'border-[#06452F] bg-emerald-50/40'
                           : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50'
                       }`}
                     >

@@ -63,7 +63,7 @@
   /* Official report masthead displayed on print */
   .print-only-header {
     display: block !important;
-    border-bottom: 2px solid #0b3b24 !important;
+    border-bottom: 2px solid #06452F !important;
     padding-bottom: 8px !important;
     margin-bottom: 12px !important;
   }

@@ -386,7 +386,7 @@ export function FieldOpsPage({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-4">
       {feedback ? (
         <div
           className={`rounded-lg border px-4 py-3 text-sm ${
@@ -407,9 +407,9 @@ export function FieldOpsPage({
           description="No polling units are assigned or imported in your scope yet. An authorized administrator must import or assign your polling unit before field check-ins can be logged."
         />
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3.5 sm:gap-4 lg:grid-cols-2">
           {/* Election-Day Agent Check-In Form */}
-          <section className="rounded-xl border border-slate-200 bg-white p-6">
+          <section className="fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h2 className="font-display text-base font-semibold text-slate-900">
@@ -541,7 +541,7 @@ export function FieldOpsPage({
               <button
                 type="submit"
                 disabled={submittingCheckIn}
-                className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg bg-[#06452F] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                 <span>
@@ -556,7 +556,7 @@ export function FieldOpsPage({
           </section>
 
           {/* Polling Unit Operational Status Progression */}
-          <section className="rounded-xl border border-slate-200 bg-white p-6">
+          <section className="fdmis-surface p-4 sm:p-5">
             <div className="border-b border-slate-100 pb-3">
               <h2 className="font-display text-base font-semibold text-slate-900">
                 Update Polling Unit Operational Status
@@ -629,7 +629,7 @@ export function FieldOpsPage({
               <button
                 type="submit"
                 disabled={submittingStatus}
-                className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg border border-[#0b3b24] bg-white px-4 py-2.5 text-sm font-semibold text-[#0b3b24] hover:bg-emerald-50 disabled:opacity-60"
+                className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-lg border border-[#06452F] bg-white px-4 py-2.5 text-sm font-semibold text-[#06452F] hover:bg-emerald-50 disabled:opacity-60"
               >
                 <Radio className="h-4 w-4" aria-hidden="true" />
                 <span>
@@ -746,7 +746,7 @@ export function FieldOpsPage({
       ) : null}
 
       {/* Live Check-Ins Log */}
-      <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <section className="fdmis-surface overflow-hidden">
         <div className="border-b border-slate-200 px-6 py-4">
           <h3 className="font-display text-base font-semibold text-slate-900">
             Confirmed Agent &amp; Officer Check-Ins ({checkIns.length})

@@ -170,16 +170,16 @@ export function WardsDirectoryPage({
   }, [chartWard, canonicalApproved, pollingUnits, results]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Toolbar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search ward name, code, or coordinator..."
-            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
+            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none sm:max-w-xs"
           />
 
           {authorizedLgas.length > 1 ? (
@@ -206,7 +206,7 @@ export function WardsDirectoryPage({
           <button
             type="button"
             onClick={() => setShowAddModal(true)}
-            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] whitespace-nowrap"
+            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] whitespace-nowrap"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             <span>Add Ward</span>
@@ -228,7 +228,7 @@ export function WardsDirectoryPage({
 
       {/* Wards List */}
       {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="fdmis-surface p-8 text-center text-sm text-slate-500">
           Loading electoral wards...
         </div>
       ) : filteredWards.length === 0 ? (
@@ -237,7 +237,7 @@ export function WardsDirectoryPage({
           description="No electoral wards exist in this scope yet. The Full Control Admin can import the official 22-ward register from Polling Units or add a ward manually."
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden fdmis-surface">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
@@ -274,7 +274,7 @@ export function WardsDirectoryPage({
                     <tr key={ward.id} className="hover:bg-slate-50/70">
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-2.5">
-                          <Building2 className="h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
+                          <Building2 className="h-4 w-4 shrink-0 text-[#06452F]" aria-hidden="true" />
                           <div>
                             <p className="font-medium text-slate-900">{ward.name}</p>
                             <p className="font-mono text-xs text-slate-500">{ward.wardCode}</p>
@@ -356,7 +356,7 @@ export function WardsDirectoryPage({
                             onClick={() => setChartWard(ward)}
                             className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap"
                           >
-                            <BarChart3 className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                            <BarChart3 className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
                             <span>Chart</span>
                           </button>
                           {isFullAdmin ? (
@@ -385,7 +385,7 @@ export function WardsDirectoryPage({
       {/* Ward Verified Chart Modal */}
       {chartWard && chartWardSummary ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto fdmis-surface p-4 sm:p-5">
             <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -415,7 +415,7 @@ export function WardsDirectoryPage({
       {/* Add Ward Modal */}
       {showAddModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-display text-base font-semibold text-slate-900">Add Official Ward</h3>
               <button
@@ -495,7 +495,7 @@ export function WardsDirectoryPage({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {busy ? 'Saving...' : 'Save Ward'}
                 </button>
@@ -508,7 +508,7 @@ export function WardsDirectoryPage({
       {/* Assign Coordinator Modal */}
       {assigningWard ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-display text-base font-semibold text-slate-900">
                 Assign Ward Coordinator · {assigningWard.name}
@@ -559,7 +559,7 @@ export function WardsDirectoryPage({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {busy ? 'Saving...' : 'Save Assignment'}
                 </button>

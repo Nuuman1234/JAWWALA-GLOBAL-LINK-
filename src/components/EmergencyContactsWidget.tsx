@@ -35,7 +35,7 @@ export function EmergencyContactsWidget({
           <button
             type="button"
             onClick={onOpenDirectory}
-            className="text-xs font-medium text-[#0b3b24] hover:underline"
+            className="text-xs font-medium text-[#06452F] hover:underline"
           >
             View all contacts
           </button>
@@ -89,7 +89,7 @@ export function EmergencyContactsWidget({
                   className={`inline-flex min-h-[44px] shrink-0 items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-semibold text-white transition-colors whitespace-nowrap ${
                     c.isPriority
                       ? 'bg-red-700 hover:bg-red-800'
-                      : 'bg-[#0b3b24] hover:bg-[#115233]'
+                      : 'bg-[#06452F] hover:bg-[#043B29]'
                   }`}
                 >
                   <Phone className="h-3.5 w-3.5" aria-hidden="true" />

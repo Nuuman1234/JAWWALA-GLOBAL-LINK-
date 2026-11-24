@@ -238,14 +238,14 @@ export function SituationRoomPage({
     const myActiveIncidents = incidents.filter((i) => isIncidentActive(i.status));
 
     return (
-      <div className="space-y-5">
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+      <div className="space-y-3.5 sm:space-y-4">
+        <section className="fdmis-surface p-3.5 sm:p-4 space-y-3">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
             <div>
-              <p className="text-xs font-medium text-slate-500">
+              <p className="text-[11px] font-medium text-slate-500">
                 FDMIS Ordinary User Field Terminal · Works Offline
               </p>
-              <h2 className="font-display text-lg font-bold text-slate-900">
+              <h2 className="font-display text-base font-bold text-[#102B3F] sm:text-lg">
                 {user.displayName}
               </h2>
             </div>
@@ -253,30 +253,30 @@ export function SituationRoomPage({
           </div>
 
           {assignedPu ? (
-            <div className="grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-xs sm:grid-cols-3">
+            <div className="grid gap-2.5 rounded-xl border border-emerald-200 bg-[#ECF8F1] p-3 text-xs sm:grid-cols-3">
               <div>
-                <p className="text-emerald-900/80">Registered Polling Unit</p>
-                <p className="mt-0.5 font-mono text-sm font-bold text-[#0b3b24]">
+                <p className="text-[11px] text-[#06452F]/80">Registered Polling Unit</p>
+                <p className="mt-0.5 font-mono text-sm font-bold text-[#06452F]">
                   {assignedPu.puCode}
                 </p>
-                <p className="font-medium text-slate-900">{assignedPu.name}</p>
+                <p className="font-medium text-[#102B3F]">{assignedPu.name}</p>
               </div>
               <div>
-                <p className="text-emerald-900/80">Ward &amp; LGA</p>
-                <p className="mt-0.5 font-semibold text-slate-900">
+                <p className="text-[11px] text-[#06452F]/80">Ward &amp; LGA</p>
+                <p className="mt-0.5 font-semibold text-[#102B3F]">
                   {assignedPu.wardName} · {LGA_DEFINITIONS[assignedPu.lgaId]?.displayName}
                 </p>
               </div>
               <div>
-                <p className="text-emerald-900/80">Account Role</p>
-                <p className="mt-0.5 font-semibold text-slate-900">
+                <p className="text-[11px] text-[#06452F]/80">Account Role</p>
+                <p className="mt-0.5 font-semibold text-[#102B3F]">
                   Ordinary User (Location-Scoped)
                 </p>
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-700">
-              <p className="font-semibold text-slate-900">Registered Location Scope</p>
+            <div className="rounded-xl border border-slate-200 bg-[#F5F7FA] p-3 text-xs text-slate-700">
+              <p className="font-semibold text-[#102B3F]">Registered Location Scope</p>
               <p className="mt-1">
                 {user.assignedLgaId
                   ? `${LGA_DEFINITIONS[user.assignedLgaId as LgaId]?.displayName || user.assignedLgaId}`
@@ -287,53 +287,53 @@ export function SituationRoomPage({
             </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-              <p className="text-slate-500">Latest Check-In</p>
-              <p className="mt-1 font-semibold text-slate-900">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="rounded-xl border border-slate-200 bg-[#F5F7FA] p-3 text-xs">
+              <p className="text-[11px] text-slate-500">Latest Check-In</p>
+              <p className="mt-1 font-semibold text-[#102B3F]">
                 {myCheckIn ? `Logged (${myCheckIn.arrivalTimeText})` : 'No Check-In Recorded Yet'}
               </p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-              <p className="text-slate-500">Active Incidents in Location</p>
-              <p className="mt-1 font-mono text-base font-bold text-slate-900 tabular-nums">
+            <div className="rounded-xl border border-slate-200 bg-[#F5F7FA] p-3 text-xs">
+              <p className="text-[11px] text-slate-500">Active Incidents in Location</p>
+              <p className="mt-1 font-mono text-base font-bold text-[#102B3F] tabular-nums">
                 {myActiveIncidents.length}
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <button
               type="button"
               onClick={() => onNavigate('field_ops')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-3 text-sm font-semibold text-white hover:bg-[#115233]"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#06452F] px-3 py-2 text-xs font-semibold text-white hover:bg-[#043B29]"
             >
-              <Radio className="h-4 w-4" aria-hidden="true" />
+              <Radio className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>Field Check-In</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('notes')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-[#0b3b24] bg-white px-4 py-3 text-sm font-semibold text-[#0b3b24] hover:bg-emerald-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#06452F] bg-white px-3 py-2 text-xs font-semibold text-[#06452F] hover:bg-[#ECF8F1]"
             >
-              <StickyNote className="h-4 w-4" aria-hidden="true" />
+              <StickyNote className="h-4 w-4 shrink-0" aria-hidden="true" />
               <span>Notes &amp; Messages</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('incidents')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
             >
-              <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#D99A32]" aria-hidden="true" />
               <span>Report Incident</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('settings')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
             >
-              <Settings className="h-4 w-4 text-slate-600" aria-hidden="true" />
-              <span>Settings &amp; Security</span>
+              <Settings className="h-4 w-4 shrink-0 text-slate-600" aria-hidden="true" />
+              <span>Settings</span>
             </button>
           </div>
         </section>
@@ -361,15 +361,15 @@ export function SituationRoomPage({
     const myPuSummary = summarizeVoteTotals(myApproved, assignedPu ? 1 : 0, myResult && myResult.verificationStatus === VerificationStatus.SUBMITTED ? 1 : 0);
 
     return (
-      <div className="space-y-5">
+      <div className="space-y-3.5 sm:space-y-4">
         {/* Agent Assignment Card */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <section className="fdmis-surface p-3.5 sm:p-4 space-y-3">
+          <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
             <div>
-              <p className="text-xs font-medium text-slate-500">
+              <p className="text-[11px] font-medium text-slate-500">
                 Polling Unit Agent Mobile Field Terminal
               </p>
-              <h2 className="font-display text-lg font-bold text-slate-900">
+              <h2 className="font-display text-base font-bold text-[#102B3F] sm:text-lg">
                 {user.displayName}
               </h2>
             </div>
@@ -377,29 +377,29 @@ export function SituationRoomPage({
           </div>
 
           {assignedPu ? (
-            <div className="grid gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-xs sm:grid-cols-3">
+            <div className="grid gap-2.5 rounded-xl border border-emerald-200 bg-[#ECF8F1] p-3 text-xs sm:grid-cols-3">
               <div>
-                <p className="text-emerald-900/80">Assigned Polling Unit</p>
-                <p className="mt-0.5 font-mono text-sm font-bold text-[#0b3b24]">
+                <p className="text-[11px] text-[#06452F]/80">Assigned Polling Unit</p>
+                <p className="mt-0.5 font-mono text-sm font-bold text-[#06452F]">
                   {assignedPu.puCode}
                 </p>
-                <p className="font-medium text-slate-900">{assignedPu.name}</p>
+                <p className="font-medium text-[#102B3F]">{assignedPu.name}</p>
               </div>
               <div>
-                <p className="text-emerald-900/80">Ward &amp; LGA</p>
-                <p className="mt-0.5 font-semibold text-slate-900">
+                <p className="text-[11px] text-[#06452F]/80">Ward &amp; LGA</p>
+                <p className="mt-0.5 font-semibold text-[#102B3F]">
                   {assignedPu.wardName} · {LGA_DEFINITIONS[assignedPu.lgaId]?.displayName}
                 </p>
               </div>
               <div>
-                <p className="text-emerald-900/80">Registered Voters</p>
-                <p className="mt-0.5 font-mono text-sm font-bold text-slate-900 tabular-nums">
+                <p className="text-[11px] text-[#06452F]/80">Registered Voters</p>
+                <p className="mt-0.5 font-mono text-sm font-bold text-[#102B3F] tabular-nums">
                   {assignedPu.registeredVoters.toLocaleString()}
                 </p>
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
               <p className="font-semibold">No Polling Unit Assigned Yet</p>
               <p className="mt-1">
                 Contact your Ward Coordinator or Administrator to lock your account to a Polling
@@ -408,34 +408,34 @@ export function SituationRoomPage({
             </div>
           )}
 
-          {/* Status Cards */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-              <p className="text-slate-500">Check-In Presence</p>
-              <p className="mt-1 font-semibold text-slate-900">
-                {myCheckIn ? `Checked In (${myCheckIn.arrivalTimeText})` : 'Not Checked In Yet'}
+          {/* Status Cards — 3 columns */}
+          <div className="fdmis-grid-3 gap-2">
+            <div className="rounded-xl border border-[#D3ECDD] bg-[#ECF8F1] p-2.5 text-xs">
+              <p className="text-[10.5px] font-medium text-slate-600">Check-In</p>
+              <p className="mt-1 truncate font-semibold text-[#102B3F]">
+                {myCheckIn ? myCheckIn.arrivalTimeText : 'Not Checked In'}
               </p>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-              <p className="text-slate-500">Form EC8A Submission</p>
+            <div className="rounded-xl border border-[#D2E4FD] bg-[#ECF4FF] p-2.5 text-xs">
+              <p className="text-[10.5px] font-medium text-slate-600">Form EC8A</p>
               <div className="mt-1">
                 {myResult ? (
                   <VerificationStatusBadge status={myResult.verificationStatus} />
                 ) : (
-                  <span className="font-semibold text-slate-700">Not Submitted</span>
+                  <span className="font-semibold text-[#102B3F]">Not Submitted</span>
                 )}
               </div>
             </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs">
-              <p className="text-slate-500">Active PU Incidents</p>
-              <p className="mt-1 font-mono text-base font-bold text-slate-900 tabular-nums">
+            <div className="rounded-xl border border-[#FAD7D2] bg-[#FEF0EE] p-2.5 text-xs">
+              <p className="text-[10.5px] font-medium text-slate-600">Incidents</p>
+              <p className="mt-1 font-mono text-base font-bold text-[#102B3F] tabular-nums">
                 {myIncidents.length}
               </p>
             </div>
           </div>
 
           {myResult?.reviewNote ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
               <p className="font-semibold">
                 Verification Reviewer Note ({myResult.reviewedByName || 'Verifier'}):
               </p>
@@ -443,39 +443,39 @@ export function SituationRoomPage({
             </div>
           ) : null}
 
-          {/* Big Mobile-First Touch Actions */}
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Compact Touch Actions */}
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             <button
               type="button"
               onClick={() => onNavigate('field_ops')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-3 text-sm font-semibold text-white hover:bg-[#115233]"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl bg-[#06452F] px-3 py-2 text-xs font-semibold text-white hover:bg-[#043B29]"
             >
-              <Radio className="h-4 w-4" aria-hidden="true" />
-              <span>{myCheckIn ? 'Update PU Status' : 'Check In Now'}</span>
+              <Radio className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{myCheckIn ? 'Update Status' : 'Check In Now'}</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('results')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-[#0b3b24] bg-white px-4 py-3 text-sm font-semibold text-[#0b3b24] hover:bg-emerald-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[#06452F] bg-white px-3 py-2 text-xs font-semibold text-[#06452F] hover:bg-[#ECF8F1]"
             >
-              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-              <span>{myResult ? 'View / Revise Result' : 'Submit PU Result'}</span>
+              <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{myResult ? 'View Result' : 'Submit Result'}</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('incidents')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
             >
-              <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
+              <AlertTriangle className="h-4 w-4 shrink-0 text-[#D99A32]" aria-hidden="true" />
               <span>Report Incident</span>
             </button>
             <button
               type="button"
               onClick={() => onNavigate('settings')}
-              className="flex min-h-[48px] items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 hover:bg-slate-50"
+              className="flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
             >
-              <Settings className="h-4 w-4 text-slate-600" aria-hidden="true" />
-              <span>Settings &amp; Logout</span>
+              <Settings className="h-4 w-4 shrink-0 text-slate-600" aria-hidden="true" />
+              <span>Settings</span>
             </button>
           </div>
         </section>
@@ -546,12 +546,12 @@ export function SituationRoomPage({
     filteredResults.length > 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Scope Filter Bar */}
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <section className="fdmis-surface p-3.5 sm:p-4">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-500">
+            <p className="text-[11px] font-medium text-slate-500">
               {isVerifier
                 ? 'Verification Officer Command Center · Form EC8A Review & Tally Control'
                 : isOpsOfficer
@@ -562,7 +562,7 @@ export function SituationRoomPage({
                       ? `${LGA_DEFINITIONS[authorizedLgas[0]].displayName} (${LGA_DEFINITIONS[authorizedLgas[0]].lgaCode}) · Isolated Command View`
                       : 'Funtua–Dandume Federal Constituency · 2027 Election Cycle'}
             </p>
-            <h2 className="font-display text-lg font-bold text-slate-900">
+            <h2 className="font-display text-base font-bold text-[#102B3F] sm:text-lg">
               {isVerifier
                 ? 'Verification Queue & Verified Tally Telemetry'
                 : isOpsOfficer
@@ -571,7 +571,7 @@ export function SituationRoomPage({
             </h2>
           </div>
 
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {authorizedLgas.length > 1 ? (
               <select
                 aria-label="Filter by Area"
@@ -581,7 +581,7 @@ export function SituationRoomPage({
                   setWardFilter('all');
                   setPuFilter('all');
                 }}
-                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                className="min-h-[38px] rounded-xl border border-slate-200 bg-[#F5F7FA] px-2.5 text-xs font-medium text-[#102B3F] focus:border-[#06452F] focus:bg-white focus:outline-none"
               >
                 <option value="all">All Areas (Funtua &amp; Dandume)</option>
                 <option value="funtua">Funtua LGA (20-14)</option>
@@ -597,7 +597,7 @@ export function SituationRoomPage({
                   setWardFilter(e.target.value);
                   setPuFilter('all');
                 }}
-                className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                className="min-h-[38px] rounded-xl border border-slate-200 bg-[#F5F7FA] px-2.5 text-xs font-medium text-[#102B3F] focus:border-[#06452F] focus:bg-white focus:outline-none"
               >
                 <option value="all">All Wards ({scopedWards.length})</option>
                 {scopedWards.map((w) => (
@@ -612,7 +612,7 @@ export function SituationRoomPage({
               aria-label="Filter by Polling Unit"
               value={puFilter}
               onChange={(e) => setPuFilter(e.target.value)}
-              className="min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900"
+              className="min-h-[38px] rounded-xl border border-slate-200 bg-[#F5F7FA] px-2.5 text-xs font-medium text-[#102B3F] focus:border-[#06452F] focus:bg-white focus:outline-none"
             >
               <option value="all">All Polling Units ({scopedPusForSelector.length})</option>
               {scopedPusForSelector.map((p) => (
@@ -627,25 +627,24 @@ export function SituationRoomPage({
 
       {/* Role-Specific Command Strip for Verification Officers */}
       {isVerifier ? (
-        <section className="rounded-xl border border-sky-200 bg-sky-50/70 p-5">
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <section className="rounded-2xl border border-[#D2E4FD] bg-[#ECF4FF] p-3.5 sm:p-4">
+          <div className="flex flex-col justify-between gap-2.5 sm:flex-row sm:items-center">
             <div className="flex items-start gap-2.5">
-              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-sky-800" aria-hidden="true" />
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#1D63DC]" aria-hidden="true" />
               <div>
-                <h3 className="font-display text-sm font-bold text-slate-900">
+                <h3 className="font-display text-sm font-bold text-[#102B3F]">
                   Verification Queue Priorities
                 </h3>
                 <p className="text-xs text-slate-600">
-                  {pendingVerificationCount} pending submission(s) awaiting side-by-side Form EC8A
-                  verification, {correctionRequestedCount} awaiting agent correction, and{' '}
-                  {verifiedResultsCount} FDMIS verified.
+                  {pendingVerificationCount} pending submission(s) awaiting Form EC8A review,{' '}
+                  {correctionRequestedCount} awaiting correction, and {verifiedResultsCount} verified.
                 </p>
               </div>
             </div>
             <button
               type="button"
               onClick={() => onNavigate('verification')}
-              className="inline-flex min-h-[42px] shrink-0 items-center gap-1.5 rounded-lg bg-[#0b3b24] px-4 py-2 text-xs font-semibold text-white hover:bg-[#115233]"
+              className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-xl bg-[#06452F] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29]"
             >
               <span>Open Verification Center</span>
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -657,22 +656,22 @@ export function SituationRoomPage({
       {/* Operations Officers Ward Coverage Banner (Admins) */}
       {opsCoverageSummary ? (
         <section
-          className={`rounded-xl border p-4 ${
+          className={`rounded-2xl border p-3.5 sm:p-4 ${
             opsCoverageSummary.vacantWards > 0
-              ? 'border-amber-200 bg-amber-50/70'
-              : 'border-emerald-200 bg-emerald-50/60'
+              ? 'border-[#F8E2B8] bg-[#FEF6E6]'
+              : 'border-[#D3ECDD] bg-[#ECF8F1]'
           }`}
         >
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col justify-between gap-2.5 sm:flex-row sm:items-center">
             <div className="flex items-start gap-2.5">
               <ShieldAlert
                 className={`mt-0.5 h-5 w-5 shrink-0 ${
-                  opsCoverageSummary.vacantWards > 0 ? 'text-amber-700' : 'text-[#0b3b24]'
+                  opsCoverageSummary.vacantWards > 0 ? 'text-[#D99A32]' : 'text-[#06452F]'
                 }`}
                 aria-hidden="true"
               />
               <div>
-                <h3 className="font-display text-sm font-bold text-slate-900">
+                <h3 className="font-display text-sm font-bold text-[#102B3F]">
                   Ward Operations Officers Coverage (Min {MIN_OPERATIONS_OFFICERS_PER_WARD} per Ward)
                 </h3>
                 <p className="text-xs text-slate-700">
@@ -685,7 +684,7 @@ export function SituationRoomPage({
                   </span>{' '}
                   active officer{opsCoverageSummary.totalActiveOfficers === 1 ? '' : 's'}
                   {opsCoverageSummary.totalVacancies > 0
-                    ? ` · ${opsCoverageSummary.totalVacancies} remaining ward slot${opsCoverageSummary.totalVacancies === 1 ? '' : 's'} needed across ${opsCoverageSummary.vacantWards} ward${opsCoverageSummary.vacantWards === 1 ? '' : 's'}`
+                    ? ` · ${opsCoverageSummary.totalVacancies} slot${opsCoverageSummary.totalVacancies === 1 ? '' : 's'} needed across ${opsCoverageSummary.vacantWards} ward${opsCoverageSummary.vacantWards === 1 ? '' : 's'}`
                     : ' · All wards meet minimum coverage'}
                 </p>
               </div>
@@ -693,9 +692,9 @@ export function SituationRoomPage({
             <button
               type="button"
               onClick={() => onNavigate('operations_officers')}
-              className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#115233] whitespace-nowrap"
+              className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-xl bg-[#06452F] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29] whitespace-nowrap"
             >
-              <span>Manage Operations Officers</span>
+              <span>Manage Officers</span>
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
@@ -706,12 +705,12 @@ export function SituationRoomPage({
       {criticalIncidents.length > 0 ? (
         <section
           aria-label="Critical Incident Alerts"
-          className="rounded-xl border border-red-300 bg-red-50 p-5"
+          className="rounded-2xl border border-[#FAD7D2] bg-[#FEF0EE] p-3.5 sm:p-4"
         >
-          <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-            <div className="flex items-center gap-2.5 text-red-900">
-              <AlertOctagon className="h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
-              <h3 className="font-display text-base font-bold">
+          <div className="flex flex-col justify-between gap-2.5 sm:flex-row sm:items-center">
+            <div className="flex items-center gap-2 text-[#991B1B]">
+              <AlertOctagon className="h-5 w-5 shrink-0 text-[#DC4C45]" aria-hidden="true" />
+              <h3 className="font-display text-sm font-bold sm:text-base">
                 {criticalIncidents.length} Critical Incident
                 {criticalIncidents.length === 1 ? '' : 's'} Requiring Immediate Action
               </h3>
@@ -719,29 +718,29 @@ export function SituationRoomPage({
             <button
               type="button"
               onClick={() => onNavigate('incidents')}
-              className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-red-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-800 whitespace-nowrap"
+              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[#DC4C45] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-red-700 whitespace-nowrap"
             >
-              <span>Open Incidents Console</span>
+              <span>Incidents Console</span>
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-2.5 lg:grid-cols-2">
+          <div className="mt-2.5 grid grid-cols-1 gap-2 lg:grid-cols-2">
             {criticalIncidents.slice(0, 4).map((inc) => (
               <div
                 key={inc.id}
-                className="rounded-lg border border-red-200 bg-white p-3.5 text-xs"
+                className="rounded-xl border border-red-200 bg-white p-3 text-xs"
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono font-semibold text-slate-800">{inc.puCode}</span>
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <span className="font-mono font-semibold text-[#102B3F]">{inc.puCode}</span>
                   <div className="flex items-center gap-1.5">
                     <IncidentUrgencyBadge urgency={inc.urgency} />
                     <IncidentStatusBadge status={inc.status} />
                   </div>
                 </div>
-                <p className="mt-1.5 text-sm font-semibold text-slate-900">{inc.title}</p>
+                <p className="mt-1 text-xs font-bold text-[#102B3F] sm:text-sm">{inc.title}</p>
                 <p className="mt-0.5 line-clamp-2 text-slate-600">{inc.description}</p>
-                <p className="mt-1.5 font-mono text-[11px] text-slate-500">
+                <p className="mt-1 font-mono text-[10.5px] text-slate-500">
                   {inc.puName} · Orig: {formatFirestoreTime(inc.clientCreatedAtIso || inc.createdAt)}
                   {inc.serverSyncedAt ? ` · Synced: ${formatFirestoreTime(inc.serverSyncedAt)}` : ''}
                 </p>
@@ -751,112 +750,116 @@ export function SituationRoomPage({
         </section>
       ) : null}
 
-      {/* Real-Time KPI Matrix */}
-      <section aria-label="Operational KPIs" className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>LGAs &amp; Wards</span>
-            <Building2 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+      {/* Real-Time KPI Matrix — 3 cols on mobile/tablet, 4 cols on desktop */}
+      <section aria-label="Operational KPIs" className="fdmis-surface p-3 sm:p-4">
+        <div className="fdmis-metrics-grid gap-2 sm:gap-3">
+          <div className="rounded-xl border border-[#D3ECDD] bg-[#ECF8F1] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">LGAs &amp; Wards</span>
+              <Building2 className="h-3.5 w-3.5 shrink-0 text-[#06452F]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {authorizedLgas.length} · {loadingData ? '—' : filteredWards.length}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              Target: {expectedWardsForView} ward{expectedWardsForView === 1 ? '' : 's'}
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {authorizedLgas.length} · {loadingData ? '—' : filteredWards.length}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            Target: {expectedWardsForView} ward{expectedWardsForView === 1 ? '' : 's'}
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Total Polling Units</span>
-            <MapPin className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+          <div className="rounded-xl border border-[#D2E4FD] bg-[#ECF4FF] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Polling Units</span>
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-[#1D63DC]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {loadingData ? '—' : filteredPus.length}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              Register: {expectedPusForView}
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {loadingData ? '—' : filteredPus.length}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            Expected register: {expectedPusForView}
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>PUs Reporting / Not</span>
-            <Radio className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+          <div className="rounded-xl border border-[#F8E2B8] bg-[#FEF6E6] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">PUs Reporting</span>
+              <Radio className="h-3.5 w-3.5 shrink-0 text-[#168653]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {reportingPus}/{notReportingPus}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              {filteredPus.length > 0
+                ? `${Math.round((reportingPus / filteredPus.length) * 100)}% reporting`
+                : 'Awaiting register'}
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {reportingPus} / {notReportingPus}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {filteredPus.length > 0
-              ? `${Math.round((reportingPus / filteredPus.length) * 100)}% reporting`
-              : 'Awaiting PU register'}
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Agents Assigned / In</span>
-            <Users className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+          <div className="rounded-xl border border-[#E3D5FC] bg-[#F4EEFF] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Agents In</span>
+              <Users className="h-3.5 w-3.5 shrink-0 text-[#06452F]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {agentsAssigned}/{uniqueCheckedInPus}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              {filteredCheckIns.length} check-ins
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {agentsAssigned} / {uniqueCheckedInPus}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {filteredCheckIns.length} check-in logs
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Active Incidents</span>
-            <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
+          <div className="rounded-xl border border-[#F8E2B8] bg-[#FEF6E6] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Active Alerts</span>
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[#D99A32]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {activeIncidents.length}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              {pendingIncidentReviews} pending review
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {activeIncidents.length}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {pendingIncidentReviews} pending review
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Critical Incidents</span>
-            <AlertOctagon className="h-4 w-4 text-red-700" aria-hidden="true" />
+          <div className="rounded-xl border border-[#FAD7D2] bg-[#FEF0EE] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Critical</span>
+              <AlertOctagon className="h-3.5 w-3.5 shrink-0 text-[#DC4C45]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#DC4C45] tabular-nums sm:text-2xl">
+              {criticalIncidents.length}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 sm:text-xs">
+              {filteredIncidents.length} total logged
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-red-700 tabular-nums">
-            {criticalIncidents.length}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">{filteredIncidents.length} total logged</p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Results Submitted</span>
-            <ClipboardCheck className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+          <div className="rounded-xl border border-[#D2E4FD] bg-[#ECF4FF] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Submitted</span>
+              <ClipboardCheck className="h-3.5 w-3.5 shrink-0 text-[#06452F]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#102B3F] tabular-nums sm:text-2xl">
+              {submittedResultsCount}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              {underReviewResultsCount} under review
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-slate-900 tabular-nums">
-            {submittedResultsCount}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {underReviewResultsCount} under review
-          </p>
-        </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-            <span>Results Verified</span>
-            <FileCheck2 className="h-4 w-4 text-emerald-700" aria-hidden="true" />
+          <div className="rounded-xl border border-[#D3ECDD] bg-[#ECF8F1] p-2.5 sm:p-3">
+            <div className="flex items-center justify-between gap-1 text-[11px] font-semibold text-slate-600">
+              <span className="truncate">Verified</span>
+              <FileCheck2 className="h-3.5 w-3.5 shrink-0 text-[#168653]" aria-hidden="true" />
+            </div>
+            <p className="mt-1.5 font-mono text-lg font-extrabold text-[#168653] tabular-nums sm:text-2xl">
+              {verifiedResultsCount}
+            </p>
+            <p className="mt-0.5 truncate text-[10px] text-slate-500 tabular-nums sm:text-xs">
+              {filteredPus.length > 0
+                ? `${Math.round((verifiedResultsCount / filteredPus.length) * 100)}% verified`
+                : '0% verified'}
+            </p>
           </div>
-          <p className="mt-2 font-mono text-2xl font-semibold text-emerald-800 tabular-nums">
-            {verifiedResultsCount}
-          </p>
-          <p className="mt-1 text-xs text-slate-500 tabular-nums">
-            {filteredPus.length > 0
-              ? `${Math.round((verifiedResultsCount / filteredPus.length) * 100)}% of loaded PUs`
-              : '0% verified'}
-          </p>
         </div>
       </section>
 
@@ -882,10 +885,10 @@ export function SituationRoomPage({
 
       {/* Full Control Admin Comparative Funtua vs Dandume Table */}
       {isFullAdmin && lgaFilter === 'all' && wardFilter === 'all' && puFilter === 'all' ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+        <section className="fdmis-surface p-3.5 sm:p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
             <div>
-              <h3 className="font-display text-sm font-semibold text-slate-900">
+              <h3 className="font-display text-sm font-bold text-[#102B3F]">
                 LGA-by-LGA Verified Tally Comparison
               </h3>
               <p className="text-xs text-slate-500">
@@ -895,20 +898,20 @@ export function SituationRoomPage({
             <button
               type="button"
               onClick={() => onNavigate('party_management')}
-              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              className="inline-flex min-h-[34px] items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-1 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
             >
-              <Flag className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+              <Flag className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
               <span>Manage Party Logos</span>
             </button>
           </div>
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-2.5 overflow-x-auto">
             <table className="w-full border-collapse text-left text-xs">
               <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 font-semibold text-slate-600">
-                  <th className="px-3.5 py-2.5">LGA</th>
-                  <th className="px-3.5 py-2.5 text-right">Verified PUs</th>
+                <tr className="border-b border-slate-200 bg-[#F5F7FA] font-semibold text-slate-600">
+                  <th className="px-3 py-2">LGA</th>
+                  <th className="px-3 py-2 text-right">Verified PUs</th>
                   {FIXED_PARTIES.map((p) => (
-                    <th key={p.code} className="px-3.5 py-2.5 text-right">
+                    <th key={p.code} className="px-3 py-2 text-right">
                       <span className="inline-flex items-center gap-1.5">
                         <PartyLogo
                           partyCode={p.code}
@@ -919,8 +922,8 @@ export function SituationRoomPage({
                       </span>
                     </th>
                   ))}
-                  <th className="px-3.5 py-2.5 text-right">Valid Votes</th>
-                  <th className="px-3.5 py-2.5 text-right">Total Cast</th>
+                  <th className="px-3 py-2 text-right">Valid Votes</th>
+                  <th className="px-3 py-2 text-right">Total Cast</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -928,29 +931,29 @@ export function SituationRoomPage({
                   const lgaSummary = buildLgaSummary(id, canonicalApproved, pollingUnits, results);
                   const def = LGA_DEFINITIONS[id];
                   return (
-                    <tr key={id} className="hover:bg-slate-50/70">
-                      <td className="px-3.5 py-3 font-medium text-slate-900">
+                    <tr key={id} className="hover:bg-[#F5F7FA]/70">
+                      <td className="px-3 py-2.5 font-semibold text-[#102B3F]">
                         {def.displayName} ({def.lgaCode})
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono tabular-nums">
                         {lgaSummary.verifiedPuCount} / {lgaSummary.expectedPuCount}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-semibold tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums">
                         {lgaSummary.apcVotes.toLocaleString()}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-semibold tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums">
                         {lgaSummary.pdpVotes.toLocaleString()}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-semibold tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums">
                         {lgaSummary.adcVotes.toLocaleString()}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-semibold tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold tabular-nums">
                         {lgaSummary.othersVotes.toLocaleString()}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-semibold text-emerald-800 tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-semibold text-[#168653] tabular-nums">
                         {lgaSummary.validVotes.toLocaleString()}
                       </td>
-                      <td className="px-3.5 py-3 text-right font-mono font-bold text-[#0b3b24] tabular-nums">
+                      <td className="px-3 py-2.5 text-right font-mono font-bold text-[#06452F] tabular-nums">
                         {lgaSummary.totalVotesCast.toLocaleString()}
                       </td>
                     </tr>
@@ -976,7 +979,7 @@ export function SituationRoomPage({
               <button
                 type="button"
                 onClick={() => onNavigate('polling_units')}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233]"
+                className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-[#06452F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#043B29]"
               >
                 <span>Import Official Polling Units</span>
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -988,20 +991,20 @@ export function SituationRoomPage({
 
       {/* Real-Data-Only Progress Breakdown */}
       {filteredPus.length > 0 ? (
-        <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
-            <h3 className="font-display text-sm font-semibold text-slate-900">
+        <section className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
+          <div className="fdmis-surface p-3.5 sm:p-4">
+            <h3 className="font-display text-sm font-bold text-[#102B3F]">
               Polling Unit Operational Progress
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
               Live status distribution across {filteredPus.length} loaded polling units
             </p>
-            <div className="mt-4 space-y-3">
+            <div className="mt-3 space-y-2.5">
               {[
                 {
                   label: 'Agent Checked In / Active Field Status',
                   count: reportingPus,
-                  color: 'bg-[#0b3b24]',
+                  color: 'bg-[#06452F]',
                 },
                 {
                   label: 'Result Submitted (All Stages)',
@@ -1011,14 +1014,14 @@ export function SituationRoomPage({
                       p.operationalStatus === PuOperationalStatus.RESULT_UNDER_REVIEW ||
                       p.operationalStatus === PuOperationalStatus.RESULT_VERIFIED
                   ).length,
-                  color: 'bg-emerald-700',
+                  color: 'bg-[#168653]',
                 },
                 {
                   label: 'Result FDMIS Verified',
                   count: filteredPus.filter(
                     (p) => p.operationalStatus === PuOperationalStatus.RESULT_VERIFIED
                   ).length,
-                  color: 'bg-emerald-600',
+                  color: 'bg-emerald-500',
                 },
                 {
                   label: 'Incident Reported / Communication Lost',
@@ -1027,7 +1030,7 @@ export function SituationRoomPage({
                       p.operationalStatus === PuOperationalStatus.INCIDENT_REPORTED ||
                       p.operationalStatus === PuOperationalStatus.COMMUNICATION_LOST
                   ).length,
-                  color: 'bg-red-600',
+                  color: 'bg-[#DC4C45]',
                 },
               ].map((bar) => {
                 const pct = Math.round((bar.count / filteredPus.length) * 100);
@@ -1035,11 +1038,11 @@ export function SituationRoomPage({
                   <div key={bar.label}>
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-medium text-slate-700">{bar.label}</span>
-                      <span className="font-mono text-slate-800 tabular-nums">
+                      <span className="font-mono font-semibold text-[#102B3F] tabular-nums">
                         {bar.count} ({pct}%)
                       </span>
                     </div>
-                    <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-100">
                       <div
                         className={`h-full rounded-full ${bar.color}`}
                         style={{ width: `${pct}%` }}
@@ -1051,14 +1054,14 @@ export function SituationRoomPage({
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
-            <h3 className="font-display text-sm font-semibold text-slate-900">
+          <div className="fdmis-surface p-3.5 sm:p-4">
+            <h3 className="font-display text-sm font-bold text-[#102B3F]">
               Scope Coverage &amp; Quick Actions
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
               Authorized registers and rapid operational navigation
             </p>
-            <div className="mt-4 space-y-3">
+            <div className="mt-3 space-y-2.5">
               {authorizedLgas.map((id) => {
                 const def = LGA_DEFINITIONS[id];
                 const lgaPus = pollingUnits.filter((p) => p.lgaId === id);
@@ -1071,17 +1074,17 @@ export function SituationRoomPage({
                 return (
                   <div
                     key={id}
-                    className="rounded-lg border border-slate-200 bg-slate-50 p-3.5 text-xs"
+                    className="rounded-xl border border-slate-200 bg-[#F5F7FA] p-3 text-xs"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-900">
+                      <span className="font-bold text-[#102B3F]">
                         {def.displayName} ({def.lgaCode})
                       </span>
                       <span className="font-mono text-slate-600 tabular-nums">
                         {lgaPus.length} / {def.expectedPollingUnits} PUs
                       </span>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-4 text-slate-600 tabular-nums">
+                    <div className="mt-1.5 flex flex-wrap gap-4 text-slate-600 tabular-nums">
                       <span>Checked In: {lgaCheckedIn}</span>
                       <span>Verified Results: {lgaVerified}</span>
                     </div>
@@ -1089,11 +1092,11 @@ export function SituationRoomPage({
                 );
               })}
 
-              <div className="flex flex-wrap gap-2 pt-2">
+              <div className="flex flex-wrap gap-1.5 pt-1">
                 <button
                   type="button"
                   onClick={() => onNavigate('field_ops')}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#115233]"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-[#06452F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29]"
                 >
                   <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Agent Check-In</span>
@@ -1101,44 +1104,44 @@ export function SituationRoomPage({
                 <button
                   type="button"
                   onClick={() => onNavigate('incidents')}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
                 >
-                  <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                  <AlertTriangle className="h-3.5 w-3.5 text-[#D99A32]" aria-hidden="true" />
                   <span>Report Incident</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onNavigate('notes')}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
                 >
-                  <StickyNote className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Notes &amp; Messages</span>
+                  <StickyNote className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
+                  <span>Notes</span>
                 </button>
                 {canViewOpsCoverage || isOpsOfficer ? (
                   <button
                     type="button"
                     onClick={() => onNavigate('operations_officers')}
-                    className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
                   >
-                    <ShieldAlert className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
-                    <span>Operations Officers</span>
+                    <ShieldAlert className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
+                    <span>Officers</span>
                   </button>
                 ) : null}
                 <button
                   type="button"
                   onClick={() => onNavigate('results')}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-[#102B3F] hover:bg-[#F5F7FA]"
                 >
-                  <ClipboardCheck className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Results &amp; EC8A</span>
+                  <ClipboardCheck className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
+                  <span>Results</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => onNavigate('emergency_assistance')}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3.5 py-1.5 text-xs font-medium text-red-900 hover:bg-red-100"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border border-[#FAD7D2] bg-[#FEF0EE] px-3 py-1.5 text-xs font-semibold text-[#B91C1C] hover:bg-red-100"
                 >
                   <PhoneCall className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>Emergency Numbers</span>
+                  <span>SOS</span>
                 </button>
               </div>
             </div>

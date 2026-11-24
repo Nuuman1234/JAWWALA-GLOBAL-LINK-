@@ -420,7 +420,7 @@ export function AnalyticsReportsPage({
     metrics.incidentsByStatus.ESCALATED;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Data Freshness Indicator — Never display cached offline data as live */}
       <section
         className={`flex flex-col gap-3 rounded-lg border px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between ${
@@ -529,7 +529,7 @@ export function AnalyticsReportsPage({
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as AutomaticReportCategory)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 focus:border-[#06452F] focus:outline-none"
             >
               {REPORT_CATEGORIES.map((cat) => (
                 <option key={cat} value={cat}>
@@ -547,7 +547,7 @@ export function AnalyticsReportsPage({
               type="date"
               value={startDateIso}
               onChange={(e) => setStartDateIso(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             />
           </div>
 
@@ -560,7 +560,7 @@ export function AnalyticsReportsPage({
               value={endDateIso}
               min={startDateIso || undefined}
               onChange={(e) => setEndDateIso(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             />
           </div>
 
@@ -577,7 +577,7 @@ export function AnalyticsReportsPage({
                 setPuId('all');
                 setOfficerUid('all');
               }}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-50"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none disabled:bg-slate-50"
             >
               <option value="all">Funtua & Dandume (All)</option>
               <option value="funtua">Funtua LGA</option>
@@ -597,7 +597,7 @@ export function AnalyticsReportsPage({
                 setPuId('all');
                 setOfficerUid('all');
               }}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-50"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none disabled:bg-slate-50"
             >
               <option value="all">All Wards</option>
               {availableWards.map((w) => (
@@ -615,7 +615,7 @@ export function AnalyticsReportsPage({
             <select
               value={puId}
               onChange={(e) => setPuId(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             >
               <option value="all">All Polling Units</option>
               {availablePus.map((p) => (
@@ -633,7 +633,7 @@ export function AnalyticsReportsPage({
             <select
               value={officerUid}
               onChange={(e) => setOfficerUid(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             >
               <option value="all">All Operations Officers</option>
               {availableOfficers.map((o) => (
@@ -651,7 +651,7 @@ export function AnalyticsReportsPage({
             <select
               value={incidentCategory}
               onChange={(e) => setIncidentCategory(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             >
               <option value="all">All Incident Categories</option>
               {INCIDENT_CATEGORIES.map((cat) => (
@@ -669,7 +669,7 @@ export function AnalyticsReportsPage({
             <select
               value={submissionStatus}
               onChange={(e) => setSubmissionStatus(e.target.value)}
-              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 min-h-[40px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             >
               <option value="all">All Submission Statuses</option>
               {Object.values(VerificationStatus).map((st) => (
@@ -686,13 +686,13 @@ export function AnalyticsReportsPage({
       <section data-print-board="true" className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="flex items-center gap-2 font-display text-base font-bold text-slate-900">
-            <BarChart3 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <BarChart3 className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <span>Operational Analytics Dashboard</span>
           </h3>
           <span className="text-xs text-slate-500">{compiledReport.scopeLabel}</span>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5 print-grid-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5 sm:gap-2.5 print-grid-4">
           <div data-print-card="true" className="rounded-lg border border-slate-200 bg-white p-4">
             <p className="text-xs font-medium text-slate-500">Registered Agents</p>
             <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
@@ -705,7 +705,7 @@ export function AnalyticsReportsPage({
 
           <div data-print-card="true" className="rounded-lg border border-slate-200 bg-white p-4">
             <p className="text-xs font-medium text-slate-500">Polling Units Reporting</p>
-            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-[#0b3b24]">
+            <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-[#06452F]">
               {metrics.reportingPollingUnits}
               <span className="text-sm font-normal text-slate-500">/{metrics.totalPollingUnits}</span>
             </p>
@@ -849,7 +849,7 @@ export function AnalyticsReportsPage({
             type="button"
             disabled={generatingPdf}
             onClick={() => void handleDownloadPdf()}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-60 whitespace-nowrap"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#06452F] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-60 whitespace-nowrap"
           >
             {generatingPdf ? (
               <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -875,7 +875,7 @@ export function AnalyticsReportsPage({
           <button
             type="button"
             onClick={handleExportExcel}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-emerald-700/30 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-100 whitespace-nowrap"
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-emerald-700/30 bg-emerald-50 px-3.5 py-2 text-xs font-semibold text-[#06452F] hover:bg-emerald-100 whitespace-nowrap"
           >
             <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
             <span>Export Excel (.xlsx)</span>
@@ -907,10 +907,10 @@ export function AnalyticsReportsPage({
         className="rounded-lg border border-slate-200 bg-white p-5"
       >
         {/* Official Report Header (always visible on screen and styled crisply for print) */}
-        <div className="print-only-header border-b-2 border-[#0b3b24] pb-4">
+        <div className="print-only-header border-b-2 border-[#06452F] pb-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-[#0b3b24]">
+              <p className="text-xs font-bold uppercase tracking-wider text-[#06452F]">
                 {compiledReport.fdmisName}
               </p>
               <h3 className="mt-0.5 font-display text-xl font-bold text-slate-900">
@@ -958,7 +958,7 @@ export function AnalyticsReportsPage({
 
         {/* Report Summary Metrics */}
         {compiledReport.summaryMetrics.length > 0 ? (
-          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 print-grid-4">
+          <div className="mt-3 fdmis-metrics-grid gap-2 sm:gap-2.5 print-grid-4">
             {compiledReport.summaryMetrics.map((m) => (
               <div
                 key={m.label}
@@ -1020,7 +1020,7 @@ export function AnalyticsReportsPage({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <FileText className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+              <FileText className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
               <span>Archived & Offline-Accessible Reports ({generatedReports.length})</span>
             </h3>
             <p className="mt-0.5 text-xs text-slate-500">
@@ -1106,10 +1106,10 @@ export function AnalyticsReportsPage({
       {/* ARCHIVED REPORT INSPECTOR MODAL */}
       {selectedArchive ? (
         <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+          <div className="max-h-[85vh] w-full max-w-xl overflow-y-auto fdmis-surface p-3.5 sm:p-4 shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-3">
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#0b3b24]">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-[#06452F]">
                   Archived Snapshot · {selectedArchive.generationMode === 'AUTOMATIC_DAILY' ? 'Automatic Daily' : 'On-Demand'}
                 </p>
                 <h4 className="mt-0.5 font-display text-lg font-bold text-slate-900">

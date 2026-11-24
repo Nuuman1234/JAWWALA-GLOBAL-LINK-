@@ -191,10 +191,10 @@ export function VerificationCenterPage({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Verification Disclaimer Banner */}
       <div className="flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-xs text-emerald-950">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#06452F]" aria-hidden="true" />
         <div>
           <p className="font-semibold">
             FDMIS Internally Verified Workflow — Independent of Official INEC Declaration
@@ -207,14 +207,14 @@ export function VerificationCenterPage({
       </div>
 
       {/* Queue KPI Strip */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="grid grid-cols-3 gap-2 sm:gap-2.5 lg:grid-cols-5">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <p className="text-xs font-medium text-slate-500">Awaiting Review</p>
           <p className="mt-1 font-mono text-2xl font-bold text-amber-800 tabular-nums">
             {counts.awaiting}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <p className="text-xs font-medium text-slate-500">Discrepancies Flagged</p>
           <p
             className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
@@ -224,19 +224,19 @@ export function VerificationCenterPage({
             {counts.discrepancies}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <p className="text-xs font-medium text-slate-500">FDMIS Verified</p>
-          <p className="mt-1 font-mono text-2xl font-bold text-[#0b3b24] tabular-nums">
+          <p className="mt-1 font-mono text-2xl font-bold text-[#06452F] tabular-nums">
             {counts.verified}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <p className="text-xs font-medium text-slate-500">Returned for Correction</p>
           <p className="mt-1 font-mono text-2xl font-bold text-slate-900 tabular-nums">
             {counts.correction}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <p className="text-xs font-medium text-slate-500">Approved for Public View</p>
           <p className="mt-1 font-mono text-2xl font-bold text-emerald-700 tabular-nums">
             {counts.publicApproved}
@@ -257,7 +257,7 @@ export function VerificationCenterPage({
       ) : null}
 
       {/* Filter Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-3">
           <input
             type="search"
@@ -304,7 +304,7 @@ export function VerificationCenterPage({
           description="Submitted polling unit results and Form EC8A sheets will appear here for side-by-side verification."
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden fdmis-surface">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
@@ -406,7 +406,7 @@ export function VerificationCenterPage({
       {/* Side-by-Side Verification Modal */}
       {reviewTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -428,7 +428,7 @@ export function VerificationCenterPage({
               </button>
             </div>
 
-            <div className="mt-4 grid gap-6 lg:grid-cols-2">
+            <div className="mt-4 grid gap-3.5 sm:gap-4 lg:grid-cols-2">
               {/* Left: Form EC8A Evidence Preview + Human-Confirmed Assisted Cross-Check */}
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -452,7 +452,7 @@ export function VerificationCenterPage({
                         onClick={() => setHighContrastEc8a((v) => !v)}
                         className={`min-h-[28px] rounded border px-2 text-[11px] font-medium whitespace-nowrap ${
                           highContrastEc8a
-                            ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                            ? 'border-[#06452F] bg-[#06452F] text-white'
                             : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                         }`}
                       >
@@ -486,7 +486,7 @@ export function VerificationCenterPage({
                         <a
                           href={reviewTarget.ec8aImageBase64}
                           download={reviewTarget.ec8aFileName || 'ec8a-document'}
-                          className="mt-2 inline-block font-medium text-[#0b3b24] underline"
+                          className="mt-2 inline-block font-medium text-[#06452F] underline"
                         >
                           Download Document
                         </a>
@@ -503,9 +503,9 @@ export function VerificationCenterPage({
                 )}
 
                 {/* Assisted EC8A Figure Cross-Check (Human-Confirmed Only) */}
-                <div className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-2">
+                <div className="fdmis-surface p-3.5 space-y-2">
                   <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                    <Sparkles className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                    <Sparkles className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
                     <span>Assisted EC8A Figure Cross-Check (Human Confirmed)</span>
                   </p>
                   <p className="text-[11px] text-slate-500">
@@ -532,7 +532,7 @@ export function VerificationCenterPage({
                           onChange={(e) =>
                             setAssistedChecks((prev) => ({ ...prev, [row.k]: e.target.checked }))
                           }
-                          className="h-3.5 w-3.5 accent-[#0b3b24]"
+                          className="h-3.5 w-3.5 accent-[#06452F]"
                         />
                         <span className="truncate">{row.label}</span>
                       </label>
@@ -645,7 +645,7 @@ export function VerificationCenterPage({
                   </div>
                   <div className="col-span-2 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 p-3">
                     <span className="font-semibold text-emerald-950">Total Votes Cast</span>
-                    <span className="font-mono text-lg font-bold text-[#0b3b24] tabular-nums">
+                    <span className="font-mono text-lg font-bold text-[#06452F] tabular-nums">
                       {reviewTarget.totalVotesCast.toLocaleString()}
                     </span>
                   </div>
@@ -707,7 +707,7 @@ export function VerificationCenterPage({
                 {/* Locked Verified Banner */}
                 {isLockedVerified ? (
                   <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3.5 text-xs text-emerald-950">
-                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
+                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-[#06452F]" aria-hidden="true" />
                     <div>
                       <p className="font-semibold">
                         FDMIS Internally Verified &amp; Locked (Not Officially Declared INEC Result)
@@ -786,7 +786,7 @@ export function VerificationCenterPage({
                               className={`flex min-h-[42px] items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-40 whitespace-nowrap ${
                                 selected
                                   ? opt.id === VerificationStatus.VERIFIED
-                                    ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                                    ? 'border-[#06452F] bg-[#06452F] text-white'
                                     : opt.id === VerificationStatus.REJECTED ||
                                         opt.id === VerificationStatus.DISCREPANCY_DETECTED
                                       ? 'border-red-700 bg-red-700 text-white'
@@ -824,7 +824,7 @@ export function VerificationCenterPage({
                           type="checkbox"
                           checked={approvePublic}
                           onChange={(e) => setApprovePublic(e.target.checked)}
-                          className="mt-0.5 h-4 w-4 accent-[#0b3b24]"
+                          className="mt-0.5 h-4 w-4 accent-[#06452F]"
                         />
                         <span>
                           <span className="font-semibold">
@@ -851,7 +851,7 @@ export function VerificationCenterPage({
                         disabled={
                           saving || (decision === VerificationStatus.VERIFIED && isSelfSubmission)
                         }
-                        className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                        className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                       >
                         <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                         <span>{saving ? 'Recording...' : 'Confirm Decision'}</span>

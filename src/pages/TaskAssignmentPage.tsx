@@ -568,7 +568,7 @@ export function TaskAssignmentPage({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Header Bar */}
       <section className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -602,7 +602,7 @@ export function TaskAssignmentPage({
             <button
               type="button"
               onClick={openCreateModal}
-              className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b]"
+              className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b]"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               <span>Assign New Task</span>
@@ -646,7 +646,7 @@ export function TaskAssignmentPage({
       ) : null}
 
       {/* KPI Strip */}
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 print-grid-4">
+      <section className="grid grid-cols-3 gap-2 sm:gap-2.5 lg:grid-cols-6 print-grid-4">
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <p className="text-xs font-medium text-slate-500">Total Tasks</p>
           <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-slate-900">
@@ -797,7 +797,7 @@ export function TaskAssignmentPage({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search task title, ward, or officer..."
-              className="min-h-[40px] w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+              className="min-h-[40px] w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
             />
           </div>
 
@@ -814,7 +814,7 @@ export function TaskAssignmentPage({
                   setWardFilter('all');
                 }}
                 aria-label="Filter by LGA"
-                className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-50"
+                className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none disabled:bg-slate-50"
               >
                 <option value="all">All LGAs</option>
                 <option value="funtua">Funtua LGA</option>
@@ -825,7 +825,7 @@ export function TaskAssignmentPage({
                 value={wardFilter}
                 onChange={(e) => setWardFilter(e.target.value)}
                 aria-label="Filter by Ward"
-                className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
               >
                 <option value="all">All Wards</option>
                 {filterWards.map((w) => (
@@ -841,7 +841,7 @@ export function TaskAssignmentPage({
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as 'all' | TaskStatus)}
             aria-label="Filter by Status"
-            className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+            className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
           >
             <option value="all">All Statuses</option>
             {Object.values(TaskStatus).map((st) => (
@@ -855,7 +855,7 @@ export function TaskAssignmentPage({
             value={priorityFilter}
             onChange={(e) => setPriorityFilter(e.target.value as 'all' | TaskPriority)}
             aria-label="Filter by Priority"
-            className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+            className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
           >
             <option value="all">All Priorities</option>
             {Object.values(TaskPriority).map((pr) => (
@@ -870,7 +870,7 @@ export function TaskAssignmentPage({
               value={officerFilter}
               onChange={(e) => setOfficerFilter(e.target.value)}
               aria-label="Filter by Operations Officer"
-              className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:col-span-2 lg:col-span-2"
+              className="min-h-[40px] rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none sm:col-span-2 lg:col-span-2"
             >
               <option value="all">All Operations Officers</option>
               {allOfficers.map((o) => (
@@ -907,7 +907,7 @@ export function TaskAssignmentPage({
               <article
                 key={task.id}
                 onClick={() => setSelectedTaskId(task.id)}
-                className="cursor-pointer rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-[#0b3b24]/50"
+                className="cursor-pointer rounded-lg border border-slate-200 bg-white p-4 transition-colors hover:border-[#06452F]/50"
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
@@ -947,13 +947,13 @@ export function TaskAssignmentPage({
                               ? 'bg-emerald-600'
                               : effStatus === TaskStatus.OVERDUE
                                 ? 'bg-red-600'
-                                : 'bg-[#0b3b24]'
+                                : 'bg-[#06452F]'
                           }`}
                           style={{ width: `${Math.min(100, Math.max(0, task.progressPercent))}%` }}
                         />
                       </div>
                     </div>
-                    <span className="text-xs font-medium text-[#0b3b24]">
+                    <span className="text-xs font-medium text-[#06452F]">
                       Open Details & Actions →
                     </span>
                   </div>
@@ -986,7 +986,7 @@ export function TaskAssignmentPage({
       {/* CREATE TASK MODAL (Full Control Admin Only) */}
       {createModalOpen && isFullAdmin ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto fdmis-surface shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
                 <h3 className="font-display text-lg font-bold text-slate-900">
@@ -1026,7 +1026,7 @@ export function TaskAssignmentPage({
                         : undefined;
                       setFormOfficerUid(firstOff?.uid || '');
                     }}
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                   >
                     <option value="funtua">Funtua LGA</option>
                     <option value="dandume">Dandume LGA</option>
@@ -1046,7 +1046,7 @@ export function TaskAssignmentPage({
                       setFormOfficerUid(firstOff?.uid || '');
                     }}
                     required
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                   >
                     <option value="">Select ward...</option>
                     {modalWards.map((w) => (
@@ -1077,7 +1077,7 @@ export function TaskAssignmentPage({
                   value={formOfficerUid}
                   onChange={(e) => setFormOfficerUid(e.target.value)}
                   required
-                  className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                  className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                 >
                   <option value="">
                     {modalWardOfficers.length === 0
@@ -1104,7 +1104,7 @@ export function TaskAssignmentPage({
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
                   placeholder="e.g., Verify PU Agent deployment and BVAS readiness across ward"
-                  className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                  className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                 />
               </div>
 
@@ -1120,7 +1120,7 @@ export function TaskAssignmentPage({
                   value={formDescription}
                   onChange={(e) => setFormDescription(e.target.value)}
                   placeholder="Provide clear instructions, expected field verification evidence, and escalation requirements..."
-                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                 />
               </div>
 
@@ -1130,7 +1130,7 @@ export function TaskAssignmentPage({
                   <select
                     value={formPriority}
                     onChange={(e) => setFormPriority(e.target.value as TaskPriority)}
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                   >
                     {Object.values(TaskPriority).map((p) => (
                       <option key={p} value={p}>
@@ -1148,7 +1148,7 @@ export function TaskAssignmentPage({
                     required
                     value={formStartDate}
                     onChange={(e) => setFormStartDate(e.target.value)}
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                   />
                 </div>
                 <div>
@@ -1161,7 +1161,7 @@ export function TaskAssignmentPage({
                     value={formDueDate}
                     min={formStartDate}
                     onChange={(e) => setFormDueDate(e.target.value)}
-                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                    className="mt-1 min-h-[42px] w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                   />
                 </div>
               </div>
@@ -1177,7 +1177,7 @@ export function TaskAssignmentPage({
                 <button
                   type="submit"
                   disabled={creatingTask || !formOfficerUid}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
+                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
                 >
                   <Send className="h-4 w-4" aria-hidden="true" />
                   <span>{creatingTask ? 'Assigning...' : isOnline ? 'Assign Task' : 'Queue Task Offline'}</span>
@@ -1191,7 +1191,7 @@ export function TaskAssignmentPage({
       {/* TASK DETAIL & WORKFLOW INSPECTOR MODAL */}
       {selectedTask ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto fdmis-surface shadow-xl">
             <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1216,7 +1216,7 @@ export function TaskAssignmentPage({
               </button>
             </div>
 
-            <div className="space-y-5 p-5">
+            <div className="space-y-3.5 sm:space-y-4 p-5">
               {/* Metadata & Description */}
               <div className="grid grid-cols-2 gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 text-xs sm:grid-cols-4">
                 <div>
@@ -1281,7 +1281,7 @@ export function TaskAssignmentPage({
                         <a
                           href={selectedTask.evidenceBase64}
                           download={selectedTask.evidenceFileName || 'task_evidence'}
-                          className="inline-flex items-center gap-1 font-semibold text-[#0b3b24] hover:underline"
+                          className="inline-flex items-center gap-1 font-semibold text-[#06452F] hover:underline"
                         >
                           <Download className="h-3.5 w-3.5" />
                           Download
@@ -1339,7 +1339,7 @@ export function TaskAssignmentPage({
                       type="button"
                       disabled={submittingOfficerUpdate}
                       onClick={() => void handleOfficerSubmit(TaskStatus.ACKNOWLEDGED)}
-                      className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
+                      className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
                     >
                       <CheckCircle2 className="h-4 w-4" />
                       <span>Acknowledge Assignment</span>
@@ -1358,7 +1358,7 @@ export function TaskAssignmentPage({
                       step={5}
                       value={officerProgress}
                       onChange={(e) => setOfficerProgress(Number(e.target.value))}
-                      className="mt-1.5 w-full accent-[#0b3b24]"
+                      className="mt-1.5 w-full accent-[#06452F]"
                     />
                   </div>
 
@@ -1372,7 +1372,7 @@ export function TaskAssignmentPage({
                       value={officerReport}
                       onChange={(e) => setOfficerReport(e.target.value)}
                       placeholder="Describe actions completed in the ward, verified polling unit conditions, or findings..."
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                     />
                   </div>
 
@@ -1386,7 +1386,7 @@ export function TaskAssignmentPage({
                       value={officerDelayReason}
                       onChange={(e) => setOfficerDelayReason(e.target.value)}
                       placeholder="Document logistics, security, weather, or communication challenges affecting timelines..."
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none"
                     />
                   </div>
 
@@ -1396,7 +1396,7 @@ export function TaskAssignmentPage({
                     </label>
                     <div className="mt-1.5 flex flex-wrap items-center gap-3">
                       <label className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                        <Upload className="h-4 w-4 text-[#0b3b24]" />
+                        <Upload className="h-4 w-4 text-[#06452F]" />
                         <span>{compressingEvidence ? 'Compressing...' : 'Choose Photo / PDF'}</span>
                         <input
                           type="file"
@@ -1437,7 +1437,7 @@ export function TaskAssignmentPage({
                       type="button"
                       disabled={submittingOfficerUpdate || compressingEvidence}
                       onClick={() => void handleOfficerSubmit(TaskStatus.AWAITING_REVIEW)}
-                      className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
+                      className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
                     >
                       <Send className="h-4 w-4" />
                       <span>Mark Completed for Admin Review</span>
@@ -1461,7 +1461,7 @@ export function TaskAssignmentPage({
                         value={updateRequestText}
                         onChange={(e) => setUpdateRequestText(e.target.value)}
                         placeholder="Request immediate field update from assigned officer..."
-                        className="min-h-[40px] flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                        className="min-h-[40px] flex-1 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-900 focus:border-[#06452F] focus:outline-none"
                       />
                       <button
                         type="button"
@@ -1486,7 +1486,7 @@ export function TaskAssignmentPage({
                       value={adminReviewFeedback}
                       onChange={(e) => setAdminReviewFeedback(e.target.value)}
                       placeholder="Enter approval remarks or mandatory correction instructions for the officer..."
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#0b3b24] focus:outline-none"
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#06452F] focus:outline-none"
                     />
                   </div>
 
@@ -1496,7 +1496,7 @@ export function TaskAssignmentPage({
                         type="button"
                         disabled={adminActionBusy || !isOnline}
                         onClick={() => void handleAdminReview('APPROVE')}
-                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
+                        className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#06452F] px-3.5 py-2 text-xs font-semibold text-white hover:bg-[#082d1b] disabled:opacity-50"
                       >
                         <CheckCircle2 className="h-4 w-4" />
                         <span>Approve & Complete</span>
@@ -1592,7 +1592,7 @@ export function TaskAssignmentPage({
                             <a
                               href={upd.evidenceBase64}
                               download={upd.evidenceFileName || 'update_evidence'}
-                              className="inline-flex items-center gap-1 font-medium text-[#0b3b24] hover:underline"
+                              className="inline-flex items-center gap-1 font-medium text-[#06452F] hover:underline"
                             >
                               <Paperclip className="h-3 w-3" />
                               <span>{upd.evidenceFileName || 'Attached Evidence'}</span>

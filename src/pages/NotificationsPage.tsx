@@ -350,21 +350,21 @@ export function NotificationsPage({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Free Core & External Communication Channel Status */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
         <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-emerald-950">In-App Notifications</span>
-            <CheckCircle2 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <CheckCircle2 className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
           </div>
-          <p className="mt-1.5 text-sm font-semibold text-[#0b3b24]">Active · Free Core Channel</p>
+          <p className="mt-1.5 text-sm font-semibold text-[#06452F]">Active · Free Core Channel</p>
           <p className="mt-0.5 text-[11px] text-emerald-900/80">
             Operates independently without external API keys.
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-600">SMS / USSD Fallback</span>
             <Lock className="h-4 w-4 text-slate-400" aria-hidden="true" />
@@ -379,7 +379,7 @@ export function NotificationsPage({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-600">WhatsApp Alert Gateway</span>
             <MessageSquare className="h-4 w-4 text-slate-400" aria-hidden="true" />
@@ -394,7 +394,7 @@ export function NotificationsPage({
           </p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="fdmis-surface p-3 sm:p-3.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-600">Email Dispatch Gateway</span>
             <Mail className="h-4 w-4 text-slate-400" aria-hidden="true" />
@@ -417,10 +417,10 @@ export function NotificationsPage({
       {canBroadcast ? (
         <form
           onSubmit={handleBroadcast}
-          className="rounded-xl border border-slate-200 bg-white p-5 space-y-4"
+          className="fdmis-surface p-3.5 sm:p-4 space-y-4"
         >
           <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <Bell className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <Bell className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <h2 className="font-display text-sm font-semibold text-slate-900">
               Broadcast Situation Room Directive
             </h2>
@@ -543,7 +543,7 @@ export function NotificationsPage({
             <button
               type="submit"
               disabled={sending}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
             >
               <Send className="h-4 w-4" aria-hidden="true" />
               <span>
@@ -616,10 +616,10 @@ export function NotificationsPage({
       ) : null}
 
       {/* Smart Operational Alerts Summary (Live Deduplicated Counters) */}
-      <section className="rounded-xl border border-slate-200 bg-white p-4">
+      <section className="fdmis-surface p-3 sm:p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
           <div className="flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <ShieldAlert className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <h2 className="font-display text-sm font-semibold text-slate-900">
               Smart Operational Alerts Summary
             </h2>
@@ -628,7 +628,7 @@ export function NotificationsPage({
             Live database status · Zero simulated alerts
           </span>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="mt-2.5 fdmis-metrics-grid gap-2 sm:gap-2.5">
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
             <p className="text-[11px] font-medium text-slate-500">Critical Active Incidents</p>
             <p
@@ -674,7 +674,7 @@ export function NotificationsPage({
 
       {/* Full Control Admin Escalation Rules Manager */}
       {isFullAdmin ? (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+        <section className="fdmis-surface p-3.5 sm:p-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
             <div>
               <h2 className="font-display text-sm font-semibold text-slate-900">
@@ -687,7 +687,7 @@ export function NotificationsPage({
             <button
               type="button"
               onClick={() => setShowRuleForm((v) => !v)}
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#0b3b24] bg-white px-3 py-1.5 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-50 whitespace-nowrap"
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#06452F] bg-white px-3 py-1.5 text-xs font-semibold text-[#06452F] hover:bg-emerald-50 whitespace-nowrap"
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               <span>{showRuleForm ? 'Close Rule Form' : 'Add Escalation Rule'}</span>
@@ -829,7 +829,7 @@ export function NotificationsPage({
                 <button
                   type="submit"
                   disabled={savingRule}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-4 py-2 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#06452F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   <span>{savingRule ? 'Saving...' : 'Save Escalation Rule'}</span>
                 </button>
@@ -891,7 +891,7 @@ export function NotificationsPage({
       ) : null}
 
       {/* Notification Feed Controls & Unread Management */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 fdmis-surface px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           {(
             [
@@ -909,7 +909,7 @@ export function NotificationsPage({
               onClick={() => setNotifFilter(tab.id)}
               className={`min-h-[36px] rounded-lg border px-3 text-xs font-semibold transition-colors whitespace-nowrap ${
                 notifFilter === tab.id
-                  ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                  ? 'border-[#06452F] bg-[#06452F] text-white'
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
               }`}
             >
@@ -924,7 +924,7 @@ export function NotificationsPage({
             onClick={markAllRead}
             className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
           >
-            <CheckCheck className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+            <CheckCheck className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
             <span>Mark All Read</span>
           </button>
         ) : null}
@@ -962,7 +962,7 @@ export function NotificationsPage({
                     {n.isCritical ? (
                       <AlertOctagon className="h-4 w-4 text-red-700 shrink-0" aria-hidden="true" />
                     ) : (
-                      <Bell className="h-4 w-4 text-[#0b3b24] shrink-0" aria-hidden="true" />
+                      <Bell className="h-4 w-4 text-[#06452F] shrink-0" aria-hidden="true" />
                     )}
                     <h3
                       className={`text-sm ${
@@ -972,7 +972,7 @@ export function NotificationsPage({
                       {n.title}
                     </h3>
                     {!isRead ? (
-                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#0b3b24]">
+                      <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#06452F]">
                         UNREAD
                       </span>
                     ) : null}

@@ -790,9 +790,9 @@ export function DataManagementPage({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Workspace Mode Tabs */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-2">
+      <div className="flex flex-wrap items-center gap-2 fdmis-surface p-2">
         {(
           [
             { id: 'DELETION_CSV', label: 'Permanent Deletion & CSV' },
@@ -816,7 +816,7 @@ export function DataManagementPage({
             onClick={() => setWorkspaceTab(tab.id)}
             className={`min-h-[40px] rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors whitespace-nowrap ${
               workspaceTab === tab.id
-                ? 'bg-[#0b3b24] text-white'
+                ? 'bg-[#06452F] text-white'
                 : 'text-slate-700 hover:bg-slate-100'
             }`}
           >
@@ -860,12 +860,12 @@ export function DataManagementPage({
       ) : null}
 
       {workspaceTab === 'DELETION_CSV' ? (
-        <div className="space-y-5">
+        <div className="space-y-3.5 sm:space-y-4">
       {/* Preservation & Integrity Banner */}
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-5 space-y-3">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#0b3b24] text-white">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#06452F] text-white">
               <Database className="h-5 w-5" aria-hidden="true" />
             </div>
             <div>
@@ -896,7 +896,7 @@ export function DataManagementPage({
         </div>
 
         <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-white px-3.5 py-2.5 text-xs text-slate-700">
-          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#06452F]" aria-hidden="true" />
           <span>
             <strong>Zero Resurrection Guarantee ({deletionTombstones.length} Active Tombstones):</strong>{' '}
             Existing records are never auto-classified as test data. Permanently deleted records write
@@ -918,8 +918,8 @@ export function DataManagementPage({
       ) : null}
 
       {lastSummary ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 text-xs text-slate-700">
-          <div className="flex items-center gap-2 font-semibold text-[#0b3b24]">
+        <div className="fdmis-surface p-3 sm:p-3.5 text-xs text-slate-700">
+          <div className="flex items-center gap-2 font-semibold text-[#06452F]">
             <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
             <span>
               Last Cleanup Recorded in Audit Log ({lastSummary.executedAtIso})
@@ -937,7 +937,7 @@ export function DataManagementPage({
       ) : null}
 
       {/* Mode Switcher & Selection Controls */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
+      <div className="fdmis-surface p-3 sm:p-3.5 space-y-4">
         <div className="flex flex-col justify-between gap-3 lg:flex-row lg:items-center">
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -945,7 +945,7 @@ export function DataManagementPage({
               onClick={() => setViewMode('MARKED_TEST')}
               className={`min-h-[40px] rounded-lg border px-3.5 text-xs font-semibold transition-colors ${
                 viewMode === 'MARKED_TEST'
-                  ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                  ? 'border-[#06452F] bg-[#06452F] text-white'
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
               }`}
             >
@@ -956,7 +956,7 @@ export function DataManagementPage({
               onClick={() => setViewMode('MANUAL_SELECTION')}
               className={`min-h-[40px] rounded-lg border px-3.5 text-xs font-semibold transition-colors ${
                 viewMode === 'MANUAL_SELECTION'
-                  ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                  ? 'border-[#06452F] bg-[#06452F] text-white'
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
               }`}
             >
@@ -1049,7 +1049,7 @@ export function DataManagementPage({
               type="button"
               disabled={shownResults.length === 0 || resultSubmissionsCsvOpts.headers.length === 0}
               onClick={handleExportResultSubmissionsCsv}
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#0b3b24]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#0b3b24] hover:bg-emerald-50 disabled:opacity-45"
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#06452F]/30 bg-white px-3 py-1.5 text-xs font-semibold text-[#06452F] hover:bg-emerald-50 disabled:opacity-45"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Result Submissions CSV ({shownResults.length})</span>
@@ -1058,7 +1058,7 @@ export function DataManagementPage({
               type="button"
               disabled={shownApproved.length === 0 || approvedResultsCsvOpts.headers.length === 0}
               onClick={handleExportApprovedResultsCsv}
-              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-45"
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#06452F] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29] disabled:opacity-45"
             >
               <Download className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Verified Results CSV ({shownApproved.length})</span>
@@ -1086,7 +1086,7 @@ export function DataManagementPage({
                 onClick={() => setActiveCategory(key)}
                 className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
                   active
-                    ? 'border-[#0b3b24] bg-emerald-50 text-[#0b3b24]'
+                    ? 'border-[#06452F] bg-emerald-50 text-[#06452F]'
                     : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100'
                 }`}
               >
@@ -1101,11 +1101,11 @@ export function DataManagementPage({
       {showCsvPreview ? (
         <section
           aria-label="CSV Export Preview and Summary"
-          className="rounded-xl border border-slate-200 bg-white p-5 space-y-4"
+          className="fdmis-surface p-3.5 sm:p-4 space-y-4"
         >
           <div className="flex flex-col justify-between gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-center">
             <div className="flex items-start gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[#0b3b24]">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-[#06452F]">
                 <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
               </div>
               <div>
@@ -1144,7 +1144,7 @@ export function DataManagementPage({
                   <div
                     role="menu"
                     aria-label="Toggle CSV export columns"
-                    className="absolute right-0 z-30 mt-1.5 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-lg"
+                    className="absolute right-0 z-30 mt-1.5 w-72 fdmis-surface p-3 shadow-lg"
                   >
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                       <span className="text-xs font-semibold text-slate-900">
@@ -1191,7 +1191,7 @@ export function DataManagementPage({
                               type="checkbox"
                               checked={checked}
                               onChange={() => toggleActiveColumn(header)}
-                              className="h-3.5 w-3.5 rounded border-slate-300 text-[#0b3b24] focus:ring-[#0b3b24]"
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-[#06452F] focus:ring-[#06452F]"
                             />
                             <span className="truncate">{header}</span>
                           </label>
@@ -1219,7 +1219,7 @@ export function DataManagementPage({
                   activeCsvPreviewSlice.headers.length === 0
                 }
                 onClick={handleDownloadActivePreviewCsv}
-                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-45"
+                className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#06452F] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#043B29] disabled:opacity-45"
               >
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
                 <span>Download Previewed CSV ({activeCsvPreviewSlice.totalRows})</span>
@@ -1237,7 +1237,7 @@ export function DataManagementPage({
               }}
               className={`rounded-lg border p-3.5 text-left transition-colors ${
                 previewDataset === 'resultSubmissions'
-                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  ? 'border-[#06452F] bg-emerald-50/70 ring-1 ring-[#06452F]'
                   : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
               }`}
             >
@@ -1245,7 +1245,7 @@ export function DataManagementPage({
                 <span className="text-xs font-semibold text-slate-900">
                   Result Submissions CSV
                 </span>
-                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                <span className="font-mono text-xs font-bold text-[#06452F] tabular-nums">
                   {shownResults.length} row{shownResults.length === 1 ? '' : 's'}
                 </span>
               </div>
@@ -1268,7 +1268,7 @@ export function DataManagementPage({
               }}
               className={`rounded-lg border p-3.5 text-left transition-colors ${
                 previewDataset === 'verifiedResults'
-                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  ? 'border-[#06452F] bg-emerald-50/70 ring-1 ring-[#06452F]'
                   : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
               }`}
             >
@@ -1276,7 +1276,7 @@ export function DataManagementPage({
                 <span className="text-xs font-semibold text-slate-900">
                   Verified Election Results CSV
                 </span>
-                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                <span className="font-mono text-xs font-bold text-[#06452F] tabular-nums">
                   {shownApproved.length} row{shownApproved.length === 1 ? '' : 's'}
                 </span>
               </div>
@@ -1299,7 +1299,7 @@ export function DataManagementPage({
               }}
               className={`rounded-lg border p-3.5 text-left transition-colors ${
                 previewDataset === 'incidentReports'
-                  ? 'border-[#0b3b24] bg-emerald-50/70 ring-1 ring-[#0b3b24]'
+                  ? 'border-[#06452F] bg-emerald-50/70 ring-1 ring-[#06452F]'
                   : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
               }`}
             >
@@ -1307,7 +1307,7 @@ export function DataManagementPage({
                 <span className="text-xs font-semibold text-slate-900">
                   Incident Reports CSV
                 </span>
-                <span className="font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                <span className="font-mono text-xs font-bold text-[#06452F] tabular-nums">
                   {incidentSummaryTotals.total} row
                   {incidentSummaryTotals.total === 1 ? '' : 's'}
                 </span>
@@ -1426,7 +1426,7 @@ export function DataManagementPage({
       ) : null}
 
       {/* Category Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="overflow-hidden fdmis-surface">
         {categoryCounts[activeCategory] === 0 ? (
           <div className="p-6">
             <EmptyState
@@ -1740,7 +1740,7 @@ export function DataManagementPage({
       {/* Confirmation Modal Showing Exact Affected Records */}
       {confirmModalMode ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
-          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-xl border border-slate-200 bg-white shadow-xl">
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col fdmis-surface shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div className="flex items-center gap-2.5 text-red-800">
                 <AlertTriangle className="h-5 w-5" aria-hidden="true" />

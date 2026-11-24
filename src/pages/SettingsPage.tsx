@@ -416,7 +416,7 @@ export function SettingsPage({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3.5 sm:space-y-4">
       {feedback ? (
         <div
           className={`rounded-lg border px-4 py-3 text-sm ${
@@ -430,7 +430,7 @@ export function SettingsPage({
       ) : null}
 
       {/* 1. Prominent Session & Logout Card (Visible to Every Authenticated Role) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6">
+      <div className="fdmis-surface p-4 sm:p-5">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -451,7 +451,7 @@ export function SettingsPage({
                 className={
                   !isOnline || sessionMode === 'offline_trusted'
                     ? 'text-amber-800'
-                    : 'text-[#0b3b24]'
+                    : 'text-[#06452F]'
                 }
               >
                 {!isOnline || sessionMode === 'offline_trusted'
@@ -488,11 +488,11 @@ export function SettingsPage({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3.5 sm:gap-4 lg:grid-cols-2">
         {/* 2. Account Profile */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="fdmis-surface p-4 sm:p-5">
           <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-            <User className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <User className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <h3 className="font-display text-sm font-semibold text-slate-900">
               Account Profile Information
             </h3>
@@ -549,7 +549,7 @@ export function SettingsPage({
             <button
               type="submit"
               disabled={savingProfile}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
             >
               <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
               <span>{savingProfile ? 'Saving Profile...' : 'Save Profile'}</span>
@@ -558,9 +558,9 @@ export function SettingsPage({
         </div>
 
         {/* 3. Account Security & Password */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="fdmis-surface p-4 sm:p-5">
           <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-            <KeyRound className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <KeyRound className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <h3 className="font-display text-sm font-semibold text-slate-900">
               Account Security &amp; Authentication
             </h3>
@@ -708,7 +708,7 @@ export function SettingsPage({
                   checked={signOutAfterPasswordUpdate}
                   onChange={(e) => setSignOutAfterPasswordUpdate(e.target.checked)}
                   disabled={!isOnline || sessionMode === 'offline_trusted'}
-                  className="mt-0.5 h-4 w-4 accent-[#0b3b24]"
+                  className="mt-0.5 h-4 w-4 accent-[#06452F]"
                 />
                 <span>Sign out this device immediately after updating password</span>
               </label>
@@ -716,7 +716,7 @@ export function SettingsPage({
               <button
                 type="submit"
                 disabled={savingPassword || !isOnline || sessionMode === 'offline_trusted'}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
               >
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                 <span>{savingPassword ? 'Updating...' : 'Update Password'}</span>
@@ -810,7 +810,7 @@ export function SettingsPage({
                 <button
                   type="submit"
                   disabled={settingUpPassword || !isOnline || sessionMode === 'offline_trusted'}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   <ShieldCheck className="h-4 w-4" aria-hidden="true" />
                   <span>
@@ -826,9 +826,9 @@ export function SettingsPage({
       </div>
 
       {/* 4. Notification Preferences (Every Active User) */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6">
+      <div className="fdmis-surface p-4 sm:p-5">
         <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-          <Bell className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+          <Bell className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
           <div>
             <h3 className="font-display text-sm font-semibold text-slate-900">
               Notification Preferences
@@ -875,7 +875,7 @@ export function SettingsPage({
                   type="checkbox"
                   checked={pref.checked}
                   onChange={(e) => pref.onChange(e.target.checked)}
-                  className="mt-1 h-4 w-4 accent-[#0b3b24]"
+                  className="mt-1 h-4 w-4 accent-[#06452F]"
                 />
                 <span className="text-xs text-slate-800">
                   <span className="font-semibold">{pref.label}</span>
@@ -890,7 +890,7 @@ export function SettingsPage({
             disabled={savingPrefs}
             className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-60"
           >
-            <CheckCircle2 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+            <CheckCircle2 className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
             <span>{savingPrefs ? 'Saving Preferences...' : 'Save Notification Preferences'}</span>
           </button>
         </form>
@@ -900,9 +900,9 @@ export function SettingsPage({
       {isFullAdmin ? (
         <>
           {/* Module 8: Admin Session & Security Posture Overview */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div className="fdmis-surface p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <ShieldCheck className="h-5 w-5 text-[#0b3b24]" aria-hidden="true" />
+              <ShieldCheck className="h-5 w-5 text-[#06452F]" aria-hidden="true" />
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
                   Constituency Security Posture &amp; Session Overview
@@ -912,10 +912,10 @@ export function SettingsPage({
                 </p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="fdmis-metrics-grid gap-2 sm:gap-2.5">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="text-[11px] font-medium text-slate-500">Active Accounts</p>
-                <p className="mt-1 font-mono text-xl font-bold text-[#0b3b24] tabular-nums">
+                <p className="mt-1 font-mono text-xl font-bold text-[#06452F] tabular-nums">
                   {users.filter((u) => u.status === AccountStatus.ACTIVE && !u.sessionRevoked).length}
                 </p>
               </div>
@@ -948,9 +948,9 @@ export function SettingsPage({
             </div>
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
+          <div className="fdmis-surface p-4 sm:p-5">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-4">
-              <SettingsIcon className="h-5 w-5 text-[#0b3b24]" aria-hidden="true" />
+              <SettingsIcon className="h-5 w-5 text-[#06452F]" aria-hidden="true" />
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
                   Constituency Session Security &amp; Operational Policies
@@ -961,7 +961,7 @@ export function SettingsPage({
               </div>
             </div>
 
-            <form onSubmit={handleSaveSystemPolicy} className="mt-5 space-y-5">
+            <form onSubmit={handleSaveSystemPolicy} className="mt-5 space-y-3.5 sm:space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label
@@ -1019,7 +1019,7 @@ export function SettingsPage({
                     checked={mfaPrepared}
                     disabled={!isOnline || sessionMode === 'offline_trusted'}
                     onChange={(e) => setMfaPrepared(e.target.checked)}
-                    className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#0b3b24]"
+                    className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#06452F]"
                   />
                   <span className="text-sm text-slate-800">
                     <span className="font-medium">
@@ -1037,7 +1037,7 @@ export function SettingsPage({
                     checked={publicSummaryEnabled}
                     disabled={!isOnline || sessionMode === 'offline_trusted'}
                     onChange={(e) => setPublicSummaryEnabled(e.target.checked)}
-                    className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#0b3b24]"
+                    className="mt-1 h-4 w-4 rounded border-slate-300 accent-[#06452F]"
                   />
                   <span className="text-sm text-slate-800">
                     <span className="font-medium">Public Verified Results Summary Gate</span>
@@ -1052,7 +1052,7 @@ export function SettingsPage({
               <button
                 type="submit"
                 disabled={savingPolicy || !isOnline || sessionMode === 'offline_trusted'}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-5 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-5 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                 <span>{savingPolicy ? 'Saving Policy...' : 'Save Security Settings'}</span>
@@ -1061,10 +1061,10 @@ export function SettingsPage({
           </div>
 
           {/* Official WhatsApp Group Integration (Free Direct Team Coordination) */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div className="fdmis-surface p-4 sm:p-5 space-y-4">
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
-                <MessageCircle className="h-5 w-5 text-[#0b3b24]" aria-hidden="true" />
+                <MessageCircle className="h-5 w-5 text-[#06452F]" aria-hidden="true" />
                 <div>
                   <h3 className="font-display text-base font-semibold text-slate-900">
                     WhatsApp Group Integration
@@ -1096,7 +1096,7 @@ export function SettingsPage({
                   type="checkbox"
                   checked={whatsappGroupEnabled}
                   onChange={(e) => setWhatsappGroupEnabled(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 accent-[#0b3b24]"
+                  className="mt-0.5 h-4 w-4 accent-[#06452F]"
                 />
                 <span className="text-xs text-slate-800">
                   <strong className="text-sm font-semibold text-slate-900">
@@ -1144,7 +1144,7 @@ export function SettingsPage({
               <button
                 type="submit"
                 disabled={savingWhatsapp}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-5 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-5 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                 <span>{savingWhatsapp ? 'Saving WhatsApp Group...' : 'Save WhatsApp Group Settings'}</span>
@@ -1154,7 +1154,7 @@ export function SettingsPage({
             <WhatsAppGroupCard settings={settings} compact />
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
+          <div className="fdmis-surface p-4 sm:p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
               <Lock className="h-4 w-4 text-slate-600" aria-hidden="true" />
               <div>
@@ -1170,7 +1170,7 @@ export function SettingsPage({
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5">
-                <p className="text-xs font-semibold text-[#0b3b24]">
+                <p className="text-xs font-semibold text-[#06452F]">
                   In-App Situation Room Notifications (Free Core)
                 </p>
                 <p className="mt-1 text-xs font-medium text-emerald-900">
@@ -1178,7 +1178,7 @@ export function SettingsPage({
                 </p>
               </div>
               <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3.5">
-                <p className="text-xs font-semibold text-[#0b3b24]">
+                <p className="text-xs font-semibold text-[#06452F]">
                   WhatsApp Direct Group ({whatsappGroupName || DEFAULT_WHATSAPP_GROUP_NAME})
                 </p>
                 <p className="mt-1 text-xs font-medium text-emerald-900">
@@ -1223,7 +1223,7 @@ export function SettingsPage({
       {/* Logout Confirmation Modal */}
       {confirmLogoutOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2 text-red-800">
                 <LogOut className="h-5 w-5" aria-hidden="true" />

@@ -217,11 +217,11 @@ export function OperationalNotesPanel({
   ).length;
 
   return (
-    <div className="space-y-5">
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
+    <div className="space-y-3.5 sm:space-y-4">
+      <div className="fdmis-surface p-3.5 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
           <div className="flex items-start gap-2.5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#0b3b24] text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#06452F] text-white">
               <StickyNote className="h-4 w-4" aria-hidden="true" />
             </div>
             <div>
@@ -292,7 +292,7 @@ export function OperationalNotesPanel({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Gate opening update"
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none"
               />
             </div>
 
@@ -304,7 +304,7 @@ export function OperationalNotesPanel({
                 id="note-category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value as OperationalNoteCategory)}
-                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none"
+                className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none"
               >
                 {Object.entries(CATEGORY_LABELS).map(([k, label]) => (
                   <option key={k} value={k}>
@@ -329,7 +329,7 @@ export function OperationalNotesPanel({
                     setPuId('');
                   }}
                   disabled={authorizedLgas.length === 1 && user.role !== UserRole.FULL_CONTROL_ADMIN}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-50"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none disabled:bg-slate-50"
                 >
                   {user.role === UserRole.FULL_CONTROL_ADMIN ? (
                     <option value="all">All Constituency</option>
@@ -348,7 +348,7 @@ export function OperationalNotesPanel({
                     type="checkbox"
                     checked={isPinned}
                     onChange={(e) => setIsPinned(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-[#0b3b24] focus:ring-[#0b3b24]"
+                    className="h-4 w-4 rounded border-slate-300 text-[#06452F] focus:ring-[#06452F]"
                   />
                   <span>Pin note at top</span>
                 </label>
@@ -370,7 +370,7 @@ export function OperationalNotesPanel({
                     setPuId('');
                   }}
                   disabled={Boolean(user.assignedWardId)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none disabled:bg-slate-50"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none disabled:bg-slate-50"
                 >
                   <option value="">All / Ward-wide</option>
                   {scopedWards.map((w) => (
@@ -389,7 +389,7 @@ export function OperationalNotesPanel({
                   id="note-pu"
                   value={puId}
                   onChange={(e) => setPuId(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none"
                 >
                   <option value="">General / Not unit-specific</option>
                   {scopedPus.slice(0, 300).map((p) => (
@@ -406,7 +406,7 @@ export function OperationalNotesPanel({
                     type="checkbox"
                     checked={isPinned}
                     onChange={(e) => setIsPinned(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-[#0b3b24] focus:ring-[#0b3b24]"
+                    className="h-4 w-4 rounded border-slate-300 text-[#06452F] focus:ring-[#06452F]"
                   />
                   <span>Pin note at top</span>
                 </label>
@@ -426,7 +426,7 @@ export function OperationalNotesPanel({
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="Write a brief note, observation, queue count, or shift message..."
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#0b3b24] focus:outline-none"
+              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-[#06452F] focus:outline-none"
             />
             <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
               <span>{isOnline ? 'Saves online & locally' : 'Offline mode: saves safely on device'}</span>
@@ -438,7 +438,7 @@ export function OperationalNotesPanel({
             <button
               type="submit"
               disabled={saving}
-              className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+              className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               <span>
@@ -456,7 +456,7 @@ export function OperationalNotesPanel({
       </div>
 
       {/* Saved Notes List */}
-      <div className="rounded-xl border border-slate-200 bg-white p-5">
+      <div className="fdmis-surface p-3.5 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">
@@ -479,7 +479,7 @@ export function OperationalNotesPanel({
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search notes..."
                 aria-label="Search notes"
-                className="w-44 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 focus:border-[#0b3b24] focus:bg-white focus:outline-none"
+                className="w-44 rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-xs text-slate-900 focus:border-[#06452F] focus:bg-white focus:outline-none"
               />
             </div>
 
@@ -489,7 +489,7 @@ export function OperationalNotesPanel({
                 setCategoryFilter(e.target.value as 'ALL' | OperationalNoteCategory)
               }
               aria-label="Filter notes by category"
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-[#0b3b24] focus:outline-none"
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-700 focus:border-[#06452F] focus:outline-none"
             >
               <option value="ALL">All Categories</option>
               {Object.entries(CATEGORY_LABELS).map(([k, label]) => (
@@ -523,13 +523,13 @@ export function OperationalNotesPanel({
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-1.5">
                           {note.isPinned ? (
-                            <Pin className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                            <Pin className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
                           ) : null}
                           <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700">
                             {CATEGORY_LABELS[note.category] || note.category}
                           </span>
                           {note.puCode ? (
-                            <span className="font-mono text-[11px] font-medium text-[#0b3b24]">
+                            <span className="font-mono text-[11px] font-medium text-[#06452F]">
                               {note.puCode}
                             </span>
                           ) : null}
@@ -600,7 +600,7 @@ export function OperationalNotesPanel({
           aria-label="Confirm Note Deletion"
           className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
         >
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5 shadow-xl">
             <h3 className="font-display text-base font-bold text-slate-900">
               Permanently Delete Note?
             </h3>

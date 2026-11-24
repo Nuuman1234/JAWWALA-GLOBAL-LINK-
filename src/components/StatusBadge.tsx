@@ -63,7 +63,7 @@ export function RoleBadge({ role }: { role: UserRole }) {
 
   if (role === UserRole.FULL_CONTROL_ADMIN) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-[#0b3b24]/10 px-2 py-0.5 text-xs font-medium text-[#0b3b24] whitespace-nowrap shrink-0">
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-[#06452F]/10 px-2 py-0.5 text-xs font-medium text-[#06452F] whitespace-nowrap shrink-0">
         <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
         <span>{meta.label}</span>
       </span>
@@ -151,8 +151,8 @@ export function PuStatusBadge({ status }: { status: PuOperationalStatus }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-emerald-50/60 px-2 py-0.5 text-xs font-medium text-[#0b3b24] whitespace-nowrap shrink-0">
-      <CheckCircle2 className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-emerald-50/60 px-2 py-0.5 text-xs font-medium text-[#06452F] whitespace-nowrap shrink-0">
+      <CheckCircle2 className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
       <span>{meta.label}</span>
     </span>
   );
@@ -353,8 +353,8 @@ export function TaskStatusBadge({ status }: { status: TaskStatus }) {
   }
   if (status === TaskStatus.ACKNOWLEDGED) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-emerald-50/60 px-2 py-0.5 text-xs font-medium text-[#0b3b24] whitespace-nowrap shrink-0">
-        <UserCheck className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-800/20 bg-emerald-50/60 px-2 py-0.5 text-xs font-medium text-[#06452F] whitespace-nowrap shrink-0">
+        <UserCheck className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
         <span>{label}</span>
       </span>
     );

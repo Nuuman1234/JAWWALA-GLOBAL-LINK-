@@ -21,7 +21,7 @@ export function WhatsAppGroupCard({ settings, compact = false }: WhatsAppGroupCa
     >
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#0b3b24] text-white">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#06452F] text-white">
             <MessageCircle className="h-5 w-5" aria-hidden="true" />
           </div>
           <div>
@@ -34,7 +34,7 @@ export function WhatsAppGroupCard({ settings, compact = false }: WhatsAppGroupCa
               </span>
             </div>
             <p className="mt-1 text-xs text-slate-700">
-              Group: <strong className="text-[#0b3b24]">{groupName}</strong> · Direct authenticated
+              Group: <strong className="text-[#06452F]">{groupName}</strong> · Direct authenticated
               team coordination across Android and desktop WhatsApp without paid gateway credentials.
             </p>
           </div>
@@ -44,7 +44,7 @@ export function WhatsAppGroupCard({ settings, compact = false }: WhatsAppGroupCa
           href={inviteUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#115233] whitespace-nowrap"
+          className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#06452F] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#043B29] whitespace-nowrap"
         >
           <MessageCircle className="h-4 w-4" aria-hidden="true" />
           <span>Join FDMIS WhatsApp Group</span>

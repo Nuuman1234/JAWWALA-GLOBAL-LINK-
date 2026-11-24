@@ -5,19 +5,34 @@
   --font-sans: "DM Sans", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  --color-command-950: #062516;
-  --color-command-900: #0b3b24;
-  --color-command-800: #115233;
-  --color-command-700: #166534;
-  --color-command-100: #dcfce7;
-  --color-command-50: #f0fdf4;
+  --color-fdmis-primary: #06452F;
+  --color-fdmis-dark: #043B29;
+  --color-fdmis-navy: #102B3F;
+  --color-fdmis-bg: #F5F7FA;
+  --color-fdmis-success: #168653;
+  --color-fdmis-warning: #D99A32;
+  --color-fdmis-danger: #DC4C45;
+
+  --color-command-950: #043B29;
+  --color-command-900: #06452F;
+  --color-command-800: #0C5C3F;
+  --color-command-700: #168653;
+  --color-command-100: #DDF5E8;
+  --color-command-50: #EEFBF2;
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
-    color: #0f172a;
-    background-color: #f8fafc;
+    color: #102B3F;
+    background-color: #F5F7FA;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    overflow-x: clip;
+    background-color: #F5F7FA;
+    color: #102B3F;
   }
 
   h1, h2, h3, h4, .font-display {
@@ -26,6 +41,30 @@
 
   code, pre, .font-mono {
     font-family: var(--font-mono);
+  }
+}
+
+/* Global FDMIS Compact Surface & Grid Standards */
+.fdmis-surface {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(16, 43, 63, 0.04);
+}
+
+.fdmis-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.fdmis-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (min-width: 1024px) {
+  .fdmis-metrics-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 

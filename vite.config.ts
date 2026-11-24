@@ -24,8 +24,8 @@ export default defineConfig(() => {
           short_name: 'FDMIS 2027',
           description:
             'Election Situation Room and Field Intelligence Management System for Funtua and Dandume Federal Constituency, Katsina State, Nigeria.',
-          theme_color: '#0b3b24',
-          background_color: '#f8fafc',
+          theme_color: '#06452F',
+          background_color: '#F5F7FA',
           display: 'standalone',
           start_url: '/',
           scope: '/',
@@ -52,7 +52,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,json}'],
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

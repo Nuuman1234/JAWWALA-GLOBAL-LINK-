@@ -329,9 +329,9 @@ export function EmergencyAssistancePage({
   const priorityCount = contacts.filter((c) => c.isPriority).length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Header Banner */}
-      <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-4 fdmis-surface p-3.5 sm:p-4 sm:flex-row sm:items-center">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-700">
             <PhoneCall className="h-5 w-5" aria-hidden="true" />
@@ -352,7 +352,7 @@ export function EmergencyAssistancePage({
           <button
             type="button"
             onClick={openAddModal}
-            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#115233] whitespace-nowrap"
+            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#043B29] whitespace-nowrap"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             <span>Add Emergency Contact</span>
@@ -373,7 +373,7 @@ export function EmergencyAssistancePage({
       ) : null}
 
       {/* Summary & Filters */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative flex-1 sm:max-w-sm">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
@@ -394,7 +394,7 @@ export function EmergencyAssistancePage({
             onClick={() => setScopeFilter('ALL')}
             className={`min-h-[40px] rounded-lg border px-3 text-xs font-semibold transition-colors ${
               scopeFilter === 'ALL'
-                ? 'border-[#0b3b24] bg-[#0b3b24] text-white'
+                ? 'border-[#06452F] bg-[#06452F] text-white'
                 : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
             }`}
           >
@@ -465,7 +465,7 @@ export function EmergencyAssistancePage({
                     </div>
                   </div>
 
-                  <p className="font-mono text-lg font-bold text-[#0b3b24] tabular-nums">
+                  <p className="font-mono text-lg font-bold text-[#06452F] tabular-nums">
                     {c.phoneNumber}
                   </p>
 
@@ -486,7 +486,7 @@ export function EmergencyAssistancePage({
                     className={`inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors ${
                       c.isPriority
                         ? 'bg-red-700 hover:bg-red-800'
-                        : 'bg-[#0b3b24] hover:bg-[#115233]'
+                        : 'bg-[#06452F] hover:bg-[#043B29]'
                     }`}
                   >
                     <Phone className="h-4 w-4" aria-hidden="true" />
@@ -630,7 +630,7 @@ export function EmergencyAssistancePage({
                 onClick={captureEmergencyGps}
                 className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
-                <MapPin className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                <MapPin className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
                 <span>
                   {capturingGps
                     ? 'Locating GPS...'
@@ -705,7 +705,7 @@ export function EmergencyAssistancePage({
                         }}
                         className="inline-flex min-h-[32px] items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap"
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[#0b3b24]" aria-hidden="true" />
+                        <CheckCircle2 className="h-3.5 w-3.5 text-[#06452F]" aria-hidden="true" />
                         <span>Update Response</span>
                       </button>
                     ) : null}
@@ -725,7 +725,7 @@ export function EmergencyAssistancePage({
       {/* Emergency Report Response Modal */}
       {managingReport ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-display text-sm font-semibold text-slate-900">
                 Update Emergency Response · {managingReport.category}
@@ -801,7 +801,7 @@ export function EmergencyAssistancePage({
                 <button
                   type="submit"
                   disabled={updatingReport}
-                  className="min-h-[40px] rounded-lg bg-[#0b3b24] px-4 text-xs font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[40px] rounded-lg bg-[#06452F] px-4 text-xs font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {updatingReport ? 'Saving...' : 'Save Update'}
                 </button>
@@ -814,7 +814,7 @@ export function EmergencyAssistancePage({
       {/* Add / Edit Contact Modal */}
       {formOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-lg fdmis-surface p-4 sm:p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-display text-base font-semibold text-slate-900">
                 {editingContact ? 'Edit Emergency Contact' : 'Add Emergency Contact'}
@@ -943,7 +943,7 @@ export function EmergencyAssistancePage({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-5 py-2 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-5 py-2 text-sm font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {saving ? 'Saving...' : editingContact ? 'Update Contact' : 'Save Contact'}
                 </button>
@@ -956,7 +956,7 @@ export function EmergencyAssistancePage({
       {/* Remove Confirmation Modal */}
       {deleteTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5 shadow-xl">
             <h3 className="font-display text-base font-semibold text-slate-900">
               Remove Emergency Contact
             </h3>

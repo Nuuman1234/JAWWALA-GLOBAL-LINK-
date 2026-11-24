@@ -42,7 +42,7 @@ export function EnhancedReportsPage(props: EnhancedReportsPageProps) {
   const [activeTab, setActiveTab] = useState<'analytics' | 'standard'>('analytics');
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Mode switcher (hidden when printing) */}
       <div className="no-print flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -66,7 +66,7 @@ export function EnhancedReportsPage(props: EnhancedReportsPageProps) {
             onClick={() => setActiveTab('analytics')}
             className={`inline-flex min-h-[38px] items-center gap-2 rounded-md px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               activeTab === 'analytics'
-                ? 'bg-white text-[#0b3b24] shadow-sm'
+                ? 'bg-white text-[#06452F] shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
@@ -80,7 +80,7 @@ export function EnhancedReportsPage(props: EnhancedReportsPageProps) {
             onClick={() => setActiveTab('standard')}
             className={`inline-flex min-h-[38px] items-center gap-2 rounded-md px-3.5 py-1.5 text-xs font-semibold transition-colors ${
               activeTab === 'standard'
-                ? 'bg-white text-[#0b3b24] shadow-sm'
+                ? 'bg-white text-[#06452F] shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >

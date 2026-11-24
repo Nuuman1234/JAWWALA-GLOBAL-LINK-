@@ -92,10 +92,10 @@ export function PublicPortalPage({
   }, [filtered, lgaFilter]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Sanitized Boundary Banner */}
       <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs text-emerald-950">
-        <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#0b3b24]" aria-hidden="true" />
+        <Globe className="mt-0.5 h-4 w-4 shrink-0 text-[#06452F]" aria-hidden="true" />
         <div>
           <p className="font-semibold">
             Sanitized Public Information Portal (Verified Constituency Summary)
@@ -132,26 +132,26 @@ export function PublicPortalPage({
       ) : (
         <>
           {/* Summary Totals */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="grid grid-cols-3 gap-2 sm:gap-2.5 lg:grid-cols-5">
+            <div className="fdmis-surface p-3 sm:p-3.5">
               <p className="text-xs font-medium text-slate-500">Approved Polling Units</p>
-              <p className="mt-1 font-mono text-2xl font-bold text-[#0b3b24] tabular-nums">
+              <p className="mt-1 font-mono text-2xl font-bold text-[#06452F] tabular-nums">
                 {filtered.length}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="fdmis-surface p-3 sm:p-3.5">
               <p className="text-xs font-medium text-slate-500">Accredited Voters</p>
               <p className="mt-1 font-mono text-2xl font-bold text-slate-900 tabular-nums">
                 {summary.accreditedVoters.toLocaleString()}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="fdmis-surface p-3 sm:p-3.5">
               <p className="text-xs font-medium text-slate-500">Valid Votes</p>
               <p className="mt-1 font-mono text-2xl font-bold text-slate-900 tabular-nums">
                 {summary.validVotes.toLocaleString()}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="fdmis-surface p-3 sm:p-3.5">
               <p className="text-xs font-medium text-slate-500">Rejected Votes</p>
               <p className="mt-1 font-mono text-2xl font-bold text-slate-900 tabular-nums">
                 {summary.rejectedVotes.toLocaleString()}
@@ -159,14 +159,14 @@ export function PublicPortalPage({
             </div>
             <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
               <p className="text-xs font-medium text-emerald-900">Total Votes Cast</p>
-              <p className="mt-1 font-mono text-2xl font-bold text-[#0b3b24] tabular-nums">
+              <p className="mt-1 font-mono text-2xl font-bold text-[#06452F] tabular-nums">
                 {summary.totalVotesCast.toLocaleString()}
               </p>
             </div>
           </div>
 
           {/* Filter Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 fdmis-surface p-3 sm:p-3.5">
             <div className="flex flex-1 flex-wrap items-center gap-3">
               <input
                 type="search"
@@ -206,7 +206,7 @@ export function PublicPortalPage({
           />
 
           {/* Sanitized Table */}
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="overflow-hidden fdmis-surface">
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
@@ -266,7 +266,7 @@ export function PublicPortalPage({
                       <td className="px-4 py-3 text-right font-mono text-xs tabular-nums">
                         {item.rejectedVotes.toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs font-bold text-[#0b3b24] tabular-nums">
+                      <td className="px-4 py-3 text-right font-mono text-xs font-bold text-[#06452F] tabular-nums">
                         {item.totalVotesCast.toLocaleString()}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">

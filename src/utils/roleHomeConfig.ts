@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   Bell,
   Building2,
+  CheckCircle2,
   ClipboardCheck,
   ClipboardList,
   Clock,
@@ -14,6 +15,7 @@ import {
   MapPin,
   PhoneCall,
   Radio,
+  RefreshCw,
   Settings,
   ShieldAlert,
   StickyNote,
@@ -59,6 +61,8 @@ import type { NavSectionId } from '../components/AppShell';
 import { isSectionAllowedForRole } from '../hooks/useNavigationHistory';
 
 export type CardTone = 'emerald' | 'amber' | 'crimson' | 'slate' | 'sky';
+export type CardTint = 'mint' | 'sky' | 'amber' | 'violet' | 'coral' | 'slate';
+export type HomeCardGroup = 'field' | 'admin';
 
 export interface RoleHomeCardDef {
   key: string;
@@ -67,6 +71,8 @@ export interface RoleHomeCardDef {
   description: string;
   statText: string;
   tone: CardTone;
+  tint?: CardTint;
+  group?: HomeCardGroup;
   icon: LucideIcon;
 }
 
@@ -76,6 +82,8 @@ export interface RoleSummaryMetric {
   value: string;
   detail: string;
   tone: CardTone;
+  tint?: CardTint;
+  icon?: LucideIcon;
   targetSection?: NavSectionId;
 }
 
@@ -406,6 +414,8 @@ export function getRoleSummaryMetrics(
             ? 'All records synchronized'
             : 'Saved offline locally',
     tone: failedSyncCount > 0 ? 'crimson' : pendingSyncCount > 0 ? 'amber' : 'emerald',
+    tint: failedSyncCount > 0 ? 'coral' : pendingSyncCount > 0 ? 'amber' : 'violet',
+    icon: RefreshCw,
     targetSection: 'field_ops',
   };
 
@@ -421,6 +431,8 @@ export function getRoleSummaryMetrics(
               ? `${s.overdueTasks} overdue · ${s.completedTasks} approved`
               : `${s.completedTasks} approved of ${s.totalTasks}`,
           tone: s.overdueTasks > 0 ? 'crimson' : s.pendingTasks > 0 ? 'amber' : 'emerald',
+          tint: 'mint',
+          icon: CheckCircle2,
           targetSection: 'task_ops',
         },
         {
@@ -432,14 +444,18 @@ export function getRoleSummaryMetrics(
               ? `${s.criticalIncidents} critical require action`
               : 'No critical escalations',
           tone: s.criticalIncidents > 0 ? 'crimson' : s.activeIncidents > 0 ? 'amber' : 'emerald',
+          tint: 'sky',
+          icon: ShieldAlert,
           targetSection: 'incidents',
         },
         {
           key: 'verification_queue',
-          label: 'Pending Verification',
+          label: 'To Verify',
           value: String(s.pendingVerification),
           detail: `${s.resultsVerified} verified · ${s.resultsSubmitted} submitted`,
           tone: s.pendingVerification > 0 ? 'amber' : 'emerald',
+          tint: 'amber',
+          icon: CheckCircle2,
           targetSection: 'verification',
         },
         {
@@ -451,6 +467,8 @@ export function getRoleSummaryMetrics(
               ? `${s.understaffedWards} ward${s.understaffedWards === 1 ? '' : 's'} below 5 officers`
               : `${s.activeOpsOfficers} active ops officers`,
           tone: s.understaffedWards > 0 ? 'amber' : 'emerald',
+          tint: 'violet',
+          icon: Users,
           targetSection: 'operations_officers',
         },
       ];
@@ -464,6 +482,8 @@ export function getRoleSummaryMetrics(
           value: `${s.reportingPct}%`,
           detail: `${s.reportingPus} of ${s.totalPus} PUs reporting`,
           tone: s.reportingPct >= 80 ? 'emerald' : 'sky',
+          tint: 'mint',
+          icon: MapPin,
           targetSection: 'polling_units',
         },
         {
@@ -475,14 +495,18 @@ export function getRoleSummaryMetrics(
               ? `${s.criticalIncidents} critical in LGA`
               : 'No critical alerts',
           tone: s.criticalIncidents > 0 ? 'crimson' : s.activeIncidents > 0 ? 'amber' : 'emerald',
+          tint: 'sky',
+          icon: ShieldAlert,
           targetSection: 'incidents',
         },
         {
           key: 'lga_verification',
-          label: 'Results Queue',
+          label: 'To Verify',
           value: String(s.pendingVerification),
           detail: `${s.resultsVerified} verified · ${s.resultsSubmitted} submitted`,
           tone: s.pendingVerification > 0 ? 'amber' : 'emerald',
+          tint: 'amber',
+          icon: CheckCircle2,
           targetSection: 'verification',
         },
         {
@@ -491,6 +515,8 @@ export function getRoleSummaryMetrics(
           value: String(s.activeOpsOfficers),
           detail: `${s.compliantWards}/${s.totalWards} wards meet target`,
           tone: s.understaffedWards > 0 ? 'amber' : 'emerald',
+          tint: 'violet',
+          icon: Users,
           targetSection: 'operations_officers',
         },
       ];
@@ -499,10 +525,12 @@ export function getRoleSummaryMetrics(
       return [
         {
           key: 'ver_pending',
-          label: 'Awaiting Verification',
+          label: 'To Verify',
           value: String(s.pendingVerification),
           detail: 'EC8A sheets in queue',
           tone: s.pendingVerification > 0 ? 'amber' : 'emerald',
+          tint: 'amber',
+          icon: FileCheck2,
           targetSection: 'verification',
         },
         {
@@ -511,6 +539,8 @@ export function getRoleSummaryMetrics(
           value: String(s.resultsVerified),
           detail: `Of ${s.resultsSubmitted} total submissions`,
           tone: 'emerald',
+          tint: 'mint',
+          icon: CheckCircle2,
           targetSection: 'results',
         },
         {
@@ -519,6 +549,8 @@ export function getRoleSummaryMetrics(
           value: `${s.reportingPct}%`,
           detail: `${s.reportingPus}/${s.totalPus} units active`,
           tone: 'sky',
+          tint: 'sky',
+          icon: MapPin,
           targetSection: 'polling_units',
         },
         {
@@ -527,6 +559,8 @@ export function getRoleSummaryMetrics(
           value: String(unreadNotificationCount),
           detail: `${data.notifications.length} total notifications`,
           tone: unreadNotificationCount > 0 ? 'amber' : 'slate',
+          tint: 'violet',
+          icon: Bell,
           targetSection: 'notifications',
         },
       ];
@@ -539,6 +573,8 @@ export function getRoleSummaryMetrics(
           value: `${s.reportingPct}%`,
           detail: `${s.reportingPus}/${s.totalPus} PUs reporting`,
           tone: s.reportingPct >= 80 ? 'emerald' : 'sky',
+          tint: 'mint',
+          icon: MapPin,
           targetSection: 'polling_units',
         },
         {
@@ -548,6 +584,8 @@ export function getRoleSummaryMetrics(
           detail:
             s.criticalIncidents > 0 ? `${s.criticalIncidents} critical alerts` : 'Within normal status',
           tone: s.criticalIncidents > 0 ? 'crimson' : s.activeIncidents > 0 ? 'amber' : 'emerald',
+          tint: 'sky',
+          icon: ShieldAlert,
           targetSection: 'incidents',
         },
         {
@@ -556,6 +594,8 @@ export function getRoleSummaryMetrics(
           value: String(s.resultsSubmitted),
           detail: `${s.resultsVerified} verified in ward`,
           tone: 'emerald',
+          tint: 'amber',
+          icon: ClipboardCheck,
           targetSection: 'results',
         },
         syncMetric,
@@ -572,6 +612,8 @@ export function getRoleSummaryMetrics(
               ? `${s.myOverdueTasks} overdue · ${s.myTasksTotal} assigned`
               : `${s.myTasksTotal} total assigned`,
           tone: s.myOverdueTasks > 0 ? 'crimson' : s.myPendingTasks > 0 ? 'amber' : 'emerald',
+          tint: 'mint',
+          icon: ListTodo,
           targetSection: 'task_ops',
         },
         {
@@ -580,6 +622,8 @@ export function getRoleSummaryMetrics(
           value: `${s.reportingPct}%`,
           detail: `${s.reportingPus}/${s.totalPus} PUs reporting`,
           tone: 'sky',
+          tint: 'sky',
+          icon: MapPin,
           targetSection: 'polling_units',
         },
         {
@@ -589,6 +633,8 @@ export function getRoleSummaryMetrics(
           detail:
             s.criticalIncidents > 0 ? `${s.criticalIncidents} critical alerts` : 'No critical escalations',
           tone: s.criticalIncidents > 0 ? 'crimson' : s.activeIncidents > 0 ? 'amber' : 'emerald',
+          tint: 'amber',
+          icon: ShieldAlert,
           targetSection: 'incidents',
         },
         syncMetric,
@@ -601,10 +647,12 @@ export function getRoleSummaryMetrics(
       return [
         {
           key: 'agent_pu_status',
-          label: 'Polling Unit Status',
+          label: 'PU Status',
           value: puStatusLabel,
           detail: s.myAssignedPu ? s.myAssignedPu.puCode : 'Contact coordinator',
           tone: s.myAssignedPu && isPuReporting(s.myAssignedPu.operationalStatus) ? 'emerald' : 'sky',
+          tint: 'mint',
+          icon: MapPin,
           targetSection: 'polling_units',
         },
         {
@@ -613,6 +661,8 @@ export function getRoleSummaryMetrics(
           value: String(s.myResultsCount + s.myCheckInsCount),
           detail: `${s.myCheckInsCount} check-ins · ${s.myResultsCount} results`,
           tone: 'emerald',
+          tint: 'sky',
+          icon: ClipboardCheck,
           targetSection: 'results',
         },
         syncMetric,
@@ -622,6 +672,8 @@ export function getRoleSummaryMetrics(
           value: String(unreadNotificationCount),
           detail: `${data.notifications.length} notifications received`,
           tone: unreadNotificationCount > 0 ? 'amber' : 'slate',
+          tint: 'amber',
+          icon: Bell,
           targetSection: 'notifications',
         },
       ];
@@ -632,18 +684,22 @@ export function getRoleSummaryMetrics(
       return [
         {
           key: 'user_public_results',
-          label: 'Verified Public Results',
+          label: 'Public Results',
           value: String(s.publicResultsCount),
           detail: 'Approved constituency tallies',
           tone: 'emerald',
+          tint: 'mint',
+          icon: Globe,
           targetSection: 'public_portal',
         },
         {
           key: 'user_notifs',
-          label: 'Unread Notifications',
+          label: 'Unread Alerts',
           value: String(unreadNotificationCount),
           detail: `${data.notifications.length} total alerts`,
           tone: unreadNotificationCount > 0 ? 'amber' : 'slate',
+          tint: 'amber',
+          icon: Bell,
           targetSection: 'notifications',
         },
         {
@@ -652,6 +708,8 @@ export function getRoleSummaryMetrics(
           value: String(s.timelineCount),
           detail: 'Official election timeline updates',
           tone: 'sky',
+          tint: 'sky',
+          icon: Clock,
           targetSection: 'timeline',
         },
         syncMetric,
@@ -682,16 +740,9 @@ export function getRoleHomeCards(
         description: 'Agent arrival logs, device status, and offline synchronization queue.',
         statText: `${checkIns.length} check-ins · ${pendingSyncCount} queued`,
         tone: pendingSyncCount > 0 ? 'amber' : 'emerald',
-        icon: Radio,
-      },
-      {
-        key: 'notes',
-        sectionId: 'notes',
-        title: 'Notes & Messages',
-        description: 'Operational field notes, handover briefs, and ward communications.',
-        statText: `${s.notesCount} saved note${s.notesCount === 1 ? '' : 's'}`,
-        tone: 'slate',
-        icon: StickyNote,
+        tint: 'mint',
+        group: 'field',
+        icon: ClipboardCheck,
       },
       {
         key: 'incidents',
@@ -700,7 +751,20 @@ export function getRoleHomeCards(
         description: 'Triage, escalate, and resolve election day field incidents.',
         statText: `${s.activeIncidents} active · ${s.criticalIncidents} critical`,
         tone: s.criticalIncidents > 0 ? 'crimson' : s.activeIncidents > 0 ? 'amber' : 'emerald',
+        tint: 'coral',
+        group: 'field',
         icon: AlertTriangle,
+      },
+      {
+        key: 'polling_units',
+        sectionId: 'polling_units',
+        title: 'Polling Unit Monitor',
+        description: 'Official polling unit directory, agent coverage, and status.',
+        statText: `${s.reportingPus}/${s.totalPus} reporting (${s.reportingPct}%)`,
+        tone: 'sky',
+        tint: 'sky',
+        group: 'field',
+        icon: MapPin,
       },
       {
         key: 'results',
@@ -709,7 +773,9 @@ export function getRoleHomeCards(
         description: 'Inspect polling unit vote submissions and Form EC8A sheets.',
         statText: `${s.resultsSubmitted} submitted · ${s.resultsVerified} verified`,
         tone: 'emerald',
-        icon: ClipboardCheck,
+        tint: 'mint',
+        group: 'field',
+        icon: FileCheck2,
       },
       {
         key: 'verification',
@@ -718,25 +784,9 @@ export function getRoleHomeCards(
         description: 'Approve, reject, or request corrections on submitted results.',
         statText: `${s.pendingVerification} awaiting review`,
         tone: s.pendingVerification > 0 ? 'amber' : 'emerald',
-        icon: FileCheck2,
-      },
-      {
-        key: 'party_management',
-        sectionId: 'party_management',
-        title: 'Party Management',
-        description: 'Official APC, PDP, ADC, and Others emblems and metadata.',
-        statText: `${s.configuredParties}/4 parties configured`,
-        tone: 'slate',
-        icon: Flag,
-      },
-      {
-        key: 'operations_officers',
-        sectionId: 'operations_officers',
-        title: 'Operations Officers',
-        description: 'Assign ward officers and monitor the 5-per-ward staffing target.',
-        statText: `${s.activeOpsOfficers} active · ${s.compliantWards}/${s.totalWards} wards`,
-        tone: s.understaffedWards > 0 ? 'amber' : 'emerald',
-        icon: ShieldAlert,
+        tint: 'amber',
+        group: 'field',
+        icon: CheckCircle2,
       },
       {
         key: 'task_ops',
@@ -745,16 +795,20 @@ export function getRoleHomeCards(
         description: 'Assign ward field tasks, review officer reports, and track deadlines.',
         statText: `${s.pendingTasks} open · ${s.overdueTasks} overdue`,
         tone: s.overdueTasks > 0 ? 'crimson' : s.pendingTasks > 0 ? 'amber' : 'emerald',
+        tint: 'violet',
+        group: 'field',
         icon: ListTodo,
       },
       {
-        key: 'timeline',
-        sectionId: 'timeline',
-        title: 'Election Timeline',
-        description: 'Chronological operational milestones across Funtua & Dandume.',
-        statText: `${s.timelineCount} timeline event${s.timelineCount === 1 ? '' : 's'}`,
-        tone: 'sky',
-        icon: Clock,
+        key: 'operations_officers',
+        sectionId: 'operations_officers',
+        title: 'Operations Officers',
+        description: 'Assign ward officers and monitor the 5-per-ward staffing target.',
+        statText: `${s.activeOpsOfficers} active · ${s.compliantWards}/${s.totalWards} wards`,
+        tone: s.understaffedWards > 0 ? 'amber' : 'emerald',
+        tint: 'sky',
+        group: 'field',
+        icon: ShieldAlert,
       },
       {
         key: 'wards',
@@ -763,25 +817,53 @@ export function getRoleHomeCards(
         description: 'Manage Funtua & Dandume LGAs, 22 electoral wards, and readiness.',
         statText: `2 LGAs · ${s.totalWards} wards`,
         tone: 'emerald',
+        tint: 'mint',
+        group: 'field',
         icon: Building2,
       },
       {
-        key: 'polling_units',
-        sectionId: 'polling_units',
-        title: 'Polling Units',
-        description: 'Official polling unit directory, agent coverage, and status.',
-        statText: `${s.reportingPus}/${s.totalPus} reporting (${s.reportingPct}%)`,
-        tone: 'sky',
-        icon: MapPin,
+        key: 'notes',
+        sectionId: 'notes',
+        title: 'Notes & Messages',
+        description: 'Operational field notes, handover briefs, and ward communications.',
+        statText: `${s.notesCount} saved note${s.notesCount === 1 ? '' : 's'}`,
+        tone: 'slate',
+        tint: 'slate',
+        group: 'field',
+        icon: StickyNote,
       },
       {
         key: 'reports',
         sectionId: 'reports',
         title: 'Reports & Exports',
         description: 'Automated situation reports, analytics, PDF, Excel, and CSV exports.',
-        statText: `${s.reportsCount} archived · 7 auto reports`,
+        statText: `${s.reportsCount} archived · 7 auto`,
         tone: 'emerald',
+        tint: 'mint',
+        group: 'admin',
         icon: FileBarChart2,
+      },
+      {
+        key: 'party_management',
+        sectionId: 'party_management',
+        title: 'Party Management',
+        description: 'Official APC, PDP, ADC, and Others emblems and metadata.',
+        statText: `${s.configuredParties}/4 configured`,
+        tone: 'slate',
+        tint: 'violet',
+        group: 'admin',
+        icon: Flag,
+      },
+      {
+        key: 'timeline',
+        sectionId: 'timeline',
+        title: 'Election Timeline',
+        description: 'Chronological operational milestones across Funtua & Dandume.',
+        statText: `${s.timelineCount} event${s.timelineCount === 1 ? '' : 's'}`,
+        tone: 'sky',
+        tint: 'sky',
+        group: 'admin',
+        icon: Clock,
       },
       {
         key: 'notifications',
@@ -790,33 +872,41 @@ export function getRoleHomeCards(
         description: 'Broadcast operational alerts and inspect alert delivery logs.',
         statText: `${data.unreadNotificationCount} unread · ${notifications.length} total`,
         tone: data.unreadNotificationCount > 0 ? 'amber' : 'slate',
+        tint: 'amber',
+        group: 'admin',
         icon: Bell,
       },
       {
         key: 'emergency_assistance',
         sectionId: 'emergency_assistance',
-        title: 'Emergency Assistance',
+        title: 'Emergency Desk',
         description: 'Rapid-dial emergency contacts and official Situation Room desk.',
-        statText: `${s.emergencyContactsCount} verified contact${s.emergencyContactsCount === 1 ? '' : 's'}`,
+        statText: `${s.emergencyContactsCount} contact${s.emergencyContactsCount === 1 ? '' : 's'}`,
         tone: 'crimson',
+        tint: 'coral',
+        group: 'admin',
         icon: PhoneCall,
       },
       {
         key: 'public_portal',
         sectionId: 'public_portal',
-        title: 'Public Results View',
+        title: 'Public Results',
         description: 'Preview verified constituency totals approved for public release.',
-        statText: `${s.publicResultsCount} published tally record${s.publicResultsCount === 1 ? '' : 's'}`,
+        statText: `${s.publicResultsCount} published`,
         tone: 'emerald',
+        tint: 'mint',
+        group: 'admin',
         icon: Globe,
       },
       {
         key: 'users',
         sectionId: 'users',
-        title: 'User & Access Control',
+        title: 'User Access Control',
         description: 'Approve accounts, assign roles, reset passwords, and manage access.',
-        statText: `${data.users.length} accounts · ${s.pendingUsers} pending`,
+        statText: `${data.users.length} users · ${s.pendingUsers} pending`,
         tone: s.pendingUsers > 0 ? 'amber' : 'slate',
+        tint: 'sky',
+        group: 'admin',
         icon: Users,
       },
       {
@@ -824,8 +914,10 @@ export function getRoleHomeCards(
         sectionId: 'data_management',
         title: 'Data Management',
         description: 'Column-filtered exports, record cleanup, and permanent deletion.',
-        statText: `${s.attachmentsCount} file${s.attachmentsCount === 1 ? '' : 's'} stored`,
+        statText: `${s.attachmentsCount} file${s.attachmentsCount === 1 ? '' : 's'}`,
         tone: 'slate',
+        tint: 'slate',
+        group: 'admin',
         icon: Database,
       },
       {
@@ -833,8 +925,10 @@ export function getRoleHomeCards(
         sectionId: 'audit_logs',
         title: 'Audit Logs',
         description: 'Immutable trail of administrative actions, verifications, and logins.',
-        statText: `${s.auditLogsCount} audit event${s.auditLogsCount === 1 ? '' : 's'}`,
+        statText: `${s.auditLogsCount} event${s.auditLogsCount === 1 ? '' : 's'}`,
         tone: 'slate',
+        tint: 'violet',
+        group: 'admin',
         icon: ClipboardList,
       },
       {
@@ -842,8 +936,10 @@ export function getRoleHomeCards(
         sectionId: 'settings',
         title: 'Settings & Security',
         description: 'Session auto-lock, WhatsApp room link, and security controls.',
-        statText: 'System & account security',
+        statText: 'System security',
         tone: 'slate',
+        tint: 'slate',
+        group: 'admin',
         icon: Settings,
       },
     ];

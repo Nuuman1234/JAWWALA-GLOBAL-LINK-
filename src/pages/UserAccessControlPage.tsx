@@ -469,40 +469,40 @@ export function UserAccessControlPage({
   const occupiedCountInWard = wardAllPus.length - availableWardPus.length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Compact Account Summary Strip */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-2.5 lg:grid-cols-6">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Total Accounts</p>
           <p className="mt-1 font-mono text-xl font-bold text-slate-900 tabular-nums">
             {accountCounts.total}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Active</p>
           <p className="mt-1 font-mono text-xl font-bold text-emerald-800 tabular-nums">
             {accountCounts.active}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Ops Officers</p>
-          <p className="mt-1 font-mono text-xl font-bold text-[#0b3b24] tabular-nums">
+          <p className="mt-1 font-mono text-xl font-bold text-[#06452F] tabular-nums">
             {accountCounts.opsOfficers}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Ordinary Users</p>
           <p className="mt-1 font-mono text-xl font-bold text-slate-800 tabular-nums">
             {accountCounts.ordinary}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Pending</p>
           <p className="mt-1 font-mono text-xl font-bold text-amber-800 tabular-nums">
             {accountCounts.pending}
           </p>
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+        <div className="fdmis-surface px-2.5 py-2.5 sm:px-3.5 sm:py-3">
           <p className="text-[11px] font-medium text-slate-500">Suspended</p>
           <p className="mt-1 font-mono text-xl font-bold text-red-700 tabular-nums">
             {accountCounts.suspended}
@@ -511,7 +511,7 @@ export function UserAccessControlPage({
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-1 flex-wrap items-center gap-2.5">
             <input
@@ -519,7 +519,7 @@ export function UserAccessControlPage({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search name, phone, email, role, ward, or PU..."
-              className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
+              className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none sm:max-w-xs"
             />
 
             <select
@@ -558,7 +558,7 @@ export function UserAccessControlPage({
                 }}
                 className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50 whitespace-nowrap"
               >
-                <ArrowLeftRight className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+                <ArrowLeftRight className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
                 <span>Controlled PU Reassignment</span>
               </button>
             ) : null}
@@ -609,7 +609,7 @@ export function UserAccessControlPage({
       ) : null}
 
       {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="fdmis-surface p-8 text-center text-sm text-slate-500">
           Loading operator directory...
         </div>
       ) : filteredUsers.length === 0 ? (
@@ -618,7 +618,7 @@ export function UserAccessControlPage({
           description="No registered users match the selected status filter or search query in your authorized scope."
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden fdmis-surface">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
@@ -777,7 +777,7 @@ export function UserAccessControlPage({
       {/* Role & Scope Assignment Modal */}
       {editingUser ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-xl border border-slate-200 bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-md overflow-y-auto fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -980,7 +980,7 @@ export function UserAccessControlPage({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {busy ? 'Saving...' : 'Save Authorization'}
                 </button>
@@ -1125,9 +1125,9 @@ export function UserAccessControlPage({
       {/* Controlled PU Reassignment Modal (Full Control Admin Only) */}
       {reassignModalOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-lg fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2 text-[#0b3b24]">
+              <div className="flex items-center gap-2 text-[#06452F]">
                 <ArrowLeftRight className="h-5 w-5" aria-hidden="true" />
                 <h3 className="font-display text-base font-semibold text-slate-900">
                   Controlled Polling Unit Reassignment
@@ -1215,7 +1215,7 @@ export function UserAccessControlPage({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {busy ? 'Transferring...' : 'Execute Reassignment'}
                 </button>
@@ -1227,10 +1227,10 @@ export function UserAccessControlPage({
 
       {/* Password Recovery Requests Panel */}
       {canEdit ? (
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <section className="overflow-hidden fdmis-surface">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-3">
             <div className="flex items-center gap-2">
-              <KeyRound className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />
+              <KeyRound className="h-4 w-4 text-[#06452F]" aria-hidden="true" />
               <div>
                 <h2 className="font-display text-sm font-semibold text-slate-900">
                   Password Recovery Requests
@@ -1298,7 +1298,7 @@ export function UserAccessControlPage({
                         type="button"
                         disabled={busy}
                         onClick={() => void handleApproveReset(req)}
-                        className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#0b3b24] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                        className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg bg-[#06452F] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                       >
                         <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>Approve &amp; Issue Reset PIN</span>
@@ -1328,7 +1328,7 @@ export function UserAccessControlPage({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
           <div className="w-full max-w-md rounded-xl border border-emerald-200 bg-white p-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2 text-[#0b3b24]">
+              <div className="flex items-center gap-2 text-[#06452F]">
                 <KeyRound className="h-5 w-5" aria-hidden="true" />
                 <h3 className="font-display text-base font-semibold text-slate-900">
                   One-Time Reset PIN Issued
@@ -1367,7 +1367,7 @@ export function UserAccessControlPage({
               <button
                 type="button"
                 onClick={() => setIssuedPinInfo(null)}
-                className="min-h-[42px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233]"
+                className="min-h-[42px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29]"
               >
                 Done
               </button>

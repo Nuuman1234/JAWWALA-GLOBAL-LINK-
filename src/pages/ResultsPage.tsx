@@ -545,9 +545,9 @@ export function ResultsPage({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Header Bar */}
-      <div className="flex flex-col justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center">
+      <div className="flex flex-col justify-between gap-3 fdmis-surface p-3 sm:p-3.5 sm:flex-row sm:items-center">
         <div>
           <h2 className="font-display text-base font-semibold text-slate-900">
             Polling Unit Results &amp; Form EC8A Registry
@@ -561,7 +561,7 @@ export function ResultsPage({
           <button
             type="button"
             onClick={openNewSubmission}
-            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] whitespace-nowrap"
+            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] whitespace-nowrap"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             <span>Submit PU Result</span>
@@ -612,7 +612,7 @@ export function ResultsPage({
       {showForm ? (
         <form
           onSubmit={handleOpenReview}
-          className="rounded-xl border border-slate-200 bg-white p-5 space-y-5"
+          className="fdmis-surface p-3.5 sm:p-4 space-y-3.5 sm:space-y-4"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
@@ -694,7 +694,7 @@ export function ResultsPage({
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
                 Party Vote Entries (All 4 Required — Enter 0 Where Applicable)
               </p>
-              <span className="font-mono text-xs font-semibold text-[#0b3b24] tabular-nums">
+              <span className="font-mono text-xs font-semibold text-[#06452F] tabular-nums">
                 Party Total: {validation.partySum.toLocaleString()}
               </span>
             </div>
@@ -728,7 +728,7 @@ export function ResultsPage({
                         required
                         value={binding.value}
                         onChange={(e) => binding.setter(e.target.value)}
-                        className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-right font-mono text-sm font-semibold text-slate-900 tabular-nums focus:border-[#0b3b24] focus:outline-none"
+                        className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 text-right font-mono text-sm font-semibold text-slate-900 tabular-nums focus:border-[#06452F] focus:outline-none"
                       />
                     </div>
                   </div>
@@ -949,7 +949,7 @@ export function ResultsPage({
             <button
               type="submit"
               disabled={submitting || !validation.isValid}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-50"
             >
               <Send className="h-4 w-4" aria-hidden="true" />
               <span>
@@ -965,7 +965,7 @@ export function ResultsPage({
       ) : null}
 
       {/* Filter Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="search"
@@ -1064,12 +1064,12 @@ export function ResultsPage({
             return (
               <div
                 key={res.id}
-                className="rounded-xl border border-slate-200 bg-white p-5 space-y-3"
+                className="fdmis-surface p-3.5 sm:p-4 space-y-3"
               >
                 <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-[#0b3b24]">
+                      <span className="font-mono text-xs font-semibold text-[#06452F]">
                         {res.puCode}
                       </span>
                       <VerificationStatusBadge status={res.verificationStatus} />
@@ -1103,7 +1103,7 @@ export function ResultsPage({
                       <button
                         type="button"
                         onClick={() => openReviseSubmission(res)}
-                        className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[#0b3b24] px-3 py-1 text-xs font-medium text-[#0b3b24] hover:bg-emerald-50"
+                        className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-[#06452F] px-3 py-1 text-xs font-medium text-[#06452F] hover:bg-emerald-50"
                       >
                         <ClipboardCheck className="h-3.5 w-3.5" aria-hidden="true" />
                         <span>
@@ -1165,7 +1165,7 @@ export function ResultsPage({
                   </div>
                   <div className="col-span-2 rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2 sm:col-span-1">
                     <p className="text-[11px] text-emerald-900">Total Cast</p>
-                    <p className="font-mono text-sm font-bold text-[#0b3b24] tabular-nums">
+                    <p className="font-mono text-sm font-bold text-[#06452F] tabular-nums">
                       {res.totalVotesCast.toLocaleString()}
                     </p>
                   </div>
@@ -1211,7 +1211,7 @@ export function ResultsPage({
       {/* Review & Confirm Submission Modal */}
       {reviewConfirmOpen && selectedPu ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto fdmis-surface p-4 sm:p-5 shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -1285,7 +1285,7 @@ export function ResultsPage({
                   Rejected:{' '}
                   <strong className="font-mono">{numericSnapshot.rej.toLocaleString()}</strong>
                 </p>
-                <p className="col-span-2 font-semibold text-[#0b3b24]">
+                <p className="col-span-2 font-semibold text-[#06452F]">
                   Total Votes Cast:{' '}
                   <span className="font-mono">{numericSnapshot.cast.toLocaleString()}</span>
                 </p>
@@ -1326,7 +1326,7 @@ export function ResultsPage({
                 type="button"
                 disabled={submitting}
                 onClick={() => void executeSubmit(false)}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-semibold text-white hover:bg-[#115233] disabled:opacity-60"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-semibold text-white hover:bg-[#043B29] disabled:opacity-60"
               >
                 <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                 <span>
@@ -1345,7 +1345,7 @@ export function ResultsPage({
       {/* Immutable Revision History Modal */}
       {historyTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-slate-200 bg-white p-6">
+          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">

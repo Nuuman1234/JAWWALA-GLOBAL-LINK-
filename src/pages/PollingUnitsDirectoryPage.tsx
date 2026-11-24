@@ -293,10 +293,10 @@ export function PollingUnitsDirectoryPage({
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Official Directory Import Bar for Full Control Admin */}
       {isFullAdmin ? (
-        <div className="flex flex-col justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center">
+        <div className="flex flex-col justify-between gap-4 fdmis-surface p-3.5 sm:p-4 sm:flex-row sm:items-center">
           <div>
             <h2 className="font-display text-base font-semibold text-slate-900">
               Official INEC Polling Unit Register
@@ -311,7 +311,7 @@ export function PollingUnitsDirectoryPage({
               type="button"
               disabled={importing}
               onClick={() => void handleImportOfficial()}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60 whitespace-nowrap"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60 whitespace-nowrap"
             >
               <Download className="h-4 w-4" aria-hidden="true" />
               <span>
@@ -363,7 +363,7 @@ export function PollingUnitsDirectoryPage({
       ) : null}
 
       {/* Filter Toolbar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-3 fdmis-surface p-3 sm:p-3.5 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
           <input
             type="search"
@@ -373,7 +373,7 @@ export function PollingUnitsDirectoryPage({
               setPage(1);
             }}
             placeholder="Search PU code, name, ward, or agent..."
-            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#0b3b24] focus:outline-none sm:max-w-xs"
+            className="min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[#06452F] focus:outline-none sm:max-w-xs"
           />
 
           {authorizedLgas.length > 1 ? (
@@ -435,7 +435,7 @@ export function PollingUnitsDirectoryPage({
 
       {/* Table or Empty State */}
       {loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+        <div className="fdmis-surface p-8 text-center text-sm text-slate-500">
           Loading polling units...
         </div>
       ) : filteredUnits.length === 0 ? (
@@ -448,7 +448,7 @@ export function PollingUnitsDirectoryPage({
           }
         />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="overflow-hidden fdmis-surface">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left text-sm">
               <thead>
@@ -559,7 +559,7 @@ export function PollingUnitsDirectoryPage({
       {/* Add Polling Unit Modal */}
       {showAddModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="font-display text-base font-semibold text-slate-900">
                 Add Polling Unit Record
@@ -678,7 +678,7 @@ export function PollingUnitsDirectoryPage({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {saving ? 'Saving...' : 'Create Polling Unit'}
                 </button>
@@ -691,7 +691,7 @@ export function PollingUnitsDirectoryPage({
       {/* Assign Agent Modal */}
       {assigningPu ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-md fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -780,7 +780,7 @@ export function PollingUnitsDirectoryPage({
                 <button
                   type="submit"
                   disabled={saving || (needsControlledReassign && !isFullAdmin)}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {saving ? 'Assigning...' : 'Save Assignment'}
                 </button>
@@ -792,7 +792,7 @@ export function PollingUnitsDirectoryPage({
       {/* Controlled Master PU Correction Modal (Full Control Admin only) */}
       {correctingPu ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-slate-200 bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto fdmis-surface p-4 sm:p-5">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="font-display text-base font-semibold text-slate-900">
@@ -888,7 +888,7 @@ export function PollingUnitsDirectoryPage({
                   type="checkbox"
                   checked={corrCoordsVerified}
                   onChange={(e) => setCorrCoordsVerified(e.target.checked)}
-                  className="h-4 w-4 accent-[#0b3b24]"
+                  className="h-4 w-4 accent-[#06452F]"
                 />
                 <span>Confirm field-verified coordinates</span>
               </label>
@@ -918,7 +918,7 @@ export function PollingUnitsDirectoryPage({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="min-h-[44px] rounded-lg bg-[#0b3b24] px-4 py-2 text-sm font-medium text-white hover:bg-[#115233] disabled:opacity-60"
+                  className="min-h-[44px] rounded-lg bg-[#06452F] px-4 py-2 text-sm font-medium text-white hover:bg-[#043B29] disabled:opacity-60"
                 >
                   {saving ? 'Backing Up & Saving...' : 'Backup & Save Correction'}
                 </button>

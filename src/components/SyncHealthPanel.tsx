@@ -106,7 +106,7 @@ export const SyncHealthPanel: React.FC<SyncHealthPanelProps> = ({
   };
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+    <section className="fdmis-surface overflow-hidden">
       <div className="px-5 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -147,7 +147,7 @@ export const SyncHealthPanel: React.FC<SyncHealthPanelProps> = ({
       </div>
 
       {/* Metrics Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200 bg-slate-50/60 tabular-nums">
+      <div className="grid grid-cols-3 lg:grid-cols-6 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 border-b border-slate-200 bg-slate-50/60 tabular-nums">
         <div className="p-3.5">
           <div className="text-[11px] font-medium text-slate-500">Pending Upload</div>
           <div className="text-lg font-bold text-slate-900 mt-0.5">{pendingItems.length}</div>

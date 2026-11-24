@@ -380,7 +380,7 @@ export const SituationMapPanel: React.FC<SituationMapPanelProps> = ({
   const gpsCheckInPinCount = plottedPoints.filter((p) => p.source === 'GPS_CHECKIN').length;
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+    <section className="fdmis-surface overflow-hidden">
       {/* Header */}
       <div className="px-5 py-4 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <div>

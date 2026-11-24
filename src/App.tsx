@@ -1518,7 +1518,7 @@ export default function App() {
       onBatteryUpdate={handleBatteryUpdate}
     >
       {dataError ? (
-        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-900 print:hidden">
+        <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-red-900 print:hidden">
           {dataError}
         </div>
       ) : null}

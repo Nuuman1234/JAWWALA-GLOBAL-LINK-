@@ -44,10 +44,10 @@ function EventIcon({ eventType }: { eventType: string }) {
     return <FileCheck2 className="h-4 w-4 text-emerald-700" aria-hidden="true" />;
   }
   if (eventType.startsWith('RESULT')) {
-    return <CheckCircle2 className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />;
+    return <CheckCircle2 className="h-4 w-4 text-[#06452F]" aria-hidden="true" />;
   }
   if (eventType === 'AGENT_CHECK_IN') {
-    return <Radio className="h-4 w-4 text-[#0b3b24]" aria-hidden="true" />;
+    return <Radio className="h-4 w-4 text-[#06452F]" aria-hidden="true" />;
   }
   return <Clock className="h-4 w-4 text-slate-600" aria-hidden="true" />;
 }
@@ -91,9 +91,9 @@ export function TimelinePage({
   }, [events, lgaFilter, wardFilter, puFilter, typeFilter]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3.5 sm:space-y-4">
       {/* Filter Controls */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <div className="fdmis-surface p-3 sm:p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2.5">
             {authorizedLgas.length > 1 ? (
@@ -171,7 +171,7 @@ export function TimelinePage({
           description="Chronological agent check-ins, materials arrival updates, voting milestones, incidents, and verifications will stream here live."
         />
       ) : (
-        <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+        <div className="fdmis-surface divide-y divide-slate-100">
           {filteredEvents.map((ev) => (
             <div key={ev.id} className="flex items-start gap-3.5 p-4">
               <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
